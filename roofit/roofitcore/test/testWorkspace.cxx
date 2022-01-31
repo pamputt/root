@@ -9,6 +9,7 @@
 #include "RooAbsReal.h"
 #include "RooStats/ModelConfig.h"
 
+#include "ROOT/StringUtils.hxx"
 #include "TFile.h"
 #include "TSystem.h"
 
@@ -109,22 +110,24 @@ protected:
 /// implementation.
 TEST(RooHelpers, Tokeniser)
 {
-  std::vector<std::string> tok = RooHelpers::tokenise("abc, def, ghi", ", ");
+  const bool skipEmpty = true;
+
+  std::vector<std::string> tok = ROOT::Split("abc, def, ghi", ", ", skipEmpty);
   EXPECT_EQ(tok.size(), 3U);
   EXPECT_EQ(tok[0], "abc");
   EXPECT_EQ(tok[1], "def");
   EXPECT_EQ(tok[2], "ghi");
 
-  std::vector<std::string> tok2 = RooHelpers::tokenise("abc, def", ":");
+  std::vector<std::string> tok2 = ROOT::Split("abc, def", ":", skipEmpty);
   EXPECT_EQ(tok2.size(), 1U);
   EXPECT_EQ(tok2[0], "abc, def");
 
-  std::vector<std::string> tok3 = RooHelpers::tokenise(",  ,abc, def,", ", ");
+  std::vector<std::string> tok3 = ROOT::Split(",  ,abc, def,", ", ", skipEmpty);
   EXPECT_EQ(tok3.size(), 2U);
   EXPECT_EQ(tok3[0], "abc");
   EXPECT_EQ(tok3[1], "def");
 
-  std::vector<std::string> tok4 = RooHelpers::tokenise(",  ,abc, def,", ",");
+  std::vector<std::string> tok4 = ROOT::Split(",  ,abc, def,", ",", skipEmpty);
   EXPECT_EQ(tok4.size(), 3U);
   EXPECT_EQ(tok4[0], "  ");
   EXPECT_EQ(tok4[1], "abc");
@@ -151,12 +154,83 @@ TEST_F(TestRooWorkspaceWithGaussian, ImportFromFile)
   EXPECT_TRUE(w.import("bogus:abc"));
   EXPECT_FALSE(hijack.str().empty());
 
-  hijack.str("");
+  hijack.stream().str("");
   ASSERT_TRUE(hijack.str().empty());
   EXPECT_TRUE(w.import( (spec.str()+"bogus").c_str()));
   EXPECT_FALSE(hijack.str().empty());
 #endif
 }
 
+/// [ROOT-7921] When using EDIT, cannot build PDFs from edit PDF.
+TEST_F(TestRooWorkspaceWithGaussian, RooCustomiserInterface) {
+  TFile file(_filename, "READ");
+  RooWorkspace* ws;
+  file.GetObject("ws", ws);
+  ASSERT_NE(ws, nullptr);
+
+  // Prepare
+  ASSERT_NE(ws->factory("SUM:sum(a[0.5,0,1]*Gauss,Gauss)"), nullptr);
+  ASSERT_NE(ws->factory("expr:sig2(\"1 + @0 * @1\", {sigma_alpha[0.1], theta_alpha[0, -5, 5]})"), nullptr);
+  ASSERT_NE(ws->factory("EDIT::editPdf(sum, sigma=sig2)"), nullptr);
+  ASSERT_NE(ws->factory("Gaussian::constraint_alpha(global_alpha[0], theta_alpha, 1)"), nullptr);
+
+  // Build a product using the edited pdf. This failed because of ROOT-7921
+  // Problem was in RooCustomizer::CustIFace::create
+  EXPECT_NE(ws->factory("PROD::model_constrained(editPdf, constraint_alpha)"), nullptr);
+
+  // Test the other code path in RooCustomizer::CustIFace::create.
+  // Edit the top-level pdf in-place, replacing all existing conflicting nodes in the workspace by <node>_orig
+  ASSERT_NE(ws->factory("EDIT::model_constrained(model_constrained, mu=mu2[-1,-10,10])"), nullptr);
+
+  // Test that the new model_constrained has been altered
+  auto model_constrained = ws->pdf("model_constrained");
+  ASSERT_NE(model_constrained, nullptr);
+  EXPECT_TRUE(model_constrained->dependsOn(*ws->var("mu2")));
+  EXPECT_FALSE(model_constrained->dependsOn(*ws->var("mu")));
+
+  // Test that the old model still exists suffixed with _orig
+  auto model_constrained_orig = ws->pdf("model_constrained_orig");
+  ASSERT_NE(model_constrained_orig, nullptr);
+  EXPECT_TRUE(model_constrained_orig->dependsOn(*ws->var("mu")));
+  EXPECT_FALSE(model_constrained_orig->dependsOn(*ws->var("mu2")));
+  EXPECT_NE(ws->pdf("Gauss_editPdf_orig"), nullptr);
+}
 
 
+/// Test that things still work when hash lookup for elements
+/// is performed.
+TEST_F(TestRooWorkspaceWithGaussian, HashLookupInWorkspace) {
+  TFile file(_filename, "READ");
+  RooWorkspace* ws;
+  file.GetObject("ws", ws);
+  ASSERT_NE(ws, nullptr);
+
+  ws->useFindsWithHashLookup(true);
+
+  // Prepare
+  ASSERT_NE(ws->factory("SUM:sum(a[0.5,0,1]*Gauss,Gauss)"), nullptr);
+  ASSERT_NE(ws->factory("expr:sig2(\"1 + @0 * @1\", {sigma_alpha[0.1], theta_alpha[0, -5, 5]})"), nullptr);
+  ASSERT_NE(ws->factory("EDIT::editPdf(sum, sigma=sig2)"), nullptr);
+  ASSERT_NE(ws->factory("Gaussian::constraint_alpha(global_alpha[0], theta_alpha, 1)"), nullptr);
+
+  // Build a product using the edited pdf. This failed because of ROOT-7921
+  // Problem was in RooCustomizer::CustIFace::create
+  EXPECT_NE(ws->factory("PROD::model_constrained(editPdf, constraint_alpha)"), nullptr);
+
+  // Test the other code path in RooCustomizer::CustIFace::create.
+  // Edit the top-level pdf in-place, replacing all existing conflicting nodes in the workspace by <node>_orig
+  ASSERT_NE(ws->factory("EDIT::model_constrained(model_constrained, mu=mu2[-1,-10,10])"), nullptr);
+
+  // Test that the new model_constrained has been altered
+  auto model_constrained = ws->pdf("model_constrained");
+  ASSERT_NE(model_constrained, nullptr);
+  EXPECT_TRUE(model_constrained->dependsOn(*ws->var("mu2")));
+  EXPECT_FALSE(model_constrained->dependsOn(*ws->var("mu")));
+
+  // Test that the old model still exists suffixed with _orig
+  auto model_constrained_orig = ws->pdf("model_constrained_orig");
+  ASSERT_NE(model_constrained_orig, nullptr);
+  EXPECT_TRUE(model_constrained_orig->dependsOn(*ws->var("mu")));
+  EXPECT_FALSE(model_constrained_orig->dependsOn(*ws->var("mu2")));
+  EXPECT_NE(ws->pdf("Gauss_editPdf_orig"), nullptr);
+}

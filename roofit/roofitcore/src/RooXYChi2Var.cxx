@@ -15,19 +15,20 @@
  *****************************************************************************/
 
 //////////////////////////////////////////////////////////////////////////////
-//
-// Class RooXYChi2Var implements a simple chi^2 calculation from a unbinned
-// dataset with values x,y with errors on y (and optionally on x) and a function.
-// The function can be either a RooAbsReal, or an extended RooAbsPdf where
-// the function value is calculated as the probability density times the
-// expected number of events
-// The chi^2 is calculated as
-//
-//              / (Data[y]-) - func \+2
-//  Sum[point] |  ------------------ |
-//              \     Data[ErrY]    /
-//
-//
+/// \class RooXYChi2Var
+/// RooXYChi2Var implements a simple chi^2 calculation from an unbinned
+/// dataset with values x,y with errors on y (and optionally on x) and a function.
+/// The function can be either a RooAbsReal, or an extended RooAbsPdf where
+/// the function value is calculated as the probability density times the
+/// expected number of events.
+/// The chi^2 is calculated as
+/// ```
+///
+///              / (Data[y]-) - func \+2
+///  Sum[point] |  ------------------ |
+///              \     Data[ErrY]    /
+/// ```
+///
 
 #include "RooFit.h"
 
@@ -39,15 +40,24 @@
 
 #include "RooRealVar.h"
 
-//#include "RooGaussKronrodIntegrator1D.h"
 #include "RooAbsDataStore.h"
 #include "RooRealBinding.h"
 #include "RooNumIntFactory.h"
+
+#include <stdexcept>
 
 using namespace std;
 
 ClassImp(RooXYChi2Var);
 ;
+
+namespace {
+  RooAbsTestStatistic::Configuration makeRooAbsTestStatisticCfg() {
+    RooAbsTestStatistic::Configuration cfg;
+    cfg.verbose = false;
+    return cfg;
+  }
+}
 
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -76,7 +86,7 @@ RooXYChi2Var::RooXYChi2Var()
 ///
 
 RooXYChi2Var::RooXYChi2Var(const char *name, const char* title, RooAbsReal& func, RooDataSet& xydata, Bool_t integrate) :
-  RooAbsOptTestStatistic(name,title,func,xydata,RooArgSet(),0,0,1,RooFit::Interleave,0,0),
+  RooAbsOptTestStatistic(name,title,func,xydata,RooArgSet(),makeRooAbsTestStatisticCfg()),
   _extended(kFALSE),
   _integrate(integrate),
   _intConfig(*defaultIntegratorConfig()),
@@ -104,7 +114,7 @@ RooXYChi2Var::RooXYChi2Var(const char *name, const char* title, RooAbsReal& func
 ///
 
 RooXYChi2Var::RooXYChi2Var(const char *name, const char* title, RooAbsReal& func, RooDataSet& xydata, RooRealVar& yvar, Bool_t integrate) :
-  RooAbsOptTestStatistic(name,title,func,xydata,RooArgSet(),0,0,1,RooFit::Interleave,0,0),
+  RooAbsOptTestStatistic(name,title,func,xydata,RooArgSet(),makeRooAbsTestStatisticCfg()),
   _extended(kFALSE),
   _integrate(integrate),
   _intConfig(*defaultIntegratorConfig()),
@@ -135,14 +145,14 @@ RooXYChi2Var::RooXYChi2Var(const char *name, const char* title, RooAbsReal& func
 ///
 
 RooXYChi2Var::RooXYChi2Var(const char *name, const char* title, RooAbsPdf& extPdf, RooDataSet& xydata, Bool_t integrate) :
-  RooAbsOptTestStatistic(name,title,extPdf,xydata,RooArgSet(),0,0,1,RooFit::Interleave,0,0),
+  RooAbsOptTestStatistic(name,title,extPdf,xydata,RooArgSet(),makeRooAbsTestStatisticCfg()),
   _extended(kTRUE),
   _integrate(integrate),
   _intConfig(*defaultIntegratorConfig()),
   _funcInt(0)
 {
   if (!extPdf.canBeExtended()) {
-    throw(string(Form("RooXYChi2Var::ctor(%s) ERROR: Input p.d.f. must be an extendible",GetName()))) ;
+    throw std::runtime_error(Form("RooXYChi2Var::RooXYChi2Var(%s) ERROR: Input p.d.f. must be extendible",GetName()));
   }
   _yvar = 0 ;
   initialize() ;
@@ -169,14 +179,14 @@ RooXYChi2Var::RooXYChi2Var(const char *name, const char* title, RooAbsPdf& extPd
 ///
 
 RooXYChi2Var::RooXYChi2Var(const char *name, const char* title, RooAbsPdf& extPdf, RooDataSet& xydata, RooRealVar& yvar, Bool_t integrate) :
-  RooAbsOptTestStatistic(name,title,extPdf,xydata,RooArgSet(),0,0,1,RooFit::Interleave,0,0),
+  RooAbsOptTestStatistic(name,title,extPdf,xydata,RooArgSet(),makeRooAbsTestStatisticCfg()),
   _extended(kTRUE),
   _integrate(integrate),
   _intConfig(*defaultIntegratorConfig()),
   _funcInt(0)
 {
   if (!extPdf.canBeExtended()) {
-    throw(string(Form("RooXYChi2Var::ctor(%s) ERROR: Input p.d.f. must be an extendible",GetName()))) ;
+    throw std::runtime_error(Form("RooXYChi2Var::ctor(%s) ERROR: Input p.d.f. must be an extendible",GetName()));
   }
   _yvar = (RooRealVar*) _dataClone->get()->find(yvar.GetName()) ;
   initialize() ;

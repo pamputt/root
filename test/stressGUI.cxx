@@ -16,9 +16,10 @@
 //    stressGUI -help
 //
 
-#include <stdlib.h>
-#include <time.h>
-#include <Riostream.h>
+#include <cstdlib>
+#include <ctime>
+#include <iostream>
+#include <snprintf.h>
 #include <TString.h>
 #include <TROOT.h>
 #include <TClass.h>
@@ -68,6 +69,7 @@
 #include <TGImageMap.h>
 #include <TASPaletteEditor.h>
 #include <TControlBar.h>
+#include <TControlBarImp.h>
 #include <TGSpeedo.h>
 #include <TGShapedFrame.h>
 #include <TGSplitFrame.h>
@@ -2183,7 +2185,7 @@ void testSplitFrame()
    first->GetFirst()->VSplit();
    first->GetSecond()->VSplit();
    first->GetSecond()->GetSecond()->SetEditable();
-   new TGTextEditor("stressGUI.cxx", gClient->GetRoot());
+   new TGTextEditor(Form("%s/test/stressGUI.cxx", gRootSys.Data()), gClient->GetRoot());
    first->GetSecond()->GetSecond()->SetEditable(kFALSE);
    mf->MapSubwindows();
    mf->Resize(600, 400);
@@ -2280,9 +2282,9 @@ void testPaletteEditor()
 
 void testHtmlBrowser()
 {
-   TGHtmlBrowser *b = new TGHtmlBrowser("http://bellenot.web.cern.ch/bellenot/Public/html_test/html_test.html");
+   TGHtmlBrowser *b = new TGHtmlBrowser("https://bellenot.web.cern.ch/public/html_test/html_test.html");
    ProcessFrame((TGMainFrame*)b, "HTML Browser 1");
-   b->Selected("http://bellenot.web.cern.ch/bellenot/Public/html_test/gallery/");
+   b->Selected("https://bellenot.web.cern.ch/public/html_test/gallery/");
    ProcessFrame((TGMainFrame*)b, "HTML Browser 2");
    b->CloseWindow();
 }

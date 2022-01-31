@@ -13,16 +13,11 @@ set(MINUIT2_HEADERS
     ABTypes.h
     AnalyticalGradientCalculator.h
     BFGSErrorUpdator.h
-    BasicFunctionGradient.h
-    BasicFunctionMinimum.h
-    BasicMinimumError.h
-    BasicMinimumParameters.h
-    BasicMinimumSeed.h
-    BasicMinimumState.h
     CombinedMinimizer.h
     CombinedMinimumBuilder.h
     ContoursError.h
     DavidonErrorUpdator.h
+    ExternalInternalGradientCalculator.h
     FCNAdapter.h
     FCNBase.h
     FCNGradAdapter.h
@@ -86,8 +81,6 @@ set(MINUIT2_HEADERS
     MnPlot.h
     MnPosDef.h
     MnPrint.h
-    MnRefCountedPointer.h
-    MnReferenceCounter.h
     MnScan.h
     MnSeedGenerator.h
     MnSimplex.h
@@ -123,9 +116,9 @@ set(MINUIT2_HEADERS
 set(MINUIT2_SOURCES
     AnalyticalGradientCalculator.cxx
     BFGSErrorUpdator.cxx
-    BasicMinimumError.cxx
     CombinedMinimumBuilder.cxx
     DavidonErrorUpdator.cxx
+    ExternalInternalGradientCalculator.cxx
     FumiliBuilder.cxx
     FumiliErrorUpdator.cxx
     FumiliGradientCalculator.cxx
@@ -160,6 +153,7 @@ set(MINUIT2_SOURCES
     MnPlot.cxx
     MnPosDef.cxx
     MnPrint.cxx
+    MnPrintImpl.cxx
     MnScan.cxx
     MnSeedGenerator.cxx
     MnStrategy.cxx
@@ -212,12 +206,6 @@ target_include_directories(
     PUBLIC
     $<BUILD_INTERFACE:${Minuit2_SOURCE_DIR}/inc>
     $<INSTALL_INTERFACE:include/Minuit2>
-    )
-
-target_compile_definitions(
-    Minuit2
-    PRIVATE
-    WARNINGMSG
     )
 
 target_compile_features(Minuit2 PUBLIC cxx_nullptr cxx_nonstatic_member_init)

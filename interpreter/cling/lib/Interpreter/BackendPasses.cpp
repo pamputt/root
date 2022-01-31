@@ -9,6 +9,8 @@
 
 #include "BackendPasses.h"
 
+#include "IncrementalJIT.h"
+
 #include "llvm/Analysis/InlineCost.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/Analysis/TargetTransformInfo.h"
@@ -21,11 +23,12 @@
 #include "llvm/Transforms/IPO/Inliner.h"
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
 #include "llvm/Transforms/Scalar.h"
+#include "llvm/Transforms/Utils.h"
 
 //#include "clang/Basic/LangOptions.h"
 //#include "clang/Basic/TargetOptions.h"
-#include "clang/Frontend/CodeGenOptions.h"
 #include "clang/Basic/CharInfo.h"
+#include "clang/Basic/CodeGenOptions.h"
 
 using namespace cling;
 using namespace clang;
@@ -116,6 +119,74 @@ namespace {
 
 char UniqueCUDAStructorName::ID = 0;
 
+
+namespace {
+
+  // Replace definitions of weak symbols for which symbols already exist by
+  // declarations. This reduces the amount of emitted symbols.
+  class ReuseExistingWeakSymbols : public ModulePass {
+    static char ID;
+    cling::IncrementalJIT& m_JIT;
+
+    bool runOnGlobal(GlobalValue& GV) {
+      if (GV.isDeclaration())
+        return false; // no change.
+
+      // GV is a definition.
+
+      llvm::GlobalValue::LinkageTypes LT = GV.getLinkage();
+      if (!GV.isDiscardableIfUnused(LT) || !GV.isWeakForLinker(LT))
+        return false;
+
+      // Find the symbol in shared libraries.
+      if (m_JIT.isEmittedSymbol(GV.getName())
+          || m_JIT.lookupSymbol(GV.getName()).first) {
+#if !defined(_WIN32)
+        // Heuristically, Windows cannot handle cross-library variables; they
+        // must be library-local.
+        if (auto *Var = dyn_cast<GlobalVariable>(&GV)) {
+          Var->setInitializer(nullptr); // make this a declaration
+        } else
+#endif
+        if (auto *Func = dyn_cast<Function>(&GV)) {
+          Func->deleteBody(); // make this a declaration
+        }
+        return true; // a change!
+      }
+      return false;
+    }
+
+  public:
+    ReuseExistingWeakSymbols(cling::IncrementalJIT& JIT) :
+      ModulePass(ID), m_JIT(JIT) {}
+
+    bool runOnModule(Module &M) override {
+      bool ret = false;
+      for (auto &&F: M)
+        ret |= runOnGlobal(F);
+      for (auto &&G: M.globals())
+        ret |= runOnGlobal(G);
+      return ret;
+    }
+  };
+}
+
+char ReuseExistingWeakSymbols::ID = 0;
+
+
+BackendPasses::BackendPasses(const clang::CodeGenOptions &CGOpts,
+                             const clang::TargetOptions & /*TOpts*/,
+                             const clang::LangOptions & /*LOpts*/,
+                             llvm::TargetMachine& TM,
+                             cling::IncrementalJIT& JIT):
+   m_TM(TM),
+   m_CGOpts(CGOpts),
+   //m_TOpts(TOpts),
+   //m_LOpts(LOpts)
+   m_JIT(JIT)
+{}
+
+
 BackendPasses::~BackendPasses() {
   //delete m_PMBuilder->Inliner;
 }
@@ -180,17 +251,19 @@ void BackendPasses::CreatePasses(llvm::Module& M, int OptLevel)
   } else {
     PMBuilder.Inliner = createFunctionInliningPass(OptLevel,
                                                    PMBuilder.SizeLevel,
-            (!m_CGOpts.SampleProfileFile.empty() && m_CGOpts.EmitSummaryIndex));
+            (!m_CGOpts.SampleProfileFile.empty() && m_CGOpts.PrepareForThinLTO));
   }
 
   // Set up the per-module pass manager.
   m_MPM[OptLevel].reset(new legacy::PassManager());
 
   m_MPM[OptLevel]->add(new KeepLocalGVPass());
+  m_MPM[OptLevel]->add(new ReuseExistingWeakSymbols(m_JIT));
+
   // The function __cuda_module_ctor and __cuda_module_dtor will just generated,
   // if a CUDA fatbinary file exist. Without file path there is no need for the
   // function pass.
-  if(!m_CGOpts.CudaGpuBinaryFileNames.empty())
+  if(!m_CGOpts.CudaGpuBinaryFileName.empty())
     m_MPM[OptLevel]->add(new UniqueCUDAStructorName());
   m_MPM[OptLevel]->add(createTargetTransformInfoWrapperPass(
                                                    m_TM.getTargetIRAnalysis()));

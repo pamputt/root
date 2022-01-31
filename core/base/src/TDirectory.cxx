@@ -8,11 +8,12 @@
  * For the licensing terms see $ROOTSYS/LICENSE.                         *
  * For the list of contributors see $ROOTSYS/README/CREDITS.             *
  *************************************************************************/
-#include <stdlib.h>
+#include <cstdlib>
 
-#include "Riostream.h"
 #include "Strlen.h"
+#include "strlcpy.h"
 #include "TDirectory.h"
+#include "TBuffer.h"
 #include "TClassTable.h"
 #include "TInterpreter.h"
 #include "THashList.h"
@@ -270,6 +271,12 @@ void TDirectory::CleanTargets()
          }
          fContext = next;
       }
+
+      for(auto ptr : fGDirectories) {
+         if (ptr->load() == this) {
+            (*ptr) = nullptr;
+         }
+      }
    }
    for(auto &&context : extraWait) {
       // Wait until the TContext is done spinning
@@ -311,7 +318,7 @@ static TBuffer* R__CreateBuffer()
    Int_t size = 10000;
    void *args[] = { &mode, &size };
    TBuffer *result;
-   creator(0,2,args,&result);
+   creator(nullptr,2,args,&result);
    return result;
 }
 
@@ -377,13 +384,13 @@ TObject *TDirectory::CloneObject(const TObject *obj, Bool_t autoadd /* = kTRUE *
 ////////////////////////////////////////////////////////////////////////////////
 /// Return the current directory for the current thread.
 
-TDirectory *&TDirectory::CurrentDirectory()
+std::atomic<TDirectory*> &TDirectory::CurrentDirectory()
 {
-   static TDirectory *currentDirectory = nullptr;
+   static std::atomic<TDirectory*> currentDirectory{nullptr};
    if (!gThreadTsd)
       return currentDirectory;
    else
-      return *(TDirectory**)(*gThreadTsd)(&currentDirectory,ROOT::kDirectoryThreadSlot);
+      return *(std::atomic<TDirectory*>*)(*gThreadTsd)(&currentDirectory,ROOT::kDirectoryThreadSlot);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -406,7 +413,7 @@ TDirectory *TDirectory::GetDirectory(const char *apath,
       return this;
    }
 
-   if (funcname==0 || strlen(funcname)==0) funcname = "GetDirectory";
+   if (funcname==nullptr || strlen(funcname)==0) funcname = "GetDirectory";
 
    TDirectory *result = this;
 
@@ -517,7 +524,9 @@ Bool_t TDirectory::cd1(const char *apath)
    Int_t nch = 0;
    if (apath) nch = strlen(apath);
    if (!nch) {
-      gDirectory = this;
+      auto &global = CurrentDirectory();
+      RegisterGDirectory(&global);
+      global = this;
       return kTRUE;
    }
 
@@ -664,7 +673,7 @@ void TDirectory::Delete(const char *namecycle)
    if(strcmp(name,"*") == 0)   deleteall = 1;
    if(strcmp(name,"*T") == 0){ deleteall = 1; deletetree = 1;}
    if(strcmp(name,"T*") == 0){ deleteall = 1; deletetree = 1;}
-   if(namecycle==0 || !namecycle[0]){ deleteall = 1; deletetree = 1;}
+   if(namecycle==nullptr || !namecycle[0]){ deleteall = 1; deletetree = 1;}
    TRegexp re(name,kTRUE);
    TString s;
    Int_t deleteOK = 0;
@@ -1047,7 +1056,6 @@ TDirectory *TDirectory::mkdir(const char *name, const char *title, Bool_t return
    }
    if (!name || !title || !name[0]) return nullptr;
    if (!title[0]) title = name;
-   TDirectory *newdir = nullptr;
    if (const char *slash = strchr(name,'/')) {
       Long_t size = Long_t(slash-name);
       char *workname = new char[size+1];
@@ -1059,16 +1067,12 @@ TDirectory *TDirectory::mkdir(const char *name, const char *title, Bool_t return
          tmpdir = mkdir(workname,title);
       delete[] workname;
       if (!tmpdir) return nullptr;
-      if (!newdir) newdir = tmpdir;
-      tmpdir->mkdir(slash+1);
-      return newdir;
+      return tmpdir->mkdir(slash+1);
    }
 
    TDirectory::TContext ctxt(this);
 
-   newdir = new TDirectory(name, title, "", this);
-
-   return newdir;
+   return new TDirectory(name, title, "", this);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1154,7 +1158,7 @@ void TDirectory::RecursiveRemove(TObject *obj)
 
 TObject *TDirectory::Remove(TObject* obj)
 {
-   TObject *p = 0;
+   TObject *p = nullptr;
    if (fList) {
       p = fList->Remove(obj);
    }
@@ -1169,7 +1173,7 @@ TObject *TDirectory::Remove(TObject* obj)
 
 void TDirectory::rmdir(const char *name)
 {
-   if ((name==0) || (*name==0)) return;
+   if ((name==nullptr) || (*name==0)) return;
 
    TString mask(name);
    mask+=";*";
@@ -1198,7 +1202,7 @@ Int_t TDirectory::SaveObjectAs(const TObject *obj, const char *filename, Option_
    }
    TString cmd;
    if (fname.Index(".json") > 0) {
-      cmd.Form("TBufferJSON::ExportToFile(\"%s\",(TObject*) %s, \"%s\");", fname.Data(), TString::LLtoa((Long_t)obj, 10).Data(), (option ? option : ""));
+      cmd.Form("TBufferJSON::ExportToFile(\"%s\",(TObject*) %s, \"%s\");", fname.Data(), TString::LLtoa((Longptr_t)obj, 10).Data(), (option ? option : ""));
       nbytes = gROOT->ProcessLine(cmd);
    } else {
       cmd.Form("TFile::Open(\"%s\",\"recreate\");",fname.Data());
@@ -1249,7 +1253,7 @@ void TDirectory::DecodeNameCycle(const char *buffer, char *name, Short_t &cycle,
                                  const size_t namesize)
 {
    size_t len = 0;
-   const char *ni = strchr(buffer, ';');
+   const char *ni = buffer ? strchr(buffer, ';') : nullptr;
 
    if (ni) {
       // Found ';'
@@ -1283,7 +1287,7 @@ void TDirectory::DecodeNameCycle(const char *buffer, char *name, Short_t &cycle,
       cycle = 9999;
 }
 
-////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////
 /// Register a TContext pointing to this TDirectory object
 
 void TDirectory::RegisterContext(TContext *ctxt) {
@@ -1302,7 +1306,21 @@ void TDirectory::RegisterContext(TContext *ctxt) {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-/// See TDirectoryFile::WriteTObject for details
+/// Register a std::atomic<TDirectory*> that will soon be pointing to this TDirectory object
+
+void TDirectory::RegisterGDirectory(std::atomic<TDirectory*> *globalptr)
+{
+   ROOT::Internal::TSpinLockGuard slg(fSpinLock);
+
+   if (std::find(fGDirectories.begin(), fGDirectories.end(), globalptr) != fGDirectories.end())
+      fGDirectories.push_back(globalptr);
+   // globalptr->load()->fGDirectories will still contain globalptr, but we cannot
+   // know whether globalptr->load() has been deleted by another thread in the meantime.
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+/// \copydoc TDirectory::WriteObject(const T*,const char*,Option_t*,Int_t).
 
 Int_t TDirectory::WriteTObject(const TObject *obj, const char *name, Option_t * /*option*/, Int_t /*bufsize*/)
 {

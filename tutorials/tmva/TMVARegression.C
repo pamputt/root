@@ -73,7 +73,7 @@ void TMVARegression( TString myMethodList = "" )
    Use["KNN"]             = 1;
    //
    // Linear Discriminant Analysis
-   Use["LD"]		        = 1;
+   Use["LD"]              = 1;
    //
    // Function Discriminant analysis
    Use["FDA_GA"]          = 0;
@@ -83,10 +83,17 @@ void TMVARegression( TString myMethodList = "" )
    //
    // Neural Network
    Use["MLP"]             = 0;
+   // Deep neural network (with CPU or GPU)
+#ifdef R__HAS_TMVAGPU
+   Use["DNN_GPU"] = 1;
+   Use["DNN_CPU"] = 0;
+#else
+   Use["DNN_GPU"] = 0;
 #ifdef R__HAS_TMVACPU
    Use["DNN_CPU"] = 1;
 #else
    Use["DNN_CPU"] = 0;
+#endif
 #endif
    //
    // Support Vector Machine
@@ -230,7 +237,7 @@ void TMVARegression( TString myMethodList = "" )
 
    if (Use["PDEFoam"])
        factory->BookMethod( dataloader,  TMVA::Types::kPDEFoam, "PDEFoam",
-			    "!H:!V:MultiTargetRegression=F:TargetSelection=Mpv:TailCut=0.001:VolFrac=0.0666:nActiveCells=500:nSampl=2000:nBin=5:Compress=T:Kernel=None:Nmin=10:VarTransform=None" );
+             "!H:!V:MultiTargetRegression=F:TargetSelection=Mpv:TailCut=0.001:VolFrac=0.0666:nActiveCells=500:nSampl=2000:nBin=5:Compress=T:Kernel=None:Nmin=10:VarTransform=None" );
 
    // K-Nearest Neighbour classifier (KNN)
    if (Use["KNN"])
@@ -242,7 +249,7 @@ void TMVARegression( TString myMethodList = "" )
       factory->BookMethod( dataloader,  TMVA::Types::kLD, "LD",
                            "!H:!V:VarTransform=None" );
 
-	// Function discrimination analysis (FDA) -- test of various fitters - the recommended one is Minuit (or GA or SA)
+   // Function discrimination analysis (FDA) -- test of various fitters - the recommended one is Minuit (or GA or SA)
    if (Use["FDA_MC"])
       factory->BookMethod( dataloader,  TMVA::Types::kFDA, "FDA_MC",
                           "!H:!V:Formula=(0)+(1)*x0+(2)*x1:ParRanges=(-100,100);(-100,100);(-100,100):FitMethod=MC:SampleSize=100000:Sigma=0.1:VarTransform=D" );
@@ -263,42 +270,27 @@ void TMVARegression( TString myMethodList = "" )
    if (Use["MLP"])
       factory->BookMethod( dataloader,  TMVA::Types::kMLP, "MLP", "!H:!V:VarTransform=Norm:NeuronType=tanh:NCycles=20000:HiddenLayers=N+20:TestRate=6:TrainingMethod=BFGS:Sampling=0.3:SamplingEpoch=0.8:ConvergenceImprove=1e-6:ConvergenceTests=15:!UseRegulator" );
 
-   if (Use["DNN_CPU"]) {
-      /*
-          TString layoutString ("Layout=TANH|(N+100)*2,LINEAR");
-          TString layoutString ("Layout=SOFTSIGN|100,SOFTSIGN|50,SOFTSIGN|20,LINEAR");
-          TString layoutString ("Layout=RELU|300,RELU|100,RELU|30,RELU|10,LINEAR");
-          TString layoutString ("Layout=SOFTSIGN|50,SOFTSIGN|30,SOFTSIGN|20,SOFTSIGN|10,LINEAR");
-          TString layoutString ("Layout=TANH|50,TANH|30,TANH|20,TANH|10,LINEAR");
-          TString layoutString ("Layout=SOFTSIGN|50,SOFTSIGN|20,LINEAR");
-          TString layoutString ("Layout=TANH|100,TANH|30,LINEAR");
-       */
-      TString layoutString("Layout=TANH|50,Layout=TANH|50,Layout=TANH|50,LINEAR");
+   if (Use["DNN_CPU"] || Use["DNN_GPU"]) {
 
-      TString training0("LearningRate=1e-2,Momentum=0.5,Repetitions=1,ConvergenceSteps=20,BatchSize=50,"
-                        "TestRepetitions=10,WeightDecay=0.01,Regularization=NONE,DropConfig=0.2+0.2+0.2+0.,"
-                        "DropRepetitions=2");
-      TString training1("LearningRate=1e-3,Momentum=0.9,Repetitions=1,ConvergenceSteps=20,BatchSize=50,"
-                        "TestRepetitions=5,WeightDecay=0.01,Regularization=L2,DropConfig=0.1+0.1+0.1,DropRepetitions="
-                        "1");
-      TString training2("LearningRate=1e-4,Momentum=0.3,Repetitions=1,ConvergenceSteps=10,BatchSize=50,"
-                        "TestRepetitions=5,WeightDecay=0.01,Regularization=NONE");
+      TString archOption =  Use["DNN_GPU"] ? "GPU" : "CPU";
+
+      TString layoutString("Layout=TANH|50,TANH|50,TANH|50,LINEAR");
+
 
       TString trainingStrategyString("TrainingStrategy=");
-      trainingStrategyString += training0 + "|" + training1 + "|" + training2;
 
-      //       TString trainingStrategyString
-      //       ("TrainingStrategy=LearningRate=1e-1,Momentum=0.3,Repetitions=3,ConvergenceSteps=20,BatchSize=30,TestRepetitions=7,WeightDecay=0.0,L1=false,DropFraction=0.0,DropRepetitions=5");
+      trainingStrategyString +="LearningRate=1e-3,Momentum=0.3,ConvergenceSteps=20,BatchSize=50,TestRepetitions=1,WeightDecay=0.0,Regularization=None,Optimizer=Adam";
 
-      TString nnOptions(
-         "!H:V:ErrorStrategy=SUMOFSQUARES:VarTransform=G:WeightInitialization=XAVIERUNIFORM:Architecture=CPU");
-      //       TString nnOptions ("!H:V:VarTransform=Normalize:ErrorStrategy=CHECKGRADIENTS");
+      TString nnOptions("!H:V:ErrorStrategy=SUMOFSQUARES:VarTransform=G:WeightInitialization=XAVIERUNIFORM:Architecture=");
+      nnOptions.Append(archOption);
       nnOptions.Append(":");
       nnOptions.Append(layoutString);
       nnOptions.Append(":");
       nnOptions.Append(trainingStrategyString);
 
-      factory->BookMethod(dataloader, TMVA::Types::kDNN, "DNN_CPU", nnOptions); // NN
+      TString methodName = TString("DNN_") + archOption;
+
+      factory->BookMethod(dataloader, TMVA::Types::kDL, methodName, nnOptions); // NN
    }
 
 

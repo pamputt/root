@@ -78,14 +78,15 @@ the following script:
 \image html base_tasks.png
 */
 
-#include "Riostream.h"
+#include <iostream>
 #include "TTask.h"
 #include "TBrowser.h"
+#include "TList.h"
 #include "TROOT.h"
 #include "TRegexp.h"
 
-TTask *TTask::fgBeginTask  = 0;
-TTask *TTask::fgBreakPoint = 0;
+TTask *TTask::fgBeginTask  = nullptr;
+TTask *TTask::fgBreakPoint = nullptr;
 
 ClassImp(TTask);
 
@@ -98,7 +99,7 @@ TTask::TTask()
    fActive      = kTRUE;
    fBreakin     = 0;
    fBreakout    = 0;
-   fTasks       = 0;
+   fTasks       = nullptr;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -164,6 +165,16 @@ TTask::~TTask()
    delete fTasks;
 }
 
+
+////////////////////////////////////////////////////////////////////////////////
+/// Add TTask to this.
+
+void  TTask::Add(TTask *task) 
+{
+   fTasks->Add(task);
+}
+
+
 ////////////////////////////////////////////////////////////////////////////////
 /// Abort current tree of tasks.
 /// After this call, the tree of tasks is ready to be executed again.
@@ -177,8 +188,8 @@ void TTask::Abort()
       return;
    }
    CleanTasks();
-   fgBeginTask  = 0;
-   fgBreakPoint = 0;
+   fgBeginTask  = nullptr;
+   fgBreakPoint = nullptr;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -231,13 +242,13 @@ void TTask::Continue()
       printf(" No task to continue\n");
       return;
    }
-   fgBreakPoint = 0;
+   fgBreakPoint = nullptr;
 
    fgBeginTask->ExecuteTasks(fOption.Data());
 
    if (!fgBreakPoint) {
       fgBeginTask->CleanTasks();
-      fgBeginTask = 0;
+      fgBeginTask = nullptr;
    }
 }
 
@@ -268,7 +279,7 @@ void TTask::ExecuteTask(Option_t *option)
 
    fOption = option;
    fgBeginTask = this;
-   fgBreakPoint = 0;
+   fgBreakPoint = nullptr;
 
    if (fBreakin) return;
    if (gDebug > 1) {
@@ -286,7 +297,7 @@ void TTask::ExecuteTask(Option_t *option)
 
    if (!fgBreakPoint) {
       fgBeginTask->CleanTasks();
-      fgBeginTask = 0;
+      fgBeginTask = nullptr;
    }
 }
 

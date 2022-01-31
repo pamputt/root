@@ -54,8 +54,10 @@ To retrieve a RooCurve from a RooPlot, use RooPlot::getCurve().
 #include "TAxis.h"
 #include "TMatrixD.h"
 #include "TVectorD.h"
+#include "Math/Util.h"
 #include <iomanip>
 #include <deque>
+#include <algorithm>
 
 using namespace std ;
 
@@ -326,27 +328,24 @@ void RooCurve::addPoints(const RooAbsFunc &func, Double_t xlo, Double_t xhi,
     minPoints = samplingHint->size() ;
   }
 
-  Int_t step;
   Double_t dx= (xhi-xlo)/(minPoints-1.);
-  Double_t *yval= new Double_t[minPoints];
+  std::vector<double> yval(minPoints);
   
   // Get list of initial x values. If function provides sampling hint use that,
   // otherwise use default binning of frame
-  list<Double_t>* xval = samplingHint ;
-  if (!xval) {
-    xval = new list<Double_t> ;
-    for(step= 0; step < minPoints; step++) {
-      xval->push_back(xlo + step*dx) ;
+  std::vector<double> xval;
+  if (!samplingHint) {
+    for(int step= 0; step < minPoints; step++) {
+      xval.push_back(xlo + step*dx) ;
     }    
+  } else {
+    std::copy(samplingHint->begin(), samplingHint->end(), std::back_inserter(xval));
   }
-  
 
-  Double_t ymax(-1e30), ymin(1e30) ;
-
-  step=0 ;
-  for(list<Double_t>::iterator iter = xval->begin() ; iter!=xval->end() ; ++iter,++step) {
-    Double_t xx = *iter ;
-    if (step==minPoints-1) xx-=1e-15 ;
+  for (unsigned int step=0; step < xval.size(); ++step) {
+    Double_t xx = xval[step];
+    if (step == static_cast<unsigned int>(minPoints-1))
+      xx -= 1e-15;
 
     yval[step]= func(&xx);
     if (_showProgress) {
@@ -356,19 +355,18 @@ void RooCurve::addPoints(const RooAbsFunc &func, Double_t xlo, Double_t xhi,
 
     if (RooAbsReal::numEvalErrors()>0) {
       if (numee>=0) {
-	coutW(Plotting) << "At observable [x]=" << xx <<  " " ;
-	RooAbsReal::printEvalErrors(ccoutW(Plotting),numee) ;
+        coutW(Plotting) << "At observable [x]=" << xx <<  " " ;
+        RooAbsReal::printEvalErrors(ccoutW(Plotting),numee) ;
       }
       if (doEEVal) {
-	yval[step]=eeVal ;
+        yval[step]=eeVal ;
       }
     }
     RooAbsReal::clearEvalErrorLog() ;
-
-
-    if (yval[step]>ymax) ymax=yval[step] ;
-    if (yval[step]<ymin) ymin=yval[step] ;
   }
+
+  const double ymax = *std::max_element(yval.begin(), yval.end());
+  const double ymin = *std::min_element(yval.begin(), yval.end());
   Double_t yrangeEst=(ymax-ymin) ;
 
   // store points of the coarse scan and calculate any refinements necessary
@@ -377,22 +375,23 @@ void RooCurve::addPoints(const RooAbsFunc &func, Double_t xlo, Double_t xhi,
 
   if (wmode==Extended) {
     // Add two points to make curve jump from 0 to yval at the left end of the plotting range.
-    // This ensures that filled polygons are drawn properly.
-    addPoint(xlo-dx*1.00000001,0) ;
+    // This ensures that filled polygons are drawn properly. The first point needs to be to the
+    // left of the second, so it's shifted by 1/1000 more than the second.
+    addPoint(xlo-dx*1.001, 0);
     addPoint(xlo-dx,yval[0]) ;
   } else if (wmode==Straight) {
-    addPoint(xlo,0) ;
+    addPoint(xlo-dx*0.001,0) ;
   }
 
   addPoint(xlo,yval[0]);
 
-  list<Double_t>::iterator iter2 = xval->begin() ;
+  auto iter2 = xval.begin() ;
   x1 = *iter2 ;
-  step=1 ;
+  int step=1 ;
   while(true) {
     x1= x2;
     ++iter2 ;
-    if (iter2==xval->end()) {
+    if (iter2==xval.end()) {
       break ;
     }
     x2= *iter2 ;
@@ -407,18 +406,13 @@ void RooCurve::addPoints(const RooAbsFunc &func, Double_t xlo, Double_t xhi,
   addPoint(xhi,yval[minPoints-1]) ;
 
   if (wmode==Extended) {
+    // Add two points to close polygon. The order matters. Since they are sorted in x later, the second
+    // point is shifted by 1/1000 more than the second-to-last point.
     addPoint(xhi+dx,yval[minPoints-1]) ;
-    addPoint(xhi+dx,0) ;
+    addPoint(xhi+dx*1.001, 0);
   } else if (wmode==Straight) {
-    addPoint(xhi,0) ;
+    addPoint(xhi+dx*0.001,0) ;
   }
-
-  // cleanup
-  delete [] yval;
-  if (xval != samplingHint) {
-    delete xval ;
-  }
-
 }
 
 
@@ -574,11 +568,11 @@ Double_t RooCurve::chiSquare(const RooHist& hist, Int_t nFitParam) const
 
   Int_t nbin(0) ;
 
-  Double_t chisq(0) ;
+  ROOT::Math::KahanSum<double> chisq;
   for (i=0 ; i<np ; i++) {   
 
     // Retrieve histogram contents
-    ((RooHist&)hist).GetPoint(i,x,y) ;
+    hist.GetPoint(i,x,y) ;
 
     // Check if point is in range of curve
     if (x<xstart || x>xstop) continue ;
@@ -625,8 +619,8 @@ Double_t RooCurve::average(Double_t xFirst, Double_t xLast) const
   Int_t ifirst = findPoint(xFirst,1e10) ;
   Int_t ilast  = findPoint(xLast,1e10) ;
   Double_t xFirstPt,yFirstPt,xLastPt,yLastPt ;
-  const_cast<RooCurve&>(*this).GetPoint(ifirst,xFirstPt,yFirstPt) ;
-  const_cast<RooCurve&>(*this).GetPoint(ilast,xLastPt,yLastPt) ;
+  GetPoint(ifirst,xFirstPt,yFirstPt) ;
+  GetPoint(ilast,xLastPt,yLastPt) ;
 
   Double_t tolerance=1e-3*(xLast-xFirst) ;
 
@@ -679,7 +673,7 @@ Int_t RooCurve::findPoint(Double_t xvalue, Double_t tolerance) const
   Int_t i,n = GetN() ;
   Int_t ibest(-1) ;
   for (i=0 ; i<n ; i++) {
-    ((RooCurve&)*this).GetPoint(i,x,y) ;
+    GetPoint(i,x,y);
     if (fabs(xvalue-x)<delta) {
       delta = fabs(xvalue-x) ;
       ibest = i ;
@@ -890,7 +884,7 @@ void RooCurve::calcBandInterval(const vector<RooCurve*>& variations,Int_t i,Doub
 /// Return true if curve is identical to other curve allowing for given
 /// absolute tolerance on each point compared point.
 
-Bool_t RooCurve::isIdentical(const RooCurve& other, Double_t tol) const 
+Bool_t RooCurve::isIdentical(const RooCurve& other, Double_t tol, bool verbose) const 
 {
   // Determine X range and Y range
   Int_t n= min(GetN(),other.GetN());
@@ -901,20 +895,20 @@ Bool_t RooCurve::isIdentical(const RooCurve& other, Double_t tol) const
     if (fY[i]<ymin) ymin=fY[i] ;
     if (fY[i]>ymax) ymax=fY[i] ;
   }
-  Double_t Yrange=ymax-ymin ;
+  const double Yrange=ymax-ymin ;
 
   Bool_t ret(kTRUE) ;
   for(Int_t i= 2; i < n-2; i++) {
     Double_t yTest = interpolate(other.fX[i],1e-10) ;
     Double_t rdy = fabs(yTest-other.fY[i])/Yrange ;
     if (rdy>tol) {
-
-//       cout << "xref = " << other.fX[i] << " yref = " << other.fY[i] << " xtest = " << fX[i] << " ytest = " << fY[i] 
-// 	   << " ytestInt[other.fX] = " << interpolate(other.fX[i],1e-10) << endl ;
-      
-      cout << "RooCurve::isIdentical[" << i << "] Y tolerance exceeded (" << rdy << ">" << tol 
-	   << "), X=" << other.fX[i] << "(" << fX[i] << ")" << " Ytest=" << yTest << " Yref=" << other.fY[i] << " range = " << Yrange << endl ;
-      ret=kFALSE ;
+      ret = false;
+      if(!verbose) continue;
+      cout << "RooCurve::isIdentical[" << std::setw(3) << i << "] Y tolerance exceeded (" << std::setprecision(5) << std::setw(10) << rdy << ">" << tol << "),";
+      cout << "  x,y=(" << std::right << std::setw(10) << fX[i] << "," << std::setw(10) << fY[i] << ")\tref: y="
+          << std::setw(10) << other.interpolate(fX[i], 1.E-15) << ". [Nearest point from ref: ";
+      auto j = other.findPoint(fX[i], 1.E10);
+      std::cout << "j=" << j << "\tx,y=(" << std::setw(10) << other.fX[j] << "," << std::setw(10) << other.fY[j] << ") ]" << "\trange=" << Yrange << std::endl;
     }
   }
       

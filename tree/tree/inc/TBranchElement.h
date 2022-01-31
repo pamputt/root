@@ -27,8 +27,6 @@
 
 #include "TTree.h"
 
-#include "TError.h"
-
 class TFolder;
 class TStreamerInfo;
 class TVirtualCollectionProxy;
@@ -44,7 +42,7 @@ class TBranchElement : public TBranch {
    friend class TTreeCloner;
    friend class TLeafElement;
 
-// Types
+/// Types
 protected:
    enum EStatusBits {
       kBranchFolder  = BIT(14),
@@ -56,17 +54,6 @@ protected:
       kDecomposedObj = BIT(21)  ///<  More explicit alias for kMakeClass.
    };
 
-   // Note on fType values:
-   // -1 unsplit object with custom streamer at time of writing
-   //  0 unsplit object with default streamer at time of writing
-   //    OR simple data member of split object (fID==-1 for the former)
-   //  1 base class of a split object.
-   //  2 class typed data member of a split object
-   //  3 branch count of a split TClonesArray
-   // 31 data member of the content of a split TClonesArray
-   //  4 branch count of a split STL Collection.
-   // 41 data member of the content of a split STL collection
-
 
 // Data Members
 protected:
@@ -77,7 +64,18 @@ protected:
    UInt_t                   fCheckSum;      ///<  CheckSum of class
    Version_t                fClassVersion;  ///<  Version number of class
    Int_t                    fID;            ///<  element serial number in fInfo
-   Int_t                    fType;          ///<  branch type
+   Int_t                    fType;          ///<  Branch type
+                                            ///<
+                                            ///<  Note on fType values:
+                                            ///<  * -1 unsplit object with custom streamer at time of writing
+                                            ///<  * 0 unsplit object with default streamer at time of writing
+                                            ///<      OR simple data member of split object (fID==-1 for the former)
+                                            ///<  * 1 base class of a split object.
+                                            ///<  * 2 class typed data member of a split object
+                                            ///<  * 3 branch count of a split TClonesArray
+                                            ///<  * 31 data member of the content of a split TClonesArray
+                                            ///<  * 4 branch count of a split STL Collection.
+                                            ///<  * 41 data member of the content of a split STL collection
    Int_t                    fStreamerType;  ///<  branch streamer type
    Int_t                    fMaximum;       ///<  Maximum entries for a TClonesArray or variable array
    Int_t                    fSTLtype;       ///<! STL container type
@@ -147,6 +145,7 @@ protected:
    void SetReadLeavesPtr();
    void SetReadActionSequence();
    void SetupAddressesImpl();
+   void SetAddressImpl(void *addr, Bool_t implied);
 
    void FillLeavesImpl(TBuffer& b);
    void FillLeavesMakeClass(TBuffer& b);
@@ -191,6 +190,7 @@ public:
    TClass                  *GetCurrentClass(); // Class referenced by transient description
    virtual Int_t            GetEntry(Long64_t entry = 0, Int_t getall = 0);
    virtual Int_t            GetExpectedType(TClass *&clptr,EDataType &type);
+   virtual TString          GetFullName() const;
            const char      *GetIconName() const;
            Int_t            GetID() const { return fID; }
            TStreamerInfo   *GetInfo() const;

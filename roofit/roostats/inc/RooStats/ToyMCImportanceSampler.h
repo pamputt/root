@@ -13,6 +13,7 @@
 #define ROOSTATS_ToyMCImportanceSampler
 
 #include "RooStats/ToyMCSampler.h"
+#include <vector>
 
 namespace RooStats {
 
@@ -105,7 +106,7 @@ class ToyMCImportanceSampler: public ToyMCSampler {
          }
 
          if( p == NULL && fNullDensities.size() >= 1 ) p = fNullDensities[0];
-         if( s == NULL ) s = fParametersForTestStat;
+         if( s == NULL ) s = fParametersForTestStat.get();
          if( s ) s = (const RooArgSet*)s->snapshot();
 
          fNullDensities.push_back( p );

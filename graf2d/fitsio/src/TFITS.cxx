@@ -69,7 +69,6 @@ several methods to manage them.
 */
 
 #include "TFITS.h"
-#include "TROOT.h"
 #include "TImage.h"
 #include "TArrayI.h"
 #include "TArrayD.h"
@@ -82,9 +81,10 @@ several methods to manage them.
 #include "TObjString.h"
 #include "TCanvas.h"
 #include "TMath.h"
+#include "strlcpy.h"
 
 #include "fitsio.h"
-#include <stdlib.h>
+#include <cstdlib>
 
 ClassImp(TFITSHDU);
 
@@ -1083,7 +1083,7 @@ TMatrixD* TFITSHDU::ReadAsMatrix(Int_t layer, Option_t *opt)
 ////////////////////////////////////////////////////////////////////////////////
 /// Read image HDU as a histogram. Return 0 if conversion cannot be done.
 /// The returned object can be TH1D, TH2D or TH3D depending on data dimensionality.
-/// Please, check condition (returnedValue->IsA() == TH*D::Class()) to
+/// Please, check condition (returnedValue->IsA() == TH*D::%Class()) to
 /// determine the object class.
 ///
 /// NOTE: do not confuse with image histogram! This function interprets

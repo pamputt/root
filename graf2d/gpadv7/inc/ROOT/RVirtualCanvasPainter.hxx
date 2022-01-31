@@ -36,7 +36,7 @@ protected:
    class Generator {
    public:
       /// Abstract interface to create a RVirtualCanvasPainter implementation.
-      virtual std::unique_ptr<RVirtualCanvasPainter> Create(const RCanvas &canv) const = 0;
+      virtual std::unique_ptr<RVirtualCanvasPainter> Create(RCanvas &canv) const = 0;
       /// Default destructor.
       virtual ~Generator();
    };
@@ -60,6 +60,9 @@ public:
    /// produce file output in batch mode like png, jpeg, svg or pdf
    virtual bool ProduceBatchOutput(const std::string &, int, int) = 0;
 
+   /// produce canvas JSON
+   virtual std::string ProduceJSON() = 0;
+
    virtual void NewDisplay(const std::string &where) = 0;
 
    virtual int NumDisplays() const = 0;
@@ -72,7 +75,7 @@ public:
    virtual bool AddPanel(std::shared_ptr<RWebWindow>) { return false; }
 
    /// Loads the plugin that implements this class.
-   static std::unique_ptr<RVirtualCanvasPainter> Create(const RCanvas &canv);
+   static std::unique_ptr<RVirtualCanvasPainter> Create(RCanvas &canv);
 };
 } // namespace Internal
 } // namespace Experimental

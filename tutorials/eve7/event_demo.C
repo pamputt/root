@@ -23,6 +23,7 @@
 #include <ROOT/REveScene.hxx>
 #include <ROOT/REveViewer.hxx>
 #include <ROOT/REveElement.hxx>
+#include <ROOT/REveCompound.hxx>
 #include <ROOT/REveManager.hxx>
 #include <ROOT/REveUtil.hxx>
 #include <ROOT/REveGeoShape.hxx>
@@ -31,10 +32,8 @@
 #include <ROOT/REvePointSet.hxx>
 #include <ROOT/REveJetCone.hxx>
 #include <ROOT/REveTrans.hxx>
-
 #include <ROOT/REveTrack.hxx>
 #include <ROOT/REveTrackPropagator.hxx>
-#include <ROOT/REveEllipsoid.hxx>
 
 namespace REX = ROOT::Experimental;
 
@@ -71,7 +70,7 @@ void addPoints()
 {
    REX::REveElement* event = eveMng->GetEventScene();
 
-   auto pntHolder = new REX::REveElement("Hits");
+   auto pntHolder = new REX::REveCompound("Hits");
 
    auto ps1 = getPointSet(20, 100);
    ps1->SetName("Points_1");
@@ -93,12 +92,12 @@ void addTracks()
 
    REX::REveElement* event = eveMng->GetEventScene();
    auto prop = new REX::REveTrackPropagator();
-   prop->SetMagFieldObj(new REX::REveMagFieldDuo(350, -3.5, 2.0));
+   prop->SetMagFieldObj(new REX::REveMagFieldDuo(350, 3.5, -2.0));
    prop->SetMaxR(300);
    prop->SetMaxZ(600);
    prop->SetMaxOrbs(6);
 
-   auto trackHolder = new REX::REveElement("Tracks");
+   auto trackHolder = new REX::REveCompound("Tracks");
 
    double v = 0.2;
    double m = 5;
@@ -106,14 +105,14 @@ void addTracks()
    int N_Tracks = 10 + r.Integer(20);
    for (int i = 0; i < N_Tracks; i++)
    {
-      TParticle* p = new TParticle();
+      TParticle p;
 
-      int pdg = 11* (r.Integer(2) -1);
-      p->SetPdgCode(pdg);
+      int pdg = 11 * (r.Integer(2) > 0 ? 1 : -1);
+      p.SetPdgCode(pdg);
 
-      p->SetProductionVertex(r.Uniform(-v,v), r.Uniform(-v,v), r.Uniform(-v,v), 1);
-      p->SetMomentum(r.Uniform(-m,m), r.Uniform(-m,m), r.Uniform(-m,m)*r.Uniform(1, 3), 1);
-      auto track = new REX::REveTrack(p, 1, prop);
+      p.SetProductionVertex(r.Uniform(-v,v), r.Uniform(-v,v), r.Uniform(-v,v), 1);
+      p.SetMomentum(r.Uniform(-m,m), r.Uniform(-m,m), r.Uniform(-m,m)*r.Uniform(1, 3), 1);
+      auto track = new REX::REveTrack(&p, 1, prop);
       track->MakeTrack();
       if (i % 4 == 3) track->SetLineStyle(2); // enabled dashed style for some tracks
       track->SetMainColor(kBlue);
@@ -130,7 +129,7 @@ void addJets()
    TRandom &r = *gRandom;
 
    REX::REveElement *event = eveMng->GetEventScene();
-   auto jetHolder = new REX::REveElement("Jets");
+   auto jetHolder = new REX::REveCompound("Jets");
 
    int N_Jets = 5 + r.Integer(5);
    for (int i = 0; i < N_Jets; i++)
@@ -148,62 +147,11 @@ void addJets()
    event->AddElement(jetHolder);
 }
 
-void addVertex()
-{
-   float pos[3] = {1.46589e-06,-1.30522e-05,-1.98267e-05};
-
-   // symnetric matrix
-
-   double a[16] = {1.46589e-01,-1.30522e-02,-1.98267e-02, 0,
-                   -1.30522e-02, 4.22955e-02,-5.86628e-03, 0,
-                   -1.98267e-02,-5.86628e-03, 2.12836e-01, 0,
-                   0, 0, 0, 1};
-
-   REX::REveTrans t;
-   t.SetFrom(a);
-   TMatrixDSym xxx(3);
-   for(int i = 0; i < 3; i++)
-      for(int j = 0; j < 3; j++)
-      {
-         xxx(i,j) = t(i+1,j+1);
-      }
-
-   TMatrixDEigen eig(xxx);
-   TVectorD xxxEig ( eig.GetEigenValues() );
-   xxxEig = xxxEig.Sqrt();
-
-   TMatrixD vecEig = eig.GetEigenVectors();
-   REX::REveVector v[3]; int ei = 0;
-   for (int i = 0; i < 3; ++i)
-   {
-      v[i].Set(vecEig(0,i), vecEig(1,i), vecEig(2,i));
-      v[i] *=  xxxEig(i);
-   }
-   REX::REveEllipsoid* ell = new  REX::REveEllipsoid("VertexError");
-   ell->InitMainTrans();
-   ell->SetMainColor(kGreen + 10);
-   ell->SetLineWidth(2);
-   ell->SetBaseVectors(v[0], v[1], v[2]);
-   ell->Outline();
-   REX::REveElement *event = eveMng->GetEventScene();
-   event->AddElement(ell);
-   return;
-   //center
-   auto ps = new REX::REvePointSet();
-   ps->SetMainColor(kGreen + 10);
-   ps->SetNextPoint(pos[0], pos[1], pos[2]);
-   ps->SetMarkerStyle(4);
-   ps->SetMarkerSize(4);
-   event->AddElement(ps);
-}
-
-
 void makeEventScene()
 {
    addPoints();
    addTracks();
    addJets();
-   addVertex();
 }
 
 void makeGeometryScene()
@@ -228,6 +176,7 @@ void createProjectionStuff()
    mngRhoPhi = new REX::REveProjectionManager(REX::REveProjection::kPT_RPhi);
 
    rphiView = eveMng->SpawnNewViewer("RPhi View", "");
+   rphiView->SetCameraType(REX::REveViewer::kCameraOrthoXOY);
    rphiView->AddScene(rPhiGeomScene);
    rphiView->AddScene(rPhiEventScene);
 
@@ -239,6 +188,7 @@ void createProjectionStuff()
    mngRhoZ = new REX::REveProjectionManager(REX::REveProjection::kPT_RhoZ);
 
    rhoZView = eveMng->SpawnNewViewer("RhoZ View", "");
+   rhoZView->SetCameraType(REX::REveViewer::kCameraOrthoXOY);
    rhoZView->AddScene(rhoZGeomScene);
    rhoZView->AddScene(rhoZEventScene);
 }
@@ -275,34 +225,98 @@ void projectScenes(bool geomp, bool eventp)
 
 class EventManager : public REX::REveElement
 {
+private:
+   bool fAutoplay{false};
+   int  fPlayDelay{10};
+   int  fCount{0};
+
+   std::chrono::time_point<std::chrono::system_clock> fPrevTime;
+   std::chrono::duration<double> fDeltaTime{1};
+
+   std::thread* fTimerThread{nullptr};
+   std::mutex fMutex;
+   std::condition_variable fCV;
+
+
 public:
-   EventManager() = default;
+   EventManager()
+   {
+      std::chrono::milliseconds ms(100);
+      fDeltaTime = ms;
+   }
 
    virtual ~EventManager() {}
 
-   virtual void NextEvent()
+   void NextEvent()
    {
-      eveMng->DisableRedraw();
-      auto scene =  eveMng->GetEventScene();
+      auto scene = eveMng->GetEventScene();
       scene->DestroyElements();
       makeEventScene();
-      for (auto &ie : scene->RefChildren())
-      {
+      for (auto &ie : scene->RefChildren()) {
          if (mngRhoPhi)
-         mngRhoPhi->ImportElements(ie, rPhiEventScene);
+            mngRhoPhi->ImportElements(ie, rPhiEventScene);
          if (mngRhoZ)
-         mngRhoZ  ->ImportElements(ie, rhoZEventScene);
+            mngRhoZ->ImportElements(ie, rhoZEventScene);
       }
-      eveMng->EnableRedraw();
-      eveMng->DoRedraw3D();
+      // if (++fCount % 10 == 0) printf("At event %d\n", fCount);
+   }
+
+   void autoplay_scheduler()
+   {
+      while (true) {
+         bool autoplay;
+         {
+            std::unique_lock<std::mutex> lock{fMutex};
+            if (!fAutoplay) {
+               // printf("exit thread pre wait\n");
+               return;
+            }
+            if (fCV.wait_for(lock, fDeltaTime) != std::cv_status::timeout) {
+               printf("autoplay not timed out \n");
+               if (!fAutoplay) {
+                  printf("exit thread post wait\n");
+                  return;
+               } else {
+                  continue;
+               }
+            }
+            autoplay = fAutoplay;
+         }
+         if (autoplay) {
+            REX::REveManager::ChangeGuard ch;
+            NextEvent();
+         } else {
+            return;
+         }
+      }
+   }
+
+   void Autoplay()
+   {
+      static std::mutex autoplay_mutex;
+      std::unique_lock<std::mutex> aplock{autoplay_mutex};
+      {
+         std::unique_lock<std::mutex> lock{fMutex};
+         fAutoplay = !fAutoplay;
+         if (fAutoplay) {
+            if (fTimerThread) {
+               fTimerThread->join();
+               delete fTimerThread;
+               fTimerThread = nullptr;
+            }
+            NextEvent();
+            fTimerThread = new std::thread{[this] { autoplay_scheduler(); }};
+         } else {
+            fCV.notify_all();
+         }
+      }
    }
 
    virtual void QuitRoot()
    {
       printf("Quit ROOT\n");
-      if (gApplication) gApplication->Terminate();
+      REX::REveManager::QuitRoot();
    }
-
 };
 
 void event_demo()
@@ -321,6 +335,8 @@ void event_demo()
    eveMng->GetWorld()->AddCommand("QuitRoot", "sap-icon://log", eventMng, "QuitRoot()");
 
    eveMng->GetWorld()->AddCommand("NextEvent", "sap-icon://step", eventMng, "NextEvent()");
+
+   eveMng->GetWorld()->AddCommand("Autoplay", "sap-icon://refresh", eventMng, "Autoplay()");
 
    makeGeometryScene();
    makeEventScene();

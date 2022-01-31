@@ -6,8 +6,6 @@
 #include "TBranch.h"
 #include "TBufferFile.h"
 #include "TFile.h"
-#include "TObject.h"
-#include "TStopwatch.h"
 #include "TTree.h"
 #include "TTreeReader.h"
 #include "TTreeReaderValue.h"
@@ -79,6 +77,7 @@ TEST_F(BulkApiSillyStructTest, stdReadStruct)
       evF++;
       evD++;
    }
+   delete hfile;
 }
 
 TEST_F(BulkApiSillyStructTest, stdReadSplitBranch)
@@ -101,6 +100,7 @@ TEST_F(BulkApiSillyStructTest, stdReadSplitBranch)
       evF++;
       evD++;
    }
+   delete hfile;
 }
 
 TEST_F(BulkApiSillyStructTest, fastRead)

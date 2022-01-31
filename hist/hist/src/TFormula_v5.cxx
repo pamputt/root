@@ -11,9 +11,9 @@
 
 #include <cmath>
 
-#include "Riostream.h"
 #include "TROOT.h"
 #include "TClass.h"
+#include "TBuffer.h"
 #include "v5/TFormula.h"
 #include "TMath.h"
 #include "TRandom.h"
@@ -24,6 +24,8 @@
 #include "v5/TFormulaPrimitive.h"
 #include "TInterpreter.h"
 #include "TVirtualMutex.h"
+#include "strlcpy.h"
+#include "snprintf.h"
 
 #ifdef WIN32
 #pragma optimize("",off)
@@ -432,7 +434,7 @@ Bool_t TFormula::AnalyzeFunction(TString &chaine, Int_t &err, Int_t offset)
    std::vector<TypeInfo_t*> proto(nargs,doubletype);
 
    CallFunc_t *callfunc = gInterpreter->CallFunc_Factory();
-   Long_t func_offset;
+   Longptr_t func_offset;
    gInterpreter->CallFunc_SetFuncProto(callfunc,cinfo,functionName,proto,false,&func_offset,ROOT::kConversionMatch);
 
    TMethodCall *method = new TMethodCall(ns,callfunc,func_offset);
@@ -3809,9 +3811,9 @@ void  TFormula::MakePrimitive(const char *expr, Int_t pos)
 ///             }
 /// ~~~
 ///     2. ex.
-///           -  fOptimal = ::EvalPrimitive0 - if it return only variable, constant or parameter
-///           -           = ::EvalParameter1 - if only one unary operation
-///           -           = ::EvalPrimitive2 - if only one binary operation
+///           -  fOptimal = TFormula::EvalPrimitive0 - if it return only variable, constant or parameter
+///           -           = TFormula::EvalPrimitive1 - if only one unary operation
+///           -           = TFormula::EvalPrimitive2 - if only one binary operation
 
 void TFormula::Optimize()
 {

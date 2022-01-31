@@ -23,7 +23,7 @@
 #include "RooArgList.h"
 #include "RooGlobalFunc.h"
 #include "RooSpan.h"
-#include "BatchData.h"
+#include "RooBatchComputeTypes.h"
 
 class RooArgList ;
 class RooDataSet ;
@@ -42,8 +42,11 @@ class RooFitResult ;
 class RooAbsMoment ;
 class RooDerivative ;
 class RooVectorDataStore ;
-namespace RooHelpers {
-class BatchInterfaceAccessor;
+struct TreeReadBuffer; /// A space to attach TBranches
+namespace ROOT {
+namespace Experimental {
+class RooFitDriver ;
+}
 }
 
 class TH1;
@@ -51,9 +54,10 @@ class TH1F;
 class TH2F;
 class TH3F;
 
-#include <list>
-#include <string>
 #include <iostream>
+#include <list>
+#include <map>
+#include <string>
 #include <sstream>
 
 class RooAbsReal : public RooAbsArg {
@@ -87,6 +91,14 @@ public:
   /// These are integrated over their current ranges to compute the normalisation constant,
   /// and the unnormalised result is divided by this value.
   inline Double_t getVal(const RooArgSet* normalisationSet = nullptr) const {
+    // Sometimes, the calling code uses an empty RooArgSet to request evaluation
+    // without normalization set instead of following the `nullptr` convention.
+    // To remove this ambiguity which might not always be correctly handled in
+    // downstream code, we set `normalisationSet` to nullptr if it is pointing
+    // to an empty set.
+    if(normalisationSet && normalisationSet->empty()) {
+      normalisationSet = nullptr;
+    }
 #ifdef ROOFIT_CHECK_CACHED_VALUES
     return _DEBUG_getVal(normalisationSet);
 #else
@@ -101,11 +113,31 @@ public:
   }
 
   /// Like getVal(const RooArgSet*), but always requires an argument for normalisation.
-  inline  Double_t getVal(const RooArgSet& normalisationSet) const { return _fast ? _value : getValV(&normalisationSet) ; }
+  inline  Double_t getVal(const RooArgSet& normalisationSet) const {
+    // Sometimes, the calling code uses an empty RooArgSet to request evaluation
+    // without normalization set instead of following the `nullptr` convention.
+    // To remove this ambiguity which might not always be correctly handled in
+    // downstream code, we set `normalisationSet` to nullptr if it is an empty set.
+    return _fast ? _value : getValV(normalisationSet.empty() ? nullptr : &normalisationSet) ;
+  }
 
   virtual Double_t getValV(const RooArgSet* normalisationSet = nullptr) const ;
 
-  virtual RooSpan<const double> getValBatch(std::size_t begin, std::size_t maxSize, const RooArgSet* normSet = nullptr) const;
+  /// \deprecated getValBatch() has been removed in favour of the faster getValues(). If your code is affected
+  /// by this change, please consult the release notes for ROOT 6.24 for guidance on how to make this transition.
+  /// https://root.cern/doc/v624/release-notes.html
+#ifndef R__MACOSX
+  virtual RooSpan<const double> getValBatch(std::size_t /*begin*/, std::size_t /*maxSize*/, const RooArgSet* /*normSet*/ = nullptr) = delete;
+#else
+  //AppleClang in MacOS10.14 has a linker bug and fails to link programs that create objects of classes containing virtual deleted methods.
+  //This can be safely deleted when MacOS10.14 is no longer supported by ROOT. See https://reviews.llvm.org/D37830
+  virtual RooSpan<const double> getValBatch(std::size_t /*begin*/, std::size_t /*maxSize*/, const RooArgSet* /*normSet*/ = nullptr) final {
+    throw std::logic_error("Deprecated getValBatch() has been removed in favour of the faster getValues(). If your code is affected by this change, please consult the release notes for ROOT 6.24 for guidance on how to make this transition. https://root.cern/doc/v624/release-notes.html");
+  }
+#endif
+  /// by this change, please consult the release notes for ROOT 6.24 for guidance on how to make this transition.
+  virtual RooSpan<const double> getValues(RooBatchCompute::RunContext& evalData, const RooArgSet* normSet = nullptr) const;
+  std::vector<double> getValues(RooAbsData& data, RooFit::BatchModeOption batchMode=RooFit::BatchModeOption::Cpu) const;
 
   Double_t getPropagatedError(const RooFitResult &fr, const RooArgSet &nset = RooArgSet()) const;
 
@@ -280,7 +312,7 @@ public:
   virtual void printValue(std::ostream& os) const ;
   virtual void printMultiline(std::ostream& os, Int_t contents, Bool_t verbose=kFALSE, TString indent="") const ;
 
-  static void setCacheCheck(Bool_t flag) ;
+  inline void setCachedValue(double value, bool notifyClients = true) final;
 
   // Evaluation error logging 
   class EvalError {
@@ -308,13 +340,10 @@ public:
 
   static void clearEvalErrorLog() ;
   
+  /// Tests if the distribution is binned. Unless overridden by derived classes, this always returns false.
   virtual Bool_t isBinnedDistribution(const RooArgSet& /*obs*/) const { return kFALSE ; }
-  virtual std::list<Double_t>* binBoundaries(RooAbsRealLValue& /*obs*/, Double_t /*xlo*/, Double_t /*xhi*/) const { return 0 ; }
-  virtual std::list<Double_t>* plotSamplingHint(RooAbsRealLValue& /*obs*/, Double_t /*xlo*/, Double_t /*xhi*/) const { 
-    // Interface for returning an optional hint for initial sampling points when constructing a curve 
-    // projected on observable.
-    return 0 ; 
-  }
+  virtual std::list<Double_t>* binBoundaries(RooAbsRealLValue& obs, Double_t xlo, Double_t xhi) const;
+  virtual std::list<Double_t>* plotSamplingHint(RooAbsRealLValue& obs, Double_t xlo, Double_t xhi) const;
 
   RooGenFunction* iGenFunction(RooRealVar& x, const RooArgSet& nset=RooArgSet()) ;
   RooMultiGenFunction* iGenFunction(const RooArgSet& observables, const RooArgSet& nset=RooArgSet()) ;
@@ -362,10 +391,11 @@ protected:
 
   
  public:
-  const RooAbsReal* createPlotProjection(const RooArgSet& depVars, const RooArgSet& projVars) const ;
   const RooAbsReal* createPlotProjection(const RooArgSet& depVars, const RooArgSet& projVars, RooArgSet*& cloneSet) const ;
   const RooAbsReal *createPlotProjection(const RooArgSet &dependentVars, const RooArgSet *projectedVars,
 				         RooArgSet *&cloneSet, const char* rangeName=0, const RooArgSet* condObs=0) const;
+  virtual void computeBatch(cudaStream_t*, double* output, size_t size, RooBatchCompute::DataMap&) const;
+
  protected:
 
   RooFitResult* chi2FitDriver(RooAbsReal& fcn, RooLinkedList& cmdList) ;
@@ -374,7 +404,7 @@ protected:
   RooPlot* plotOnWithErrorBand(RooPlot* frame,const RooFitResult& fr, Double_t Z, const RooArgSet* params, const RooLinkedList& argList, Bool_t method1) const ;
 
   // Support interface for subclasses to advertise their analytic integration
-  // and generator capabilities in their analticalIntegral() and generateEvent()
+  // and generator capabilities in their analyticalIntegral() and generateEvent()
   // implementations.
   Bool_t matchArgs(const RooArgSet& allDeps, RooArgSet& numDeps, 
 		   const RooArgProxy& a) const ;
@@ -395,35 +425,40 @@ protected:
 
 
   // Internal consistency checking (needed by RooDataSet)
-  virtual Bool_t isValid() const ;
-  virtual Bool_t isValidReal(Double_t value, Bool_t printError=kFALSE) const ;
+  /// Check if current value is valid.
+  virtual bool isValid() const { return isValidReal(_value); }
+  /// Interface function to check if given value is a valid value for this object. Returns true unless overridden.
+  virtual bool isValidReal(double /*value*/, bool printError = false) const { (void)printError; return true; }
+
 
   // Function evaluation and error tracing
   Double_t traceEval(const RooArgSet* set) const ;
 
   /// Evaluate this PDF / function / constant. Needs to be overridden by all derived classes.
   virtual Double_t evaluate() const = 0;
-  virtual RooSpan<double> evaluateBatch(std::size_t begin, std::size_t maxSize) const;
+
+  /// \deprecated evaluateBatch() has been removed in favour of the faster evaluateSpan(). If your code is affected
+  /// by this change, please consult the release notes for ROOT 6.24 for guidance on how to make this transition.
+  /// https://root.cern/doc/v624/release-notes.html
+#ifndef R__MACOSX
+  virtual RooSpan<double> evaluateBatch(std::size_t /*begin*/, std::size_t /*maxSize*/) = delete;
+#else
+  //AppleClang in MacOS10.14 has a linker bug and fails to link programs that create objects of classes containing virtual deleted methods.
+  //This can be safely deleted when MacOS10.14 is no longer supported by ROOT. See https://reviews.llvm.org/D37830
+  virtual RooSpan<double> evaluateBatch(std::size_t /*begin*/, std::size_t /*maxSize*/) final {
+    throw std::logic_error("Deprecated evaluatedBatch() has been removed in favour of the faster evaluateSpan(). If your code is affected by this change, please consult the release notes for ROOT 6.24 for guidance on how to make this transition. https://root.cern/doc/v624/release-notes.html");
+  }
+#endif
+
+  virtual RooSpan<double> evaluateSpan(RooBatchCompute::RunContext& evalData, const RooArgSet* normSet) const;
+
 
   //---------- Interface to access batch data ---------------------------
   //
-  friend class RooHelpers::BatchInterfaceAccessor;
-  void clearBatchMemory() {
-    _batchData.clear();
-    for (auto arg : _serverList) {
-      //TODO get rid of this cast?
-      auto absReal = dynamic_cast<RooAbsReal*>(arg);
-      if (absReal)
-        absReal->clearBatchMemory();
-    }
-  }
-
+  friend class BatchInterfaceAccessor;
+  
  private:
-  void checkBatchComputation(std::size_t evtNo, const RooArgSet* normSet = nullptr, double relAccuracy = 1.E-13) const;
-
-  const BatchHelpers::BatchData& batchData() const {
-    return _batchData;
-  }
+  void checkBatchComputation(const RooBatchCompute::RunContext& evalData, std::size_t evtNo, const RooArgSet* normSet = nullptr, double relAccuracy = 1.E-13) const;
 
   /// Debug version of getVal(), which is slow and does error checking.
   Double_t _DEBUG_getVal(const RooArgSet* normalisationSet) const;
@@ -446,24 +481,14 @@ protected:
   Double_t _plotMax ;       // Maximum of plot range
   Int_t    _plotBins ;      // Number of plot bins
   mutable Double_t _value ; // Cache for current value of object
-  mutable BatchHelpers::BatchData _batchData; //! Value storage for batches of events
   TString  _unit ;          // Unit for objects value
   TString  _label ;         // Plot label for objects value
   Bool_t   _forceNumInt ;   // Force numerical integration if flag set
-
-  mutable Float_t _floatValue{0.}; //! Transient cache for floating point values from tree branches
-  mutable Int_t   _intValue{0};    //! Transient cache for integer values from tree branches
-  mutable Bool_t  _boolValue{false}; //! Transient cache for bool values from tree branches
-  mutable UChar_t _byteValue{'\0'};  //! Transient cache for byte values from tree branches
-  mutable Char_t  _sbyteValue{'\0'}; //! Transient cache for signed byte values from tree branches
-  mutable UInt_t  _uintValue{0u};  //! Transient cache for unsigned integer values from tree branches
 
   friend class RooAbsPdf ;
   friend class RooAbsAnaConvPdf ;
 
   RooNumIntConfig* _specIntegratorConfig ; // Numeric integrator configuration specific for this object
-
-  Bool_t   _treeVar ;       // !do not persist
 
   friend class RooDataProjBinding ;
   friend class RooAbsOptGoodnessOfFit ;
@@ -522,6 +547,8 @@ private:
 
   Bool_t matchArgsByName(const RooArgSet &allArgs, RooArgSet &matchedArgs, const TList &nameList) const;
 
+  std::unique_ptr<TreeReadBuffer> _treeReadBuffer; //! A buffer for reading values from trees
+
 protected:
 
 
@@ -559,5 +586,32 @@ protected:
 
   ClassDef(RooAbsReal,2) // Abstract real-valued variable
 };
+
+
+/// Helper class to access a batch-related part of RooAbsReal's interface, which should not leak to the outside world.
+class BatchInterfaceAccessor {
+  public:
+    static void checkBatchComputation(const RooAbsReal& theReal, const RooBatchCompute::RunContext& evalData, std::size_t evtNo,
+        const RooArgSet* normSet = nullptr, double relAccuracy = 1.E-13) {
+      theReal.checkBatchComputation(evalData, evtNo, normSet, relAccuracy);
+    }
+};
+
+
+////////////////////////////////////////////////////////////////////////////////
+/// Overwrite the value stored in this object's cache.
+/// This can be used to fake a computation that resulted in `value`.
+/// \param[in] value Value to write.
+/// \param[in] setValDirty If true, notify users of this object that its value changed.
+/// This is the default.
+void RooAbsReal::setCachedValue(double value, bool notifyClients) {
+  _value = value;
+
+  if (notifyClients) {
+    setValueDirty();
+    _valueDirty = false;
+  }
+}
+
 
 #endif

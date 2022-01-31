@@ -1,9 +1,6 @@
-/// \file ROOT/RFileDialog.hxx
-/// \ingroup rbrowser
-/// \author Sergey Linev <S.Linev@gsi.de>
-/// \date 2019-10-31
-/// \warning This is part of the ROOT 7 prototype! It will change without notice. It might trigger earthquakes. Feedback
-/// is welcome!
+// Author: Sergey Linev <S.Linev@gsi.de>
+// Date: 2019-10-31
+// Warning: This is part of the ROOT 7 prototype! It will change without notice. It might trigger earthquakes. Feedback is welcome!
 
 /*************************************************************************
  * Copyright (C) 1995-2019, Rene Brun and Fons Rademakers.               *
@@ -26,12 +23,13 @@
 namespace ROOT {
 namespace Experimental {
 
+/** \class ROOT::Experimental::RFileDialog
+\ingroup rbrowser
+Initial message send to client to configure layout
+*/
 
-/** Initial message send to client to configure layout */
-
-
-/// function signature for connect/disconnect call-backs
-/// argument is connection id
+/// function signature for file dialog call-backs
+/// argument is selected file name
 using RFileDialogCallback_t = std::function<void(const std::string &)>;
 
 
@@ -49,8 +47,9 @@ public:
 protected:
 
    EDialogTypes fKind{kOpenFile};      ///<! dialog kind OpenFile, SaveAs, NewFile
-   std::string  fTitle;                ///<! title, when not specified default will be used
-   RBrowserData   fBrowsable;            ///<! central browsing element
+   std::string fTitle;                 ///<! title, when not specified default will be used
+   RBrowserData fBrowsable;            ///<! central browsing element
+   bool fCanChangePath{true};          ///<! if working path can be changed via gui elements
 
    std::shared_ptr<RWebWindow> fWebWindow;   ///<! web window for file dialog
 
@@ -87,6 +86,15 @@ public:
    void SetNameFilters(const std::vector<std::string> &arr) { fNameFilters = arr; }
    /** Returns array of name filters*/
    const auto &GetNameFilters() const { return fNameFilters; }
+
+   /** Configure if working path in dialog can be changed via gui elements */
+   void SetCanChangePath(bool on = true) { fCanChangePath = on; }
+
+   /** Returns true if working path can be change with gui elements */
+   bool GetCanChangePath() const { return fCanChangePath; }
+
+   void SetWorkingPath(const std::string &);
+   std::string GetWorkingPath() const;
 
    void SetSelectedFilter(const std::string &name);
    std::string GetSelectedFilter() const;

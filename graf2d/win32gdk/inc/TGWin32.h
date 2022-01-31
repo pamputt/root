@@ -18,7 +18,7 @@
 #include "TTF.h"
 
 
-#if !defined(__CINT__)
+#ifndef __CLING__
 
 #include "Windows4Root.h"
 #include "gdk/gdk.h"
@@ -26,11 +26,10 @@
 
 #else
 
-typedef ULong_t LPCRITICAL_SECTION;
 typedef unsigned long DWORD;
 typedef void* HANDLE;
 
-typedef unsigned long XID;
+typedef ULongptr_t XID;
 typedef XID GdkDrawable;
 typedef XID GdkCursor;
 typedef XID GdkColormap;
@@ -40,13 +39,11 @@ typedef XID GdkVisual;
 struct GdkGC;
 struct GdkGCValues;
 struct GdkWindowAttr;
-struct GdkColor;
+struct GdkColor { int pixel,red,green,blue; };
 struct GdkEvent;
 struct GdkImage;
 struct GdkPoint;
 struct GdkRectangle;
-
-struct MSG;
 
 #endif
 
@@ -186,8 +183,8 @@ public:
    Float_t   GetTextMagnitude() {return fTextMagnitude;}
    Window_t  GetWindowID(Int_t wid);
    Bool_t    HasTTFonts() const { return fHasTTFonts; }
-   Int_t     InitWindow(ULong_t window);
-   Int_t     AddPixmap(ULong_t pix, UInt_t w, UInt_t h);
+   Int_t     InitWindow(ULongptr_t window);
+   Int_t     AddPixmap(ULongptr_t pix, UInt_t w, UInt_t h);
    void      MoveWindow(Int_t wid, Int_t x, Int_t y);
    Int_t     OpenPixmap(UInt_t w, UInt_t h);
    void      QueryPointer(Int_t &ix, Int_t &iy);
@@ -201,7 +198,7 @@ public:
    void      SetCharacterUp(Float_t chupx, Float_t chupy);
    void      SetClipOFF(Int_t wid);
    void      SetClipRegion(Int_t wid, Int_t x, Int_t y, UInt_t w, UInt_t h);
-   void      SetCursor(Int_t win, ECursor cursor);
+   void      SetCursor(Int_t wid, ECursor cursor);
    void      SetDoubleBuffer(Int_t wid, Int_t mode);
    void      SetDoubleBufferOFF();
    void      SetDoubleBufferON();
@@ -377,8 +374,8 @@ public:
                          UInt_t w, UInt_t h);
    void         DeleteImage(Drawable_t img);
    unsigned char *GetColorBits(Drawable_t wid, Int_t x, Int_t y, UInt_t width, UInt_t height);
-   Int_t        AddWindow(ULong_t qwid, UInt_t w, UInt_t h);
-   void         RemoveWindow(ULong_t qwid);
+   Int_t        AddWindow(ULongptr_t qwid, UInt_t w, UInt_t h);
+   void         RemoveWindow(ULongptr_t qwid);
    void         ShapeCombineMask(Window_t id, Int_t x, Int_t y, Pixmap_t mask);
    UInt_t       ScreenWidthMM() const;
 
@@ -395,7 +392,6 @@ public:
    Window_t     FindRWindow(Window_t win, Window_t dragwin, Window_t input, int x, int y, int maxd);
    Bool_t       IsDNDAware(Window_t win, Atom_t *typelist);
 
-   Bool_t       GUIThreadMessageFunc(MSG* msg);
    Bool_t       IsCmdThread() const;
    void         SetUserThreadId(ULong_t id);
 

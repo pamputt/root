@@ -121,13 +121,15 @@
 //                                                                        //
 ////////////////////////////////////////////////////////////////////////////
 
-#include <stdio.h>
-#include <assert.h>
+#include <cstdio>
+#include <cassert>
+#include <set>
 
 #include "RConfigure.h"
 #include "TTabCom.h"
 #include "TClass.h"
 #include "TClassTable.h"
+#include "TDataMember.h"
 #include "TSystem.h"
 #include "TROOT.h"
 #include "TMethod.h"
@@ -137,12 +139,14 @@
 #include "TGlobal.h"
 #include "TList.h"
 #include "THashList.h"
+#include "TObjString.h"
 #include "Getline.h"
 #include "TFunction.h"
 #include "TMethodArg.h"
 #include "TInterpreter.h"
 #include "Riostream.h"
 #include "Rstrstream.h"
+#include "strlcpy.h"
 
 #define BUF_SIZE 1024 // must be smaller than/equal to fgLineBufSize in Getline.cxx and
                       // lineBufSize in cppcompleter.py
@@ -449,6 +453,11 @@ const TSeqCollection *TTabCom::GetListOfClasses()
             fpClasses->Add(new TObjString(className));
          }
       }
+
+      // Add possible identifiers coming from the global module index.
+      // FIXME: Consolidate all this -- we have ultimate source of information
+      // clang's identifier table and the ASTIndentifiers.
+      gInterpreter->AddAvailableIndentifiers(*fpClasses);
    }
 
    if (fPrevInterpMarker != gInterpreter->GetInterpreterStateMarker()) {
@@ -910,7 +919,7 @@ Bool_t TTabCom::ExcludedByFignore(TString s)
 ///[static utility function]/////////////////////////////
 ///
 ///  returns a colon-separated string of directories
-///  that CINT will search when you call #include<...>
+///  that CINT will search when you call `#include<...>`
 ///
 ///  returns empty string on failure.
 ///
@@ -1283,7 +1292,7 @@ Int_t TTabCom::Complete(const TRegexp & re,
          }
       }
 
-      CopyMatch(match, short_name, appendage, full_name);
+      CopyMatch(match, sizeof(match), short_name, appendage, full_name);
    } else {
       // multiple matches ==> complete as far as possible
       Char_t ch;
@@ -1310,14 +1319,14 @@ Int_t TTabCom::Complete(const TRegexp & re,
          while (ExcludedByFignore(s));
 
          // and use it.
-         CopyMatch(match, s, appendage, s0);
+         CopyMatch(match, sizeof(match), s, appendage, s0);
       } else {
          IfDebug(std::cerr << "more than 1 GoodString" << std::endl);
 
          if (partialMatch.Length() > s3.Length())
             // this partial match is our (partial) completion.
          {
-            CopyMatch(match, partialMatch.Data());
+            CopyMatch(match, sizeof(match), partialMatch.Data());
          } else
             // couldn't do any completing at all,
             // print a list of all the ambiguous matches
@@ -1345,7 +1354,7 @@ Int_t TTabCom::Complete(const TRegexp & re,
             // update the matching part, will have changed
             // capitalization because only cmp == TString::kIgnoreCase
             // matches.
-            CopyMatch(match, partialMatch.Data());
+            CopyMatch(match, sizeof(match), partialMatch.Data());
          }
       }
    }
@@ -1402,9 +1411,10 @@ done:                         // <----- goto label
 ////////////////////////////////////////////////////////////////////////////////
 /// [private]
 
-void TTabCom::CopyMatch(char dest[], const char localName[],
-                        const char appendage[],
-                        const char fullName[]) const
+void TTabCom::CopyMatch(char *dest, int dest_len,
+                        const char *localName,
+                        const char *appendage,
+                        const char *fullName) const
 {
    // if "appendage" is 0, no appendage is applied.
    //
@@ -1419,7 +1429,7 @@ void TTabCom::CopyMatch(char dest[], const char localName[],
    assert(localName != 0);
 
    // potential buffer overflow.
-   strcpy(dest, localName);
+   strlcpy(dest, localName, dest_len);
 
    const char *key = "filename";
    const int key_len = strlen(key);
@@ -1440,14 +1450,14 @@ void TTabCom::CopyMatch(char dest[], const char localName[],
       IfDebug(std::cerr << "new appendage: " << appendage << std::endl);
       if (IsDirectory(fullName)) {
          if (fullName)
-            strcpy(dest + strlen(localName), "/");
+            strlcat(dest, "/", dest_len);
       } else {
          if (appendage)
-            strcpy(dest + strlen(localName), appendage);
+            strlcat(dest, appendage, dest_len);
       }
    } else {
       if (appendage)
-         strcpy(dest + strlen(localName), appendage);
+         strlcat(dest, appendage, dest_len);
    }
 }
 

@@ -17,7 +17,8 @@
 #define ROO_ABS_REAL_LVALUE
 
 #include <cmath>
-#include <float.h>
+#include <cfloat>
+#include <utility>
 #include "TString.h"
 
 #include "RooAbsReal.h"
@@ -37,7 +38,13 @@ public:
   virtual ~RooAbsRealLValue();
 
   // Parameter value and error accessors
+  /// Set the current value of the object. Needs to be overridden by implementations.
   virtual void setVal(Double_t value)=0;
+  /// Set the current value of the object. The rangeName is ignored.
+  /// Can be overridden by derived classes to e.g. check if the value fits in the given range.
+  virtual void setVal(Double_t value, const char* /*rangeName*/) {
+    return setVal(value) ;
+  }
   virtual RooAbsArg& operator=(const RooAbsReal& other) ;
   virtual RooAbsArg& operator=(Double_t newValue);
 
@@ -84,7 +91,8 @@ public:
   /// \param name Optional range name. If not given, the default range will be used.
   /// \return A pair with [lowerBound, upperBound]
   std::pair<double, double> getRange(const char* name = 0) const {
-    return {getMin(name), getMax(name)};
+    const auto& binning = getBinning(name);
+    return {binning.lowBound(), binning.highBound()};
   }
   /// Check if variable has a lower bound.
   inline Bool_t hasMin(const char* name=0) const { return !RooNumber::isInfinite(getMin(name)); }
@@ -101,6 +109,7 @@ public:
 
   // Test a value against our fit range
   Bool_t inRange(Double_t value, const char* rangeName, Double_t* clippedValue=0) const;
+  void inRange(std::span<const double> values, std::string const& rangeName, std::vector<bool>& out) const;
   virtual Bool_t isValidReal(Double_t value, Bool_t printError=kFALSE) const ;
 
   // Constant and Projected flags
@@ -150,14 +159,8 @@ public:
 
 protected:
 
-  friend class RooRealBinding ;
-
   virtual void setValFast(Double_t value) { setVal(value) ; }
 
-  virtual void setVal(Double_t value, const char* /*rangeName*/) {
-    // Set object value to 'value'
-    return setVal(value) ;
-  }
   Bool_t fitRangeOKForPlotting() const ;
   void copyCache(const RooAbsArg* source, Bool_t valueOnly=kFALSE, Bool_t setValDirty=kTRUE) ;
 

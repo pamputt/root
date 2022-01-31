@@ -9,8 +9,11 @@
  * For the list of contributors see $ROOTSYS/README/CREDITS.             *
  *************************************************************************/
 
-#include "Riostream.h"
+#include <iostream>
+#include "strlcpy.h"
+#include "snprintf.h"
 #include "TROOT.h"
+#include "TBuffer.h"
 #include "TMath.h"
 #include "TF1.h"
 #include "TH1.h"
@@ -18,6 +21,7 @@
 #include "TVirtualPad.h"
 #include "TStyle.h"
 #include "TRandom.h"
+#include "TObjString.h"
 #include "TInterpreter.h"
 #include "TPluginManager.h"
 #include "TBrowser.h"
@@ -86,7 +90,7 @@ public:
             fFormula->SetParameters(from.GetParameters());
       } else {
          // case of a function pointers
-         fParams = new TF1Parameters(fNpar);
+         fParams.reset(new TF1Parameters(fNpar));
          fName = from.GetName();
          fTitle = from.GetTitle();
          // need to set parameter values
@@ -235,7 +239,7 @@ public:
 
 ////////////////////////////////////////////////////////////////////////////////
 /** \class TF1
-    \ingroup Hist
+    \ingroup Functions
     \brief 1-Dim function class
 
 
@@ -248,16 +252,17 @@ TF1 graphics function is via the TH1 and TGraph drawing functions.
 
 The following types of functions can be created:
 
-1.  [Expression using variable x and no parameters]([#F1)
-2.  [Expression using variable x with parameters](#F2)
-3.  [Lambda Expression with variable x and parameters](#F3)
-4.  [A general C function with parameters](#F4)
-5.  [A general C++ function object (functor) with parameters](#F5)
-6.  [A member function with parameters of a general C++ class](#F6)
+1.  [Expression using variable x and no parameters](\ref F1)
+2.  [Expression using variable x with parameters](\ref F2)
+3.  [Lambda Expression with variable x and parameters](\ref F3)
+4.  [A general C function with parameters](\ref F4)
+5.  [A general C++ function object (functor) with parameters](\ref F5)
+6.  [A member function with parameters of a general C++ class](\ref F6)
 
 
 
-### <a name="F1"></a> 1 - Expression using variable x and no parameters
+\anchor F1
+### 1 - Expression using variable x and no parameters
 
 #### Case 1: inline expression using standard C++ functions/operators
 
@@ -287,7 +292,8 @@ TF1 *fa3 = new TF1("fa3","myFunc(x)",-3,5);
 fa3->Draw();
 ~~~~
 
-### <a name="F2"></a> 2 - Expression using variable x with parameters
+\anchor F2
+### 2 - Expression using variable x with parameters
 
 #### Case 1: inline expression using standard C++ functions/operators
 
@@ -340,7 +346,8 @@ Begin_Macro
 }
 End_Macro
 
-###<a name="F3"></a> 3 - A lambda expression with variables and parameters
+\anchor F3
+### 3 - A lambda expression with variables and parameters
 
 \since **6.00/00:**
 TF1 supports using lambda expressions in the formula. This allows, by using a full C++ syntax the full power of lambda
@@ -356,7 +363,8 @@ TF1 f2("f2","cos(x)",0,10);
 TF1 fsum("f1","[&](double *x, double *p){ return p[0]*f1(x) + p[1]*f2(x); }",0,10,2);
 ~~~~
 
-###<a name="F4"></a> 4 - A general C function with parameters
+\anchor F4
+### 4 - A general C function with parameters
 
 Consider the macro myfunc.C below:
 
@@ -418,7 +426,8 @@ Example:
 ~~~~
 
 
-### <a name="F5"></a> 5 - A general C++ function object (functor) with parameters
+\anchor F5
+### 5 - A general C++ function object (functor) with parameters
 
 A TF1 can be created from any C++ class implementing the operator()(double *x, double *p). The advantage of the function object is that he can have a state and reference therefore what-ever other object. In this way the user can customize his function.
 
@@ -454,7 +463,8 @@ TF1 * f = new TF1("f",[&](double*x, double *p){ return p[0]*g->Eval(x[0]); }, xm
 ~~~~
 
 
-### <a name="F6"></a> 6 - A member function with parameters of a general C++ class
+\anchor F6
+### 6 - A member function with parameters of a general C++ class
 
 A TF1 can be created in this case from any member function of a class which has the signature of (double * , double *) and returning a double.
 
@@ -520,13 +530,13 @@ TF1::TF1(const char *name, const char *formula, Double_t xmin, Double_t xmax, EA
       fXmax = xmin;
    }
    // Create rep formula (no need to add to gROOT list since we will add the TF1 object)
-
+   const auto formulaLength = strlen(formula);
    // First check if we are making a convolution
-   if (TString(formula, 5) == "CONV(" && formula[strlen(formula) - 1] == ')') {
+   if (strncmp(formula, "CONV(", 5) == 0 && formula[formulaLength - 1] == ')') {
       // Look for single ',' delimiter
       int delimPosition = -1;
       int parenCount = 0;
-      for (unsigned int i = 5; i < strlen(formula) - 1; i++) {
+      for (unsigned int i = 5; i < formulaLength - 1; i++) {
          if (formula[i] == '(')
             parenCount++;
          else if (formula[i] == ')')
@@ -543,7 +553,7 @@ TF1::TF1(const char *name, const char *formula, Double_t xmin, Double_t xmax, EA
 
       // Having found the delimiter, define the first and second formulas
       TString formula1 = TString(TString(formula)(5, delimPosition - 5));
-      TString formula2 = TString(TString(formula)(delimPosition + 1, strlen(formula) - 1 - (delimPosition + 1)));
+      TString formula2 = TString(TString(formula)(delimPosition + 1, formulaLength - 1 - (delimPosition + 1)));
       // remove spaces from these formulas
       formula1.ReplaceAll(' ', "");
       formula2.ReplaceAll(' ', "");
@@ -557,7 +567,7 @@ TF1::TF1(const char *name, const char *formula, Double_t xmin, Double_t xmax, EA
 
       // std::cout << "functions have been defined" << std::endl;
 
-      TF1Convolution *conv = new TF1Convolution(function1, function2);
+      TF1Convolution *conv = new TF1Convolution(function1, function2,xmin,xmax);
 
       // (note: currently ignoring `useFFT` option)
       fNpar = conv->GetNpar();
@@ -566,7 +576,7 @@ TF1::TF1(const char *name, const char *formula, Double_t xmin, Double_t xmax, EA
       fType = EFType::kCompositionFcn;
       fComposition = std::unique_ptr<TF1AbsComposition>(conv);
 
-      fParams = new TF1Parameters(fNpar); // default to zeros (TF1Convolution has no GetParameters())
+      fParams = std::unique_ptr<TF1Parameters>(new TF1Parameters(fNpar)); // default to zeros (TF1Convolution has no GetParameters())
       // set parameter names
       for (int i = 0; i < fNpar; i++)
          this->SetParName(i, conv->GetParName(i));
@@ -595,11 +605,11 @@ TF1::TF1(const char *name, const char *formula, Double_t xmin, Double_t xmax, EA
       }
 
       // Then check if we need NSUM syntax:
-   } else if (TString(formula, 5) == "NSUM(" && formula[strlen(formula) - 1] == ')') {
+   } else if (strncmp(formula, "NSUM(", 5) == 0 && formula[formulaLength - 1] == ')') {
       // using comma as delimiter
       char delimiter = ',';
       // first, remove "NSUM(" and ")" and spaces
-      TString formDense = TString(formula)(5,strlen(formula)-5-1);
+      TString formDense = TString(formula)(5,formulaLength-5-1);
       formDense.ReplaceAll(' ', "");
 
       // make sure standard functions are defined (e.g. gaus, expo)
@@ -636,7 +646,7 @@ TF1::TF1(const char *name, const char *formula, Double_t xmin, Double_t xmax, EA
       fType = EFType::kCompositionFcn;
       fComposition = std::unique_ptr<TF1AbsComposition>(normSum);
 
-      fParams = new TF1Parameters(fNpar);
+      fParams = std::unique_ptr<TF1Parameters>(new TF1Parameters(fNpar));
       fParams->SetParameters(&(normSum->GetParameters())[0]); // inherit default parameters from normSum
 
       // Parameter names
@@ -650,7 +660,7 @@ TF1::TF1(const char *name, const char *formula, Double_t xmin, Double_t xmax, EA
       }
 
    } else { // regular TFormula
-      fFormula = new TFormula(name, formula, false, vectorize);
+      fFormula = std::unique_ptr<TFormula>(new TFormula(name, formula, false, vectorize));
       fNpar = fFormula->GetNpar();
       // TFormula can have dimension zero, but since this is a TF1 minimal dim is 1
       fNdim = fFormula->GetNdim() == 0 ? 1 : fFormula->GetNdim();
@@ -707,7 +717,7 @@ TF1::TF1(const char *name, const char *formula, Double_t xmin, Double_t xmax, Op
 ///
 ///  This constructor is called for functions of type C by the C++ interpreter.
 ///
-/// WARNING! A function created with this constructor cannot be Cloned.
+/// \warning A function created with this constructor cannot be Cloned.
 
 TF1::TF1(const char *name, Double_t xmin, Double_t xmax, Int_t npar, Int_t ndim, EAddToList addToGlobList) :
    TF1(EFType::kInterpreted, name, xmin, xmax, npar, ndim, addToGlobList, new TF1Parameters(npar))
@@ -720,7 +730,7 @@ TF1::TF1(const char *name, Double_t xmin, Double_t xmax, Int_t npar, Int_t ndim,
       return;
    }
 
-   fMethodCall = new TMethodCall();
+   fMethodCall = std::unique_ptr<TMethodCall>(new TMethodCall());
    fMethodCall->InitWithPrototype(fName, "Double_t*,Double_t*");
 
    if (! fMethodCall->IsValid()) {
@@ -733,7 +743,12 @@ TF1::TF1(const char *name, Double_t xmin, Double_t xmax, Int_t npar, Int_t ndim,
 ////////////////////////////////////////////////////////////////////////////////
 /// Constructor using a pointer to a real function.
 ///
-/// \param npar is the number of free parameters used by the function
+/// \param[in] name object name
+/// \param[in] fcn pointer to function
+/// \param[in] xmin,xmax x axis limits
+/// \param[in] npar is the number of free parameters used by the function
+/// \param[in] ndim number of dimensions
+/// \param[in] addToGlobList boolean marking if it should be added to global list
 ///
 /// This constructor creates a function of type C when invoked
 /// with the normal C++ compiler.
@@ -741,16 +756,21 @@ TF1::TF1(const char *name, Double_t xmin, Double_t xmax, Int_t npar, Int_t ndim,
 /// see test program test/stress.cxx (function stress1) for an example.
 /// note the interface with an intermediate pointer.
 ///
-/// WARNING! A function created with this constructor cannot be Cloned.
+/// \warning A function created with this constructor cannot be Cloned.
 
 TF1::TF1(const char *name, Double_t (*fcn)(Double_t *, Double_t *), Double_t xmin, Double_t xmax, Int_t npar, Int_t ndim, EAddToList addToGlobList) :
    TF1(EFType::kPtrScalarFreeFcn, name, xmin, xmax, npar, ndim, addToGlobList, new TF1Parameters(npar), new TF1FunctorPointerImpl<double>(ROOT::Math::ParamFunctor(fcn)))
 {}
 
 ////////////////////////////////////////////////////////////////////////////////
-/// Constructor using a pointer to real function.
+/// Constructor using a pointer to (const) real function.
 ///
-/// \param npar is the number of free parameters used by the function
+/// \param[in] name object name
+/// \param[in] fcn pointer to function
+/// \param[in] xmin,xmax x axis limits
+/// \param[in] npar is the number of free parameters used by the function
+/// \param[in] ndim number of dimensions
+/// \param[in] addToGlobList boolean marking if it should be added to global list
 ///
 /// This constructor creates a function of type C when invoked
 /// with the normal C++ compiler.
@@ -758,7 +778,7 @@ TF1::TF1(const char *name, Double_t (*fcn)(Double_t *, Double_t *), Double_t xmi
 /// see test program test/stress.cxx (function stress1) for an example.
 /// note the interface with an intermediate pointer.
 ///
-/// WARNING! A function created with this constructor cannot be Cloned.
+/// \warning A function created with this constructor cannot be Cloned.
 
 TF1::TF1(const char *name, Double_t (*fcn)(const Double_t *, const Double_t *), Double_t xmin, Double_t xmax, Int_t npar, Int_t ndim, EAddToList addToGlobList) :
    TF1(EFType::kPtrScalarFreeFcn, name, xmin, xmax, npar, ndim, addToGlobList, new TF1Parameters(npar), new TF1FunctorPointerImpl<double>(ROOT::Math::ParamFunctor(fcn)))
@@ -767,9 +787,13 @@ TF1::TF1(const char *name, Double_t (*fcn)(const Double_t *, const Double_t *), 
 ////////////////////////////////////////////////////////////////////////////////
 /// Constructor using the Functor class.
 ///
+/// \param[in] name object name
+/// \param f parameterized functor
 /// \param xmin and
 /// \param xmax define the plotting range of the function
-/// \param npar is the number of free parameters used by the function
+/// \param[in] npar is the number of free parameters used by the function
+/// \param[in] ndim number of dimensions
+/// \param[in] addToGlobList boolean marking if it should be added to global list
 ///
 /// This constructor can be used only in compiled code
 ///
@@ -938,7 +962,6 @@ TF1 &TF1::operator=(const TF1 &rhs)
 TF1::~TF1()
 {
    if (fHistogram) delete fHistogram;
-   if (fMethodCall) delete fMethodCall;
 
    // this was before in TFormula destructor
    {
@@ -948,9 +971,6 @@ TF1::~TF1()
 
    if (fParent) fParent->RecursiveRemove(this);
 
-   if (fFormula) delete fFormula;
-   if (fParams) delete fParams;
-   if (fFunctor) delete fFunctor;
 }
 
 
@@ -994,7 +1014,6 @@ void TF1::Browse(TBrowser *b)
 void TF1::Copy(TObject &obj) const
 {
    delete((TF1 &)obj).fHistogram;
-   delete((TF1 &)obj).fMethodCall;
 
    TNamed::Copy((TF1 &)obj);
    TAttLine::Copy((TF1 &)obj);
@@ -1025,36 +1044,25 @@ void TF1::Copy(TObject &obj) const
 
    if (fFormula) assert(fFormula->GetNpar() == fNpar);
 
-   if (fMethodCall) {
-      // use copy-constructor of TMethodCall
-      if (((TF1 &)obj).fMethodCall) delete((TF1 &)obj).fMethodCall;
-      TMethodCall *m = new TMethodCall(*fMethodCall);
-//       m->InitWithPrototype(fMethodCall->GetMethodName(),fMethodCall->GetProto());
-      ((TF1 &)obj).fMethodCall  = m;
-   }
-   if (fFormula) {
-      TFormula *formulaToCopy = ((TF1 &)obj).fFormula;
-      if (formulaToCopy) delete formulaToCopy;
-      formulaToCopy = new TFormula();
-      fFormula->Copy(*formulaToCopy);
-      ((TF1 &)obj).fFormula =  formulaToCopy;
-   }
-   if (fParams) {
-      TF1Parameters *paramsToCopy = ((TF1 &)obj).fParams;
-      if (paramsToCopy) *paramsToCopy = *fParams;
-      else ((TF1 &)obj).fParams = new TF1Parameters(*fParams);
-   }
-   if (fFunctor) {
-      // use clone of TF1FunctorPointer
-      if (((TF1 &)obj).fFunctor) delete((TF1 &)obj).fFunctor;
-      ((TF1 &)obj).fFunctor  = fFunctor->Clone();
-   }
+   // use copy-constructor of TMethodCall
+   TMethodCall *m = (fMethodCall) ? new TMethodCall(*fMethodCall) : nullptr;
+   ((TF1 &)obj).fMethodCall.reset(m);
 
+   TFormula *formulaToCopy = (fFormula) ? new TFormula(*fFormula) : nullptr;
+   ((TF1 &)obj).fFormula.reset(formulaToCopy);
+
+   TF1Parameters *paramsToCopy = (fParams) ? new TF1Parameters(*fParams) : nullptr;
+   ((TF1 &)obj).fParams.reset(paramsToCopy);
+
+   TF1FunctorPointer *functorToCopy = (fFunctor) ? fFunctor->Clone() : nullptr;
+   ((TF1 &)obj).fFunctor.reset(functorToCopy);
+
+   TF1AbsComposition *comp = nullptr;
    if (fComposition) {
-      TF1AbsComposition *comp = (TF1AbsComposition *)fComposition->IsA()->New();
+      comp = (TF1AbsComposition *)fComposition->IsA()->New();
       fComposition->Copy(*comp);
-      ((TF1 &)obj).fComposition = std::unique_ptr<TF1AbsComposition>(comp);
    }
+   ((TF1 &)obj).fComposition.reset(comp);
 }
 
 
@@ -1488,8 +1496,8 @@ Double_t TF1::EvalPar(const Double_t *x, const Double_t *params)
    if (fType == EFType::kPtrScalarFreeFcn || fType == EFType::kTemplScalar)  {
       if (fFunctor) {
          assert(fParams);
-         if (params) result = ((TF1FunctorPointerImpl<Double_t> *)fFunctor)->fImpl((Double_t *)x, (Double_t *)params);
-         else        result = ((TF1FunctorPointerImpl<Double_t> *)fFunctor)->fImpl((Double_t *)x, (Double_t *)fParams->GetParameters());
+         if (params) result = ((TF1FunctorPointerImpl<Double_t> *)fFunctor.get())->fImpl((Double_t *)x, (Double_t *)params);
+         else        result = ((TF1FunctorPointerImpl<Double_t> *)fFunctor.get())->fImpl((Double_t *)x, (Double_t *)fParams->GetParameters());
 
       } else          result = GetSave(x);
 
@@ -1577,6 +1585,11 @@ TF1 *TF1::GetCurrent()
 
 ////////////////////////////////////////////////////////////////////////////////
 /// Return a pointer to the histogram used to visualise the function
+/// Note that this histogram is managed by the function and
+/// in same case it is automatically deleted when some TF1 functions are called
+///  such as TF1::SetParameters, TF1::SetNpx, TF1::SetRange
+/// It is then reccomended either to clone the return object or calling again teh GetHistogram
+/// function whenever is needed
 
 TH1 *TF1::GetHistogram() const
 {
@@ -1969,12 +1982,11 @@ Double_t TF1::GetProb() const
 ///        F(x_{\frac{1}{2}}) = \prod(x < x_{\frac{1}{2}}) = \frac{1}{2}
 /// \f]
 ///
-/// \param[in] this TF1 function
 /// \param[in] nprobSum maximum size of array q and size of array probSum
+/// \param[out] q array filled with nq quantiles
 /// \param[in] probSum array of positions where quantiles will be computed.
 ///     It is assumed to contain at least nprobSum values.
-/// \param[out] return value nq (<=nprobSum) with the number of quantiles computed
-/// \param[out] array q filled with nq quantiles
+/// \return value nq (<=nprobSum) with the number of quantiles computed
 ///
 ///  Getting quantiles from two histograms and storing results in a TGraph,
 ///  a so-called QQ-plot
@@ -2070,10 +2082,99 @@ Int_t TF1::GetQuantiles(Int_t nprobSum, Double_t *q, const Double_t *probSum)
 
    return nprobSum;
 }
+////////////////////////////////////////////////////////////////////////////////
+///
+///  Compute the cumulative function at fNpx points between fXmin and fXmax.
+///  Option can be used to force a log scale (option = "log"), linear (option = "lin") or automatic if empty.
+Bool_t TF1::ComputeCdfTable(Option_t * option) {
 
+   fIntegral.resize(fNpx + 1);
+   fAlpha.resize(fNpx + 1);
+   fBeta.resize(fNpx);
+   fGamma.resize(fNpx);
+   fIntegral[0] = 0;
+   fAlpha[fNpx] = 0;
+   Double_t integ;
+   Int_t intNegative = 0;
+   Int_t i;
+   Bool_t logbin = kFALSE;
+   Double_t dx;
+   Double_t xmin = fXmin;
+   Double_t xmax = fXmax;
+   TString opt(option);
+   opt.ToUpper();
+   // perform a log binning if specified by user (option="Log") or if some conditions are met
+   // and the user explicitly does not specify a Linear binning option
+   if (opt.Contains("LOG") || ((xmin > 0 && xmax / xmin > fNpx) && !opt.Contains("LIN"))) {
+      logbin = kTRUE;
+      fAlpha[fNpx] = 1;
+      xmin = TMath::Log10(fXmin);
+      xmax = TMath::Log10(fXmax);
+      if (gDebug)
+         Info("GetRandom", "Use log scale for tabulating the integral in [%f,%f] with %d points", fXmin, fXmax, fNpx);
+   }
+   dx = (xmax - xmin) / fNpx;
+
+   std::vector<Double_t> xx(fNpx + 1);
+   for (i = 0; i < fNpx; i++) {
+      xx[i] = xmin + i * dx;
+   }
+   xx[fNpx] = xmax;
+   for (i = 0; i < fNpx; i++) {
+      if (logbin) {
+         integ = Integral(TMath::Power(10, xx[i]), TMath::Power(10, xx[i + 1]), 0.0);
+      } else {
+         integ = Integral(xx[i], xx[i + 1], 0.0);
+      }
+      if (integ < 0) {
+         intNegative++;
+         integ = -integ;
+      }
+      fIntegral[i + 1] = fIntegral[i] + integ;
+   }
+   if (intNegative > 0) {
+      Warning("GetRandom", "function:%s has %d negative values: abs assumed", GetName(), intNegative);
+   }
+   if (fIntegral[fNpx] == 0) {
+      Error("GetRandom", "Integral of function is zero");
+      return kFALSE;
+   }
+   Double_t total = fIntegral[fNpx];
+   for (i = 1; i <= fNpx; i++) { // normalize integral to 1
+      fIntegral[i] /= total;
+   }
+   // the integral r for each bin is approximated by a parabola
+   //  x = alpha + beta*r +gamma*r**2
+   // compute the coefficients alpha, beta, gamma for each bin
+   Double_t x0, r1, r2, r3;
+   for (i = 0; i < fNpx; i++) {
+      x0 = xx[i];
+      r2 = fIntegral[i + 1] - fIntegral[i];
+      if (logbin)
+         r1 = Integral(TMath::Power(10, x0), TMath::Power(10, x0 + 0.5 * dx), 0.0) / total;
+      else
+         r1 = Integral(x0, x0 + 0.5 * dx, 0.0) / total;
+      r3 = 2 * r2 - 4 * r1;
+      if (TMath::Abs(r3) > 1e-8)
+         fGamma[i] = r3 / (dx * dx);
+      else
+         fGamma[i] = 0;
+      fBeta[i] = r2 / dx - fGamma[i] * dx;
+      fAlpha[i] = x0;
+      fGamma[i] *= 2;
+   }
+   return kTRUE;
+}
 
 ////////////////////////////////////////////////////////////////////////////////
-/// Return a random number following this function shape
+/// Return a random number following this function shape.
+///
+/// @param rng  Random number generator. By default (or when passing a nullptr) the global gRandom is used
+/// @param option Option string which controls the binning used to compute the integral. Default mode is automatic depending of
+///               xmax, xmin and Npx (function points).
+///               Possible values are:
+///               -  "LOG" to force usage of log scale for tabulating the integral
+///               -  "LIN" to force usage of linear scale when tabulating the integral
 ///
 /// The distribution contained in the function fname (TF1) is integrated
 /// over the channel contents.
@@ -2085,84 +2186,28 @@ Int_t TF1::GetQuantiles(Int_t nprobSum, Double_t *q, const Double_t *probSum)
 ///  - Look in which bin in the normalized integral r1 corresponds to
 ///  - Evaluate the parabolic curve in the selected bin to find the corresponding X value.
 ///
+/// The user can provide as optional parameter a Random number generator.
+/// By default gRandom is used
+///
 /// If the ratio fXmax/fXmin > fNpx the integral is tabulated in log scale in x
-/// The parabolic approximation is very good as soon as the number of bins is greater than 50.
+/// A log scale for the intergral is also always used if a user specifies the "LOG" option
+/// Instead if a user requestes a "LIN" option the integral binning is never done in log scale
+/// whatever the fXmax/fXmin ratio is
+///
+/// Note that the parabolic approximation is very good as soon as the number of bins is greater than 50.
 
-Double_t TF1::GetRandom()
+
+Double_t TF1::GetRandom(TRandom * rng, Option_t * option)
 {
-   //  Check if integral array must be build
+   //  Check if integral array must be built
    if (fIntegral.size() == 0) {
-      fIntegral.resize(fNpx + 1);
-      fAlpha.resize(fNpx + 1);
-      fBeta.resize(fNpx);
-      fGamma.resize(fNpx);
-      fIntegral[0] = 0;
-      fAlpha[fNpx] = 0;
-      Double_t integ;
-      Int_t intNegative = 0;
-      Int_t i;
-      Bool_t logbin = kFALSE;
-      Double_t dx;
-      Double_t xmin = fXmin;
-      Double_t xmax = fXmax;
-      if (xmin > 0 && xmax / xmin > fNpx) {
-         logbin =  kTRUE;
-         fAlpha[fNpx] = 1;
-         xmin = TMath::Log10(fXmin);
-         xmax = TMath::Log10(fXmax);
-      }
-      dx = (xmax - xmin) / fNpx;
-
-      Double_t *xx = new Double_t[fNpx + 1];
-      for (i = 0; i < fNpx; i++) {
-         xx[i] = xmin + i * dx;
-      }
-      xx[fNpx] = xmax;
-      for (i = 0; i < fNpx; i++) {
-         if (logbin) {
-            integ = Integral(TMath::Power(10, xx[i]), TMath::Power(10, xx[i + 1]), 0.0);
-         } else {
-            integ = Integral(xx[i], xx[i + 1], 0.0);
-         }
-         if (integ < 0) {
-            intNegative++;
-            integ = -integ;
-         }
-         fIntegral[i + 1] = fIntegral[i] + integ;
-      }
-      if (intNegative > 0) {
-         Warning("GetRandom", "function:%s has %d negative values: abs assumed", GetName(), intNegative);
-      }
-      if (fIntegral[fNpx] == 0) {
-         delete [] xx;
-         Error("GetRandom", "Integral of function is zero");
-         return 0;
-      }
-      Double_t total = fIntegral[fNpx];
-      for (i = 1; i <= fNpx; i++) { // normalize integral to 1
-         fIntegral[i] /= total;
-      }
-      //the integral r for each bin is approximated by a parabola
-      //  x = alpha + beta*r +gamma*r**2
-      // compute the coefficients alpha, beta, gamma for each bin
-      Double_t x0, r1, r2, r3;
-      for (i = 0; i < fNpx; i++) {
-         x0 = xx[i];
-         r2 = fIntegral[i + 1] - fIntegral[i];
-         if (logbin) r1 = Integral(TMath::Power(10, x0), TMath::Power(10, x0 + 0.5 * dx), 0.0) / total;
-         else        r1 = Integral(x0, x0 + 0.5 * dx, 0.0) / total;
-         r3 = 2 * r2 - 4 * r1;
-         if (TMath::Abs(r3) > 1e-8) fGamma[i] = r3 / (dx * dx);
-         else           fGamma[i] = 0;
-         fBeta[i]  = r2 / dx - fGamma[i] * dx;
-         fAlpha[i] = x0;
-         fGamma[i] *= 2;
-      }
-      delete [] xx;
+      Bool_t ret = ComputeCdfTable(option);
+      if (!ret) return TMath::QuietNaN();
    }
 
+
    // return random number
-   Double_t r  = gRandom->Rndm();
+   Double_t r  = (rng) ? rng->Rndm() : gRandom->Rndm();
    Int_t bin  = TMath::BinarySearch(fNpx, fIntegral.data(), r);
    Double_t rr = r - fIntegral[bin];
 
@@ -2194,59 +2239,23 @@ Double_t TF1::GetRandom()
 ///   The parabolic approximation is very good as soon as the number
 ///   of bins is greater than 50.
 ///
+///  @param  xmin    minimum value for  generated random numbers
+///  @param  xmax    maximum value for  generated random numbers
+///  @param  rng     (optional) random number generator pointer
+///  @param  option  (optional) : `LOG` or `LIN` to force the usage of a log or linear scale for computing the cumulative integral table
+///
 ///  IMPORTANT NOTE
 ///
 ///  The integral of the function is computed at fNpx points. If the function
 ///  has sharp peaks, you should increase the number of points (SetNpx)
 ///  such that the peak is correctly tabulated at several points.
 
-Double_t TF1::GetRandom(Double_t xmin, Double_t xmax)
+Double_t TF1::GetRandom(Double_t xmin, Double_t xmax, TRandom * rng, Option_t * option)
 {
-   //  Check if integral array must be build
+   //  Check if integral array must be built
    if (fIntegral.size() == 0) {
-      fIntegral.resize(fNpx + 1);
-      fAlpha.resize(fNpx+1);
-      fBeta.resize(fNpx);
-      fGamma.resize(fNpx);
-
-      Double_t dx = (fXmax - fXmin) / fNpx;
-      Double_t integ;
-      Int_t intNegative = 0;
-      Int_t i;
-      for (i = 0; i < fNpx; i++) {
-         integ = Integral(Double_t(fXmin + i * dx), Double_t(fXmin + i * dx + dx), 0.0);
-         if (integ < 0) {
-            intNegative++;
-            integ = -integ;
-         }
-         fIntegral[i + 1] = fIntegral[i] + integ;
-      }
-      if (intNegative > 0) {
-         Warning("GetRandom", "function:%s has %d negative values: abs assumed", GetName(), intNegative);
-      }
-      if (fIntegral[fNpx] == 0) {
-         Error("GetRandom", "Integral of function is zero");
-         return 0;
-      }
-      Double_t total = fIntegral[fNpx];
-      for (i = 1; i <= fNpx; i++) { // normalize integral to 1
-         fIntegral[i] /= total;
-      }
-      //the integral r for each bin is approximated by a parabola
-      //  x = alpha + beta*r +gamma*r**2
-      // compute the coefficients alpha, beta, gamma for each bin
-      Double_t x0, r1, r2, r3;
-      for (i = 0; i < fNpx; i++) {
-         x0 = fXmin + i * dx;
-         r2 = fIntegral[i + 1] - fIntegral[i];
-         r1 = Integral(x0, x0 + 0.5 * dx, 0.0) / total;
-         r3 = 2 * r2 - 4 * r1;
-         if (TMath::Abs(r3) > 1e-8) fGamma[i] = r3 / (dx * dx);
-         else           fGamma[i] = 0;
-         fBeta[i]  = r2 / dx - fGamma[i] * dx;
-         fAlpha[i] = x0;
-         fGamma[i] *= 2;
-      }
+      Bool_t ret = ComputeCdfTable(option);
+      if (!ret) return TMath::QuietNaN();
    }
 
    // return random number
@@ -2260,7 +2269,7 @@ Double_t TF1::GetRandom(Double_t xmin, Double_t xmax)
 
    Double_t r, x, xx, rr;
    do {
-      r  = gRandom->Uniform(pmin, pmax);
+      r  = (rng) ? rng->Uniform(pmin, pmax) : gRandom->Uniform(pmin, pmax);
 
       Int_t bin  = TMath::BinarySearch(fNpx, fIntegral.data(), r);
       rr = r - fIntegral[bin];
@@ -2448,6 +2457,10 @@ Double_t TF1::GradientPar(Int_t ipar, const Double_t *x, Double_t eps)
 
 ////////////////////////////////////////////////////////////////////////////////
 /// Compute the gradient wrt parameters
+/// If the TF1 object is based on a formula expression (TFormula)
+/// and TFormula::GenerateGradientPar() has been successfully called
+/// automatic differentiation using CLAD is used instead of the default
+/// numerical differentiation
 ///
 /// \param x  point, were the gradient is computed
 /// \param grad  used to return the computed gradient, assumed to be of at least fNpar size
@@ -2462,7 +2475,10 @@ Double_t TF1::GradientPar(Int_t ipar, const Double_t *x, Double_t eps)
 
 void TF1::GradientPar(const Double_t *x, Double_t *grad, Double_t eps)
 {
-   GradientParTempl<Double_t>(x, grad, eps);
+   if (fFormula && fFormula->HasGeneratedGradient())
+      fFormula->GradientPar(x,grad);
+   else
+      GradientParTempl<Double_t>(x, grad, eps);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -2471,10 +2487,10 @@ void TF1::GradientPar(const Double_t *x, Double_t *grad, Double_t eps)
 void TF1::InitArgs(const Double_t *x, const Double_t *params)
 {
    if (fMethodCall) {
-      Long_t args[2];
-      args[0] = (Long_t)x;
-      if (params) args[1] = (Long_t)params;
-      else        args[1] = (Long_t)GetParameters();
+      Longptr_t args[2];
+      args[0] = (Longptr_t)x;
+      if (params) args[1] = (Longptr_t)params;
+      else        args[1] = (Longptr_t)GetParameters();
       fMethodCall->SetParamPtrs(args);
    }
 }
@@ -2654,54 +2670,44 @@ Double_t TF1::IntegralOneDim(Double_t a, Double_t b,  Double_t epsrel, Double_t 
    return result;
 }
 
-
-//______________________________________________________________________________
-// Double_t TF1::Integral(Double_t, Double_t, Double_t, Double_t, Double_t, Double_t)
-// {
-//    // Return Integral of a 2d function in range [ax,bx],[ay,by]
-
-//    Error("Integral","Must be called with a TF2 only");
-//    return 0;
-// }
-
-
-// //______________________________________________________________________________
-// Double_t TF1::Integral(Double_t, Double_t, Double_t, Double_t, Double_t, Double_t, Double_t, Double_t)
-// {
-//    // Return Integral of a 3d function in range [ax,bx],[ay,by],[az,bz]
-
-//    Error("Integral","Must be called with a TF3 only");
-//    return 0;
-// }
-
 ////////////////////////////////////////////////////////////////////////////////
 /// Return Error on Integral of a parametric function between a and b
-/// due to the parameter uncertainties.
-/// A pointer to a vector of parameter values and to the elements of the covariance matrix (covmat)
-/// can be optionally passed.  By default (i.e. when a zero pointer is passed) the current stored
-/// parameter values are used to estimate the integral error together with the covariance matrix
-/// from the last fit (retrieved from the global fitter instance)
+/// due to the parameter uncertainties and their covariance matrix from the fit.
+/// In addition to the integral limits, this method takes as input a pointer to the fitted parameter values
+/// and a pointer the covariance matrix from the fit. These pointers should be retrieved from the
+/// previously performed fit using the TFitResult class.
+/// Note that to get the TFitResult, te fit should be done using the fit option `S`.
+/// Example:
+/// ~~~~{.cpp}
+/// TFitResultPtr r = histo->Fit(func, "S");
+/// func->IntegralError(x1,x2,r->GetParams(), r->GetCovarianceMatrix()->GetMatrixArray() );
+/// ~~~~
 ///
 /// IMPORTANT NOTE1:
+///
+/// A null pointer to the parameter values vector and to the covariance matrix can be passed.
+/// In this case, when the parameter values pointer is null, the parameter values stored in this
+/// TF1 function object are used in the integral error computation.
+/// When the poassed pointer to the covariance matrix is null, a covariance matrix from the last fit is retrieved
+/// from a global fitter instance when it exists. Note that the global fitter instance
+/// esists only when ROOT is not running with multi-threading enabled (ROOT::IsImplicitMTEnabled() == True).
+/// When the ovariance matrix from the last fit cannot be retrieved, an error message is printed and a a zero value is
+/// returned.
+///
+///
+/// IMPORTANT NOTE2:
 ///
 /// When no covariance matrix is passed and in the meantime a fit is done
 /// using another function, the routine will signal an error and it will return zero only
 /// when the number of fit parameter is different than the values stored in TF1 (TF1::GetNpar() ).
 /// In the case that npar is the same, an incorrect result is returned.
 ///
-/// IMPORTANT NOTE2:
+/// IMPORTANT NOTE3:
 ///
 /// The user must pass a pointer to the elements of the full covariance matrix
 /// dimensioned with the right size (npar*npar), where npar is the total number of parameters (TF1::GetNpar()),
-/// including also the fixed parameters. When there are fixed parameters, the pointer returned from
-/// TVirtualFitter::GetCovarianceMatrix() cannot be used.
-/// One should use the TFitResult class, as shown in the example below.
-///
-/// To get the matrix and values from an old fit do for example:
-/// TFitResultPtr r = histo->Fit(func, "S");
-/// ..... after performing other fits on the same function do
-///
-///     func->IntegralError(x1,x2,r->GetParams(), r->GetCovarianceMatrix()->GetMatrixArray() );
+/// including also the fixed parameters. The covariance matrix must be retrieved from the TFitResult class as
+/// shown above and not from TVirtualFitter::GetCovarianceMatrix() function.
 
 Double_t TF1::IntegralError(Double_t a, Double_t b, const Double_t *params, const Double_t *covmat, Double_t epsilon)
 {
@@ -2712,35 +2718,46 @@ Double_t TF1::IntegralError(Double_t a, Double_t b, const Double_t *params, cons
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-/// Return Error on Integral of a parametric function with dimension larger tan one
+/// Return Error on Integral of a parametric function with dimension larger than one
 /// between a[] and b[]  due to the parameters uncertainties.
 /// For a TF1 with dimension larger than 1 (for example a TF2 or TF3)
 /// TF1::IntegralMultiple is used for the integral calculation
 ///
-/// A pointer to a vector of parameter values and to the elements of the covariance matrix (covmat) can be optionally passed.
-/// By default (i.e. when a zero pointer is passed) the current stored parameter values are used to estimate the integral error
-/// together with the covariance matrix from the last fit (retrieved from the global fitter instance).
+/// In addition to the integral limits, this method takes as input a pointer to the fitted parameter values
+/// and a pointer the covariance matrix from the fit. These pointers should be retrieved from the
+/// previously performed fit using the TFitResult class.
+/// Note that to get the TFitResult, te fit should be done using the fit option `S`.
+/// Example:
+/// ~~~~{.cpp}
+/// TFitResultPtr r = histo2d->Fit(func2, "S");
+/// func2->IntegralError(a,b,r->GetParams(), r->GetCovarianceMatrix()->GetMatrixArray() );
+/// ~~~~
 ///
 /// IMPORTANT NOTE1:
+///
+/// A null pointer to the parameter values vector and to the covariance matrix can be passed.
+/// In this case, when the parameter values pointer is null, the parameter values stored in this
+/// TF1 function object are used in the integral error computation.
+/// When the poassed pointer to the covariance matrix is null, a covariance matrix from the last fit is retrieved
+/// from a global fitter instance when it exists. Note that the global fitter instance
+/// esists only when ROOT is not running with multi-threading enabled (ROOT::IsImplicitMTEnabled() == True).
+/// When the ovariance matrix from the last fit cannot be retrieved, an error message is printed and a a zero value is
+/// returned.
+///
+///
+/// IMPORTANT NOTE2:
 ///
 /// When no covariance matrix is passed and in the meantime a fit is done
 /// using another function, the routine will signal an error and it will return zero only
 /// when the number of fit parameter is different than the values stored in TF1 (TF1::GetNpar() ).
 /// In the case that npar is the same, an incorrect result is returned.
 ///
-/// IMPORTANT NOTE2:
+/// IMPORTANT NOTE3:
 ///
 /// The user must pass a pointer to the elements of the full covariance matrix
 /// dimensioned with the right size (npar*npar), where npar is the total number of parameters (TF1::GetNpar()),
-/// including also the fixed parameters. When there are fixed parameters, the pointer returned from
-/// TVirtualFitter::GetCovarianceMatrix() cannot be used.
-/// One should use the TFitResult class, as shown in the example below.
-///
-/// To get the matrix and values from an old fit do for example:
-/// TFitResultPtr r = histo->Fit(func, "S");
-/// ..... after performing other fits on the same function do
-///
-///     func->IntegralError(x1,x2,r->GetParams(), r->GetCovarianceMatrix()->GetMatrixArray() );
+/// including also the fixed parameters. The covariance matrix must be retrieved from the TFitResult class as
+/// shown above and not from TVirtualFitter::GetCovarianceMatrix() function.
 
 Double_t TF1::IntegralError(Int_t n, const Double_t *a, const Double_t *b, const Double_t *params, const  Double_t *covmat, Double_t epsilon)
 {
@@ -3065,14 +3082,15 @@ TH1   *TF1::DoCreateHistogram(Double_t xmin, Double_t  xmax, Bool_t recreate)
       // delete previous histograms if were done if done in different mode
       xtitle = fHistogram->GetXaxis()->GetTitle();
       ytitle = fHistogram->GetYaxis()->GetTitle();
-      if (!gPad->GetLogx()  &&  fHistogram->TestBit(TH1::kLogX)) {
+      Bool_t test_logx = fHistogram->TestBit(TH1::kLogX);
+      if (!gPad->GetLogx() && test_logx) {
          delete fHistogram;
-         fHistogram = 0;
+         fHistogram = nullptr;
          recreate = kTRUE;
       }
-      if (gPad->GetLogx()  && !fHistogram->TestBit(TH1::kLogX)) {
+      if (gPad->GetLogx() && !test_logx) {
          delete fHistogram;
-         fHistogram = 0;
+         fHistogram = nullptr;
          recreate = kTRUE;
       }
    }
@@ -3591,8 +3609,6 @@ void TF1::Streamer(TBuffer &b)
             R__LOCKGUARD(gROOTMutex);
             gROOT->GetListOfFunctions()->Add(this);
          }
-         if (v >= 10)
-            fComposition = std::unique_ptr<TF1AbsComposition>(fComposition_ptr);
          return;
       } else {
          ROOT::v5::TF1Data fold;
@@ -3611,10 +3627,6 @@ void TF1::Streamer(TBuffer &b)
          saved = 1;
          Save(fXmin, fXmax, 0, 0, 0, 0);
       }
-      if (fType == EFType::kCompositionFcn)
-         fComposition_ptr = fComposition.get();
-      else
-         fComposition_ptr = nullptr;
       b.WriteClassBuffer(TF1::Class(), this);
 
       // clear vector contents

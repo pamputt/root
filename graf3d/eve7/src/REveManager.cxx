@@ -18,36 +18,41 @@
 #include <ROOT/REveClient.hxx>
 #include <ROOT/REveGeomViewer.hxx>
 #include <ROOT/RWebWindow.hxx>
+#include <ROOT/RFileDialog.hxx>
 #include <ROOT/RLogger.hxx>
+#include <ROOT/REveSystem.hxx>
 
 #include "TGeoManager.h"
+#include "TGeoMatrix.h"
 #include "TObjString.h"
 #include "TROOT.h"
+#include "TSystem.h"
 #include "TFile.h"
 #include "TMap.h"
 #include "TExMap.h"
-#include "TMacro.h"
-#include "TFolder.h"
-#include "TSystem.h"
 #include "TEnv.h"
 #include "TColor.h"
-#include "TPluginManager.h"
 #include "TPRegexp.h"
 #include "TClass.h"
+#include "TMethod.h"
+#include "TMethodCall.h"
 #include "THttpServer.h"
+#include "TTimer.h"
+#include "TApplication.h"
 
-#include "Riostream.h"
-
-#include "json.hpp"
+#include <fstream>
 #include <sstream>
 #include <iostream>
+#include <regex>
+
+#include <nlohmann/json.hpp>
 
 using namespace ROOT::Experimental;
 namespace REX = ROOT::Experimental;
 
 REveManager *REX::gEve = nullptr;
 
-
+thread_local std::vector<RLogEntry> gEveLogEntries;
 /** \class REveManager
 \ingroup REve
 Central application manager for Eve.
@@ -64,22 +69,11 @@ WebEve.TableRowHeight: 33  # size of each row in pixels in the Table view, can b
 
 ////////////////////////////////////////////////////////////////////////////////
 
-REveManager::REveManager() : // (Bool_t map_window, Option_t* opt) :
-   fExcHandler  (nullptr),
-   fVizDB       (nullptr),
-   fVizDBReplace(kTRUE),
-   fVizDBUpdate(kTRUE),
-   fGeometries  (nullptr),
-   fGeometryAliases (nullptr),
-
-   fMacroFolder (nullptr),
-
-   fRedrawDisabled (0),
-   fResetCameras   (kFALSE),
-   fDropLogicals   (kFALSE),
-   fKeepEmptyCont  (kFALSE),
-   fTimerActive    (kFALSE),
-   fRedrawTimer    ()
+REveManager::REveManager()
+   : // (Bool_t map_window, Option_t* opt) :
+     fExcHandler(nullptr), fVizDB(nullptr), fVizDBReplace(kTRUE), fVizDBUpdate(kTRUE), fGeometries(nullptr),
+     fGeometryAliases(nullptr),
+     fKeepEmptyCont(kFALSE)
 {
    // Constructor.
 
@@ -90,17 +84,19 @@ REveManager::REveManager() : // (Bool_t map_window, Option_t* opt) :
 
    REX::gEve = this;
 
+   fServerStatus.fPid = gSystem->GetPid();
+   fServerStatus.fTStart = std::time(nullptr);
+
    fExcHandler = new RExceptionHandler;
 
-   fGeometries      = new TMap; fGeometries->SetOwnerKeyValue();
-   fGeometryAliases = new TMap; fGeometryAliases->SetOwnerKeyValue();
-   fVizDB           = new TMap; fVizDB->SetOwnerKeyValue();
+   fGeometries = new TMap;
+   fGeometries->SetOwnerKeyValue();
+   fGeometryAliases = new TMap;
+   fGeometryAliases->SetOwnerKeyValue();
+   fVizDB = new TMap;
+   fVizDB->SetOwnerKeyValue();
 
    fElementIdMap[0] = nullptr; // do not increase count for null element.
-
-   fRedrawTimer.Connect("Timeout()", "ROOT::Experimental::REveManager", this, "DoRedraw3D()");
-   fMacroFolder = new TFolder("EVE", "Visualization macros");
-   gROOT->GetListOfBrowsables()->Add(fMacroFolder);
 
    fWorld = new REveScene("EveWorld", "Top-level Eve Scene");
    fWorld->IncDenyDestroy();
@@ -122,7 +118,7 @@ REveManager::REveManager() : // (Bool_t map_window, Option_t* opt) :
    fViewers->IncDenyDestroy();
    fWorld->AddElement(fViewers);
 
-   fScenes  = new REveSceneList ("Scenes");
+   fScenes = new REveSceneList("Scenes");
    fScenes->IncDenyDestroy();
    fWorld->AddElement(fScenes);
 
@@ -144,21 +140,25 @@ REveManager::REveManager() : // (Bool_t map_window, Option_t* opt) :
    TColor::SetColorThreshold(0.1);
 
    fWebWindow = RWebWindow::Create();
+   fWebWindow->UseServerThreads();
    fWebWindow->SetDefaultPage("file:rootui5sys/eve7/index.html");
 
    const char *gl_viewer = gEnv->GetValue("WebEve.GLViewer", "Three");
    const char *gl_dblclick = gEnv->GetValue("WebEve.DblClick", "Off");
    Int_t htimeout = gEnv->GetValue("WebEve.HTimeout", 250);
    Int_t table_row_height = gEnv->GetValue("WebEve.TableRowHeight", 0);
-   fWebWindow->SetUserArgs(Form("{ GLViewer: \"%s\", DblClick: \"%s\", HTimeout: %d, TableRowHeight: %d }", gl_viewer, gl_dblclick, htimeout, table_row_height));
+   fWebWindow->SetUserArgs(Form("{ GLViewer: \"%s\", DblClick: \"%s\", HTimeout: %d, TableRowHeight: %d }", gl_viewer,
+                                gl_dblclick, htimeout, table_row_height));
 
    // this is call-back, invoked when message received via websocket
    fWebWindow->SetCallBacks([this](unsigned connid) { WindowConnect(connid); },
                             [this](unsigned connid, const std::string &arg) { WindowData(connid, arg); },
                             [this](unsigned connid) { WindowDisconnect(connid); });
    fWebWindow->SetGeometry(900, 700); // configure predefined window geometry
-   fWebWindow->SetConnLimit(100); // maximal number of connections
+   fWebWindow->SetConnLimit(100);     // maximal number of connections
    fWebWindow->SetMaxQueueLength(30); // number of allowed entries in the window queue
+
+   fMIRExecThread = std::thread{[this] { MIRExecThread(); }};
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -166,9 +166,9 @@ REveManager::REveManager() : // (Bool_t map_window, Option_t* opt) :
 
 REveManager::~REveManager()
 {
-   // Stop timer and deny further redraw requests.
-   fRedrawTimer.Stop();
-   fTimerActive = kTRUE;
+   fMIRExecThread.join();
+
+   // QQQQ How do we stop THttpServer / fWebWindow?
 
    fGlobalScene->DecDenyDestroy();
    fEventScene->DecDenyDestroy();
@@ -190,9 +190,6 @@ REveManager::~REveManager()
    fHighlight->DecDenyDestroy();
    fSelection->DecDenyDestroy();
 
-   gROOT->GetListOfBrowsables()->Remove(fMacroFolder);
-   delete fMacroFolder;
-
    delete fGeometryAliases;
    delete fGeometries;
    delete fVizDB;
@@ -202,9 +199,9 @@ REveManager::~REveManager()
 ////////////////////////////////////////////////////////////////////////////////
 /// Create a new GL viewer.
 
-REveViewer* REveManager::SpawnNewViewer(const char* name, const char* title)
+REveViewer *REveManager::SpawnNewViewer(const char *name, const char *title)
 {
-   REveViewer* v = new REveViewer(name, title);
+   REveViewer *v = new REveViewer(name, title);
    fViewers->AddElement(v);
    return v;
 }
@@ -212,28 +209,16 @@ REveViewer* REveManager::SpawnNewViewer(const char* name, const char* title)
 ////////////////////////////////////////////////////////////////////////////////
 /// Create a new scene.
 
-REveScene* REveManager::SpawnNewScene(const char* name, const char* title)
+REveScene *REveManager::SpawnNewScene(const char *name, const char *title)
 {
-   REveScene* s = new REveScene(name, title);
+   REveScene *s = new REveScene(name, title);
    AddElement(s, fScenes);
    return s;
 }
 
-////////////////////////////////////////////////////////////////////////////////
-/// Find macro in fMacroFolder by name.
-
-TMacro* REveManager::GetMacro(const char* name) const
-{
-   return dynamic_cast<TMacro*>(fMacroFolder->FindObject(name));
-}
-
-////////////////////////////////////////////////////////////////////////////////
-/// Register a request for 3D redraw.
-
 void REveManager::RegisterRedraw3D()
 {
-   fRedrawTimer.Start(0, kTRUE);
-   fTimerActive = kTRUE;
+   printf("REveManager::RegisterRedraw3D() obsolete\n");
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -242,23 +227,7 @@ void REveManager::RegisterRedraw3D()
 
 void REveManager::DoRedraw3D()
 {
-   static const REveException eh("REveManager::DoRedraw3D ");
-   nlohmann::json jobj = {};
-
-   jobj["content"] = "BeginChanges";
-   fWebWindow->Send(0, jobj.dump());
-
-   // Process changes in scenes.
-   fWorld ->ProcessChanges();
-   fScenes->ProcessSceneChanges();
-
-   jobj["content"] = "EndChanges";
-   fWebWindow->Send(0, jobj.dump());
-
-   fResetCameras = kFALSE;
-   fDropLogicals = kFALSE;
-
-   fTimerActive = kFALSE;
+   printf("REveManager::DoRedraw3D() obsolete\n");
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -266,8 +235,7 @@ void REveManager::DoRedraw3D()
 
 void REveManager::FullRedraw3D(Bool_t /*resetCameras*/, Bool_t /*dropLogicals*/)
 {
-   // XXXX fScenes ->RepaintAllScenes (dropLogicals);
-   // XXXX fViewers->RepaintAllViewers(resetCameras, dropLogicals);
+   printf("REveManager::FullRedraw3D() obsolete\n");
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -277,9 +245,8 @@ void REveManager::FullRedraw3D(Bool_t /*resetCameras*/, Bool_t /*dropLogicals*/)
 
 void REveManager::ClearAllSelections()
 {
-   for (auto el : fSelectionList->fChildren)
-   {
-      dynamic_cast<REveSelection*>(el)->ClearSelection();
+   for (auto el : fSelectionList->fChildren) {
+      dynamic_cast<REveSelection *>(el)->ClearSelection();
    }
 }
 
@@ -301,7 +268,7 @@ void REveManager::AddElement(REveElement *element, REveElement *parent)
 /// event, like geometry or projection manager.
 /// If parent is not specified it is added to a global scene.
 
-void REveManager::AddGlobalElement(REveElement* element, REveElement* parent)
+void REveManager::AddGlobalElement(REveElement *element, REveElement *parent)
 {
    if (!parent)
       parent = fGlobalScene;
@@ -312,8 +279,7 @@ void REveManager::AddGlobalElement(REveElement* element, REveElement* parent)
 ////////////////////////////////////////////////////////////////////////////////
 /// Remove element from parent.
 
-void REveManager::RemoveElement(REveElement* element,
-                                REveElement* parent)
+void REveManager::RemoveElement(REveElement *element, REveElement *parent)
 {
    parent->RemoveElement(element);
 }
@@ -322,10 +288,8 @@ void REveManager::RemoveElement(REveElement* element,
 /// Lookup ElementId in element map and return corresponding REveElement*.
 /// Returns nullptr if the id is not found
 
-REveElement* REveManager::FindElementById(ElementId_t id) const
+REveElement *REveManager::FindElementById(ElementId_t id) const
 {
-   static const REveException eh("REveManager::FindElementById ");
-
    auto it = fElementIdMap.find(id);
    return (it != fElementIdMap.end()) ? it->second : nullptr;
 }
@@ -333,7 +297,7 @@ REveElement* REveManager::FindElementById(ElementId_t id) const
 ////////////////////////////////////////////////////////////////////////////////
 /// Assign a unique ElementId to given element.
 
-void REveManager::AssignElementId(REveElement* element)
+void REveManager::AssignElementId(REveElement *element)
 {
    static const REveException eh("REveManager::AssignElementId ");
 
@@ -341,8 +305,10 @@ void REveManager::AssignElementId(REveElement* element)
       throw eh + "ElementId map is full.";
 
 next_free_id:
-   while (fElementIdMap.find(++fLastElementId) != fElementIdMap.end());
-   if (fLastElementId == 0) goto next_free_id;
+   while (fElementIdMap.find(++fLastElementId) != fElementIdMap.end())
+      ;
+   if (fLastElementId == 0)
+      goto next_free_id;
    // MT - alternatively, we could spawn a thread to find next thousand or so ids and
    // put them in a vector of ranges. Or collect them when they are freed.
    // Don't think this won't happen ... online event display can run for months
@@ -352,7 +318,6 @@ next_free_id:
    fElementIdMap.insert(std::make_pair(fLastElementId, element));
    ++fNumElementIds;
 }
-
 
 ////////////////////////////////////////////////////////////////////////////////
 /// Activate EVE browser (summary view) for specified element id
@@ -366,41 +331,36 @@ void REveManager::BrowseElement(ElementId_t id)
    fWebWindow->Send(0, msg.dump());
 }
 
-
 ////////////////////////////////////////////////////////////////////////////////
 /// Called from REveElement prior to its destruction so the
 /// framework components (like object editor) can unreference it.
 
-void REveManager::PreDeleteElement(REveElement* el)
+void REveManager::PreDeleteElement(REveElement *el)
 {
-   if (el->fImpliedSelected > 0)
-   {
-      for (auto slc : fSelectionList->fChildren)
-      {
-         REveSelection *sel = dynamic_cast<REveSelection*>(slc);
+   if (el->fImpliedSelected > 0) {
+      for (auto slc : fSelectionList->fChildren) {
+         REveSelection *sel = dynamic_cast<REveSelection *>(slc);
          sel->RemoveImpliedSelectedReferencesTo(el);
       }
 
       if (el->fImpliedSelected != 0)
-         Error("REveManager::PreDeleteElement", "ImpliedSelected not zero (%d) after cleanup of selections.", el->fImpliedSelected);
+         Error("REveManager::PreDeleteElement", "ImpliedSelected not zero (%d) after cleanup of selections.",
+               el->fImpliedSelected);
    }
    // Primary selection deregistration is handled through Niece removal from Aunts.
 
-   if (el->fElementId != 0)
-   {
+   if (el->fElementId != 0) {
       auto it = fElementIdMap.find(el->fElementId);
-      if (it != fElementIdMap.end())
-      {
-         if (it->second == el)
-         {
+      if (it != fElementIdMap.end()) {
+         if (it->second == el) {
             fElementIdMap.erase(it);
             --fNumElementIds;
-         }
-         else Error("PreDeleteElement", "element ptr in ElementIdMap does not match the argument element.");
-      }
-      else Error("PreDeleteElement", "element id %u was not registered in ElementIdMap.", el->fElementId);
-   }
-   else Error("PreDeleteElement", "element with 0 ElementId passed in.");
+         } else
+            Error("PreDeleteElement", "element ptr in ElementIdMap does not match the argument element.");
+      } else
+         Error("PreDeleteElement", "element id %u was not registered in ElementIdMap.", el->fElementId);
+   } else
+      Error("PreDeleteElement", "element with 0 ElementId passed in.");
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -417,45 +377,35 @@ void REveManager::PreDeleteElement(REveElement* el)
 /// If insert is successful, the ownership of the model-element is
 /// transferred to the manager.
 
-Bool_t REveManager::InsertVizDBEntry(const TString& tag, REveElement* model,
-                                     Bool_t replace, Bool_t update)
+Bool_t REveManager::InsertVizDBEntry(const TString &tag, REveElement *model, Bool_t replace, Bool_t update)
 {
-   TPair* pair = (TPair*) fVizDB->FindObject(tag);
-   if (pair)
-   {
-      if (replace)
-      {
+   TPair *pair = (TPair *)fVizDB->FindObject(tag);
+   if (pair) {
+      if (replace) {
          model->IncDenyDestroy();
          model->SetRnrChildren(kFALSE);
 
-         REveElement* old_model = dynamic_cast<REveElement*>(pair->Value());
-         if (old_model)
-         {
-            while (old_model->HasChildren())
-            {
+         REveElement *old_model = dynamic_cast<REveElement *>(pair->Value());
+         if (old_model) {
+            while (old_model->HasChildren()) {
                REveElement *el = old_model->FirstChild();
                el->SetVizModel(model);
-               if (update)
-               {
+               if (update) {
                   el->CopyVizParams(model);
                   el->PropagateVizParamsToProjecteds();
                }
             }
             old_model->DecDenyDestroy();
          }
-         pair->SetValue(dynamic_cast<TObject*>(model));
+         pair->SetValue(dynamic_cast<TObject *>(model));
          return kTRUE;
-      }
-      else
-      {
+      } else {
          return kFALSE;
       }
-   }
-   else
-   {
+   } else {
       model->IncDenyDestroy();
       model->SetRnrChildren(kFALSE);
-      fVizDB->Add(new TObjString(tag), dynamic_cast<TObject*>(model));
+      fVizDB->Add(new TObjString(tag), dynamic_cast<TObject *>(model));
       return kTRUE;
    }
 }
@@ -466,7 +416,7 @@ Bool_t REveManager::InsertVizDBEntry(const TString& tag, REveElement* model,
 /// fVizDBReplace(default=kTRUE) and fVizDBUpdate(default=kTRUE).
 /// See docs of the above function.
 
-Bool_t REveManager::InsertVizDBEntry(const TString& tag, REveElement* model)
+Bool_t REveManager::InsertVizDBEntry(const TString &tag, REveElement *model)
 {
    return InsertVizDBEntry(tag, model, fVizDBReplace, fVizDBUpdate);
 }
@@ -475,9 +425,9 @@ Bool_t REveManager::InsertVizDBEntry(const TString& tag, REveElement* model)
 /// Find a visualization-parameter database entry corresponding to tag.
 /// If the entry is not found 0 is returned.
 
-REveElement* REveManager::FindVizDBEntry(const TString& tag)
+REveElement *REveManager::FindVizDBEntry(const TString &tag)
 {
-   return dynamic_cast<REveElement*>(fVizDB->GetValue(tag));
+   return dynamic_cast<REveElement *>(fVizDB->GetValue(tag));
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -486,17 +436,17 @@ REveElement* REveManager::FindVizDBEntry(const TString& tag)
 /// and fVizDBUpdate members for the duration of the macro
 /// execution.
 
-void REveManager::LoadVizDB(const TString& filename, Bool_t replace, Bool_t update)
+void REveManager::LoadVizDB(const TString &filename, Bool_t replace, Bool_t update)
 {
    Bool_t ex_replace = fVizDBReplace;
-   Bool_t ex_update  = fVizDBUpdate;
+   Bool_t ex_update = fVizDBUpdate;
    fVizDBReplace = replace;
-   fVizDBUpdate  = update;
+   fVizDBUpdate = update;
 
    LoadVizDB(filename);
 
    fVizDBReplace = ex_replace;
-   fVizDBUpdate  = ex_update;
+   fVizDBUpdate = ex_update;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -504,7 +454,7 @@ void REveManager::LoadVizDB(const TString& filename, Bool_t replace, Bool_t upda
 /// State of data-members fVizDBReplace and fVizDBUpdate determine
 /// how the registered entries are handled.
 
-void REveManager::LoadVizDB(const TString& filename)
+void REveManager::LoadVizDB(const TString &filename)
 {
    REveUtil::Macro(filename);
    Redraw3D();
@@ -513,7 +463,7 @@ void REveManager::LoadVizDB(const TString& filename)
 ////////////////////////////////////////////////////////////////////////////////
 /// Save visualization-parameter database to file filename.
 
-void REveManager::SaveVizDB(const TString& filename)
+void REveManager::SaveVizDB(const TString &filename)
 {
    TPMERegexp re("(.+)\\.\\w+");
    if (re.Match(filename) != 2) {
@@ -531,20 +481,16 @@ void REveManager::SaveVizDB(const TString& filename)
 
    ClearROOTClassSaved();
 
-   Int_t       var_id = 0;
-   TString     var_name;
-   TIter       next(fVizDB);
+   Int_t var_id = 0;
+   TString var_name;
+   TIter next(fVizDB);
    TObjString *key;
-   while ((key = (TObjString*)next()))
-   {
-      REveElement* mdl = dynamic_cast<REveElement*>(fVizDB->GetValue(key));
-      if (mdl)
-      {
+   while ((key = (TObjString *)next())) {
+      REveElement *mdl = dynamic_cast<REveElement *>(fVizDB->GetValue(key));
+      if (mdl) {
          var_name.Form("x%03d", var_id++);
          mdl->SaveVizParams(out, key->String(), var_name);
-      }
-      else
-      {
+      } else {
          Warning("SaveVizDB", "Saving failed for key '%s'.", key->String().Data());
       }
    }
@@ -559,22 +505,18 @@ void REveManager::SaveVizDB(const TString& filename)
 /// called with the same argument the same geo-manager is returned.
 /// gGeoManager is set to the return value.
 
-TGeoManager* REveManager::GetGeometry(const TString& filename)
+TGeoManager *REveManager::GetGeometry(const TString &filename)
 {
    static const REveException eh("REveManager::GetGeometry ");
 
    TString exp_filename = filename;
    gSystem->ExpandPathName(exp_filename);
-   printf("REveManager::GetGeometry loading: '%s' -> '%s'.\n",
-          filename.Data(), exp_filename.Data());
+   printf("REveManager::GetGeometry loading: '%s' -> '%s'.\n", filename.Data(), exp_filename.Data());
 
-   gGeoManager = (TGeoManager*) fGeometries->GetValue(filename);
-   if (gGeoManager)
-   {
-      gGeoIdentity = (TGeoIdentity*) gGeoManager->GetListOfMatrices()->At(0);
-   }
-   else
-   {
+   gGeoManager = (TGeoManager *)fGeometries->GetValue(filename);
+   if (gGeoManager) {
+      gGeoIdentity = (TGeoIdentity *)gGeoManager->GetListOfMatrices()->At(0);
+   } else {
       Bool_t locked = TGeoManager::IsLocked();
       if (locked) {
          Warning("REveManager::GetGeometry", "TGeoManager is locked ... unlocking it.");
@@ -592,18 +534,17 @@ TGeoManager* REveManager::GetGeometry(const TString& filename)
       // Import colors exported by Gled, if they exist.
       {
          TFile f(exp_filename, "READ");
-         TObjArray* collist = (TObjArray*) f.Get("ColorList");
+         TObjArray *collist = (TObjArray *)f.Get("ColorList");
          f.Close();
          if (collist) {
             TIter next(gGeoManager->GetListOfVolumes());
-            TGeoVolume* vol;
-            while ((vol = (TGeoVolume*) next()) != nullptr)
-            {
+            TGeoVolume *vol;
+            while ((vol = (TGeoVolume *)next()) != nullptr) {
                Int_t oldID = vol->GetLineColor();
-               TColor* col = (TColor*)collist->At(oldID);
+               TColor *col = (TColor *)collist->At(oldID);
                Float_t r, g, b;
                col->GetRGB(r, g, b);
-               Int_t  newID = TColor::GetColor(r,g,b);
+               Int_t newID = TColor::GetColor(r, g, b);
                vol->SetLineColor(newID);
             }
          }
@@ -618,11 +559,11 @@ TGeoManager* REveManager::GetGeometry(const TString& filename)
 /// Get geometry with given alias.
 /// The alias must be registered via RegisterGeometryAlias().
 
-TGeoManager* REveManager::GetGeometryByAlias(const TString& alias)
+TGeoManager *REveManager::GetGeometryByAlias(const TString &alias)
 {
    static const REveException eh("REveManager::GetGeometry ");
 
-   TObjString* full_name = (TObjString*) fGeometryAliases->GetValue(alias);
+   TObjString *full_name = (TObjString *)fGeometryAliases->GetValue(alias);
    if (!full_name)
       throw eh + "geometry alias '" + alias + "' not registered.";
    return GetGeometry(full_name->String());
@@ -630,9 +571,9 @@ TGeoManager* REveManager::GetGeometryByAlias(const TString& alias)
 
 ////////////////////////////////////////////////////////////////////////////////
 /// Get the default geometry.
-/// It should be registered via RegisterGeometryName("Default", <URL>).
+/// It should be registered via RegisterGeometryName("Default", `<URL>`).
 
-TGeoManager* REveManager::GetDefaultGeometry()
+TGeoManager *REveManager::GetDefaultGeometry()
 {
    return GetGeometryByAlias("Default");
 }
@@ -643,7 +584,7 @@ TGeoManager* REveManager::GetDefaultGeometry()
 /// After that the geometry can be retrieved also by calling:
 ///   REX::gEve->GetGeometryByName(name);
 
-void REveManager::RegisterGeometryAlias(const TString& alias, const TString& filename)
+void REveManager::RegisterGeometryAlias(const TString &alias, const TString &filename)
 {
    fGeometryAliases->Add(new TObjString(alias), new TObjString(filename));
 }
@@ -653,10 +594,9 @@ void REveManager::RegisterGeometryAlias(const TString& alias, const TString& fil
 
 void REveManager::ClearROOTClassSaved()
 {
-   TIter   nextcl(gROOT->GetListOfClasses());
+   TIter nextcl(gROOT->GetListOfClasses());
    TClass *cls;
-   while((cls = (TClass *)nextcl()))
-   {
+   while ((cls = (TClass *)nextcl())) {
       cls->ResetBit(TClass::kClassSaved);
    }
 }
@@ -665,7 +605,7 @@ void REveManager::ClearROOTClassSaved()
 /// Register new directory to THttpServer
 //  For example: AddLocation("mydir/", "/test/EveWebApp/ui5");
 //
-void REveManager::AddLocation(const std::string& locationName, const std::string& path)
+void REveManager::AddLocation(const std::string &locationName, const std::string &path)
 {
    fWebWindow->GetServer()->AddLocation(locationName.c_str(), path.c_str());
 }
@@ -674,18 +614,17 @@ void REveManager::AddLocation(const std::string& locationName, const std::string
 /// Set content of default window HTML page
 //  Got example: SetDefaultHtmlPage("file:currentdir/test.html")
 //
-void REveManager::SetDefaultHtmlPage(const std::string& path)
+void REveManager::SetDefaultHtmlPage(const std::string &path)
 {
    fWebWindow->SetDefaultPage(path.c_str());
 }
-
 
 ////////////////////////////////////////////////////////////////////////////////
 /// Set client version, used as prefix in scripts URL
 /// When changed, web browser will reload all related JS files while full URL will be different
 /// Default is empty value - no extra string in URL
 /// Version should be string like "1.2" or "ver1.subv2" and not contain any special symbols
-void REveManager::SetClientVersion(const std::string& version)
+void REveManager::SetClientVersion(const std::string &version)
 {
    fWebWindow->SetClientVersion(version);
 }
@@ -694,12 +633,11 @@ void REveManager::SetClientVersion(const std::string& version)
 /// If global REveManager* REX::gEve is not set initialize it.
 /// Returns REX::gEve.
 
-REveManager* REveManager::Create()
+REveManager *REveManager::Create()
 {
    static const REveException eh("REveManager::Create ");
 
-   if (!REX::gEve)
-   {
+   if (!REX::gEve) {
       // XXXX Initialize some server stuff ???
 
       REX::gEve = new REveManager();
@@ -712,32 +650,44 @@ REveManager* REveManager::Create()
 
 void REveManager::Terminate()
 {
-   if (!REX::gEve) return;
+   if (!REX::gEve)
+      return;
 
    delete REX::gEve;
    REX::gEve = nullptr;
 }
 
-/** \class REveManager::RExceptionHandler
-\ingroup REve
-Exception handler for Eve exceptions.
-*/
-
-
-////////////////////////////////////////////////////////////////////////////////
-/// Handle exceptions deriving from REveException.
-
-TStdExceptionHandler::EStatus
-REveManager::RExceptionHandler::Handle(std::exception &exc)
+void REveManager::ExecuteInMainThread(std::function<void()> func)
 {
-   REveException *ex = dynamic_cast<REveException *>(&exc);
-   if (ex) {
-      Info("Handle", "Exception %s", ex->what());
-      // REX::gEve->SetStatusLine(ex->Data());
-      gSystem->Beep();
-      return kSEHandled;
-   }
-   return kSEProceed;
+   class XThreadTimer : public TTimer {
+      std::function<void()> foo_;
+   public:
+      XThreadTimer(std::function<void()> f) : foo_(f)
+      {
+         SetTime(0);
+         R__LOCKGUARD2(gSystemMutex);
+         gSystem->AddTimer(this);
+      }
+      Bool_t Notify() override
+      {
+         foo_();
+         gSystem->RemoveTimer(this);
+         delete this;
+         return kTRUE;
+      }
+   };
+
+   new XThreadTimer(func);
+}
+
+void REveManager::QuitRoot()
+{
+   ExecuteInMainThread([](){
+      // QQQQ Should call Terminate() but it needs to:
+      // - properly stop MIRExecThread;
+      // - shutdown civet/THttp/RWebWindow
+      gApplication->Terminate();
+   });
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -745,8 +695,20 @@ REveManager::RExceptionHandler::Handle(std::exception &exc)
 
 void REveManager::WindowConnect(unsigned connid)
 {
+   std::unique_lock<std::mutex> lock(fServerState.fMutex);
+
+   while (fServerState.fVal == ServerState::UpdatingScenes)
+   {
+       fServerState.fCV.wait(lock);
+   }
+
    fConnList.emplace_back(connid);
    printf("connection established %u\n", connid);
+
+   // QQQQ do we want mir-time here as well? maybe set it at the end of function?
+   // Note, this is all under lock, so nobody will get state out in between.
+   fServerStatus.fTLastMir = fServerStatus.fTLastConnect = std::time(nullptr);
+   ++fServerStatus.fNConnects;
 
    // This prepares core and render data buffers.
    printf("\nEVEMNG ............. streaming the world scene.\n");
@@ -754,35 +716,32 @@ void REveManager::WindowConnect(unsigned connid)
    fWorld->AddSubscriber(std::make_unique<REveClient>(connid, fWebWindow));
    fWorld->StreamElements();
 
-   printf("   sending json, len = %d\n", (int) fWorld->fOutputJson.size());
+   printf("   sending json, len = %d\n", (int)fWorld->fOutputJson.size());
    Send(connid, fWorld->fOutputJson);
    printf("   for now assume world-scene has no render data, binary-size=%d\n", fWorld->fTotalBinarySize);
    assert(fWorld->fTotalBinarySize == 0);
 
-   for (auto &c: fScenes->RefChildren())
-   {
-      REveScene* scene = dynamic_cast<REveScene *>(c);
+   for (auto &c : fScenes->RefChildren()) {
+      REveScene *scene = dynamic_cast<REveScene *>(c);
 
       scene->AddSubscriber(std::make_unique<REveClient>(connid, fWebWindow));
-      printf("\nEVEMNG ............. streaming scene %s [%s]\n",
-             scene->GetCTitle(), scene->GetCName());
+      printf("\nEVEMNG ............. streaming scene %s [%s]\n", scene->GetCTitle(), scene->GetCName());
 
       // This prepares core and render data buffers.
       scene->StreamElements();
 
-      printf("   sending json, len = %d\n", (int) scene->fOutputJson.size());
+      printf("   sending json, len = %d\n", (int)scene->fOutputJson.size());
       Send(connid, scene->fOutputJson);
 
-      if (scene->fTotalBinarySize > 0)
-      {
+      if (scene->fTotalBinarySize > 0) {
          printf("   sending binary, len = %d\n", scene->fTotalBinarySize);
          SendBinary(connid, &scene->fOutputBinary[0], scene->fTotalBinarySize);
-      }
-      else
-      {
+      } else {
          printf("   NOT sending binary, len = %d\n", scene->fTotalBinarySize);
       }
    }
+
+   fServerState.fCV.notify_all();
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -790,11 +749,14 @@ void REveManager::WindowConnect(unsigned connid)
 
 void REveManager::WindowDisconnect(unsigned connid)
 {
-   auto conn = fConnList.end();
-   for (auto i = fConnList.begin(); i != fConnList.end(); ++i)
+   std::unique_lock<std::mutex> lock(fServerState.fMutex);
+   while (fServerState.fVal != ServerState::Waiting)
    {
-      if (i->fId == connid)
-      {
+       fServerState.fCV.wait(lock);
+   }
+   auto conn = fConnList.end();
+   for (auto i = fConnList.begin(); i != fConnList.end(); ++i) {
+      if (i->fId == connid) {
          conn = i;
          break;
       }
@@ -805,15 +767,17 @@ void REveManager::WindowDisconnect(unsigned connid)
    } else {
       printf("connection closed %u\n", connid);
       fConnList.erase(conn);
-      for (auto &c: fScenes->RefChildren())
-      {
-         REveScene* scene = dynamic_cast<REveScene *>(c);
+      for (auto &c : fScenes->RefChildren()) {
+         REveScene *scene = dynamic_cast<REveScene *>(c);
          scene->RemoveSubscriber(connid);
       }
       fWorld->RemoveSubscriber(connid);
-
    }
 
+   fServerStatus.fTLastDisconnect = std::time(nullptr);
+   ++fServerStatus.fNDisconnects;
+
+   fServerState.fCV.notify_all();
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -831,126 +795,246 @@ void REveManager::WindowData(unsigned connid, const std::string &arg)
          break;
       }
    }
+
    // this should not happen, just check
    if (!found) {
-      R__ERROR_HERE("webeve") << "Internal error - no connection with id " << connid << " found";
+      R__LOG_ERROR(REveLog()) << "Internal error - no connection with id " << connid << " found";
       return;
+   }
+   // client status data
+   if (arg.compare("__REveDoneChanges") == 0)
+   {
+      std::unique_lock<std::mutex> lock(fServerState.fMutex);
+
+      for (auto &conn : fConnList) {
+         if (conn.fId == connid) {
+            conn.fState = Conn::Free;
+            break;
+         }
+      }
+
+      if (ClientConnectionsFree()) {
+         fServerState.fVal = ServerState::Waiting;
+         fServerState.fCV.notify_all();
+      }
+
+      return;
+   }
+   else if (arg.compare( 0, 10, "FILEDIALOG") == 0)
+   {
+       RFileDialog::Embedded(fWebWindow, arg);
+       return;
    }
 
    nlohmann::json cj = nlohmann::json::parse(arg);
    if (gDebug > 0)
-      ::Info("REveManager::WindowData", "MIR test %s", cj.dump().c_str());
-   std::string mir = cj["mir"];
+      ::Info("REveManager::WindowData", "MIR test %s\n", cj.dump().c_str());
+
+   std::string cmd = cj["mir"];
    int id = cj["fElementId"];
+   std::string ctype = cj["class"];
 
-   // MIR
-   std::stringstream cmd;
-
-   if (id == 0) {
-      cmd << "((ROOT::Experimental::REveManager *)" << std::hex << std::showbase << (size_t) this << ")->" << mir << ";";
-   } else {
-      auto el = FindElementById(id);
-      if (!el) {
-         R__ERROR_HERE("webeve") << "Element with id " << id << " not found";
-         return;
-      }
-      std::string ctype = cj["class"];
-      cmd << "((" << ctype << "*)" << std::hex << std::showbase << (size_t)el << ")->" << mir << ";";
-   }
-
-   fWorld->BeginAcceptingChanges();
-   fScenes->AcceptChanges(true);
-
-   if (gDebug > 0)
-      ::Info("REveManager::WindowData", "MIR cmd %s", cmd.str().c_str());
-   gROOT->ProcessLine(cmd.str().c_str());
-
-   fScenes->AcceptChanges(false);
-   fWorld->EndAcceptingChanges();
-
-   Redraw3D();
-
-   /*
-   nlohmann::json resp;
-   resp["function"] = "replaceElement";
-   //el->SetCoreJson(resp);
-   for (auto &conn : fConnList)
-      fWebWindow->Send(conn.fId, resp.dump());
-   */
+   ScheduleMIR(cmd, id, ctype);
 }
 
+//
+//____________________________________________________________________
+void REveManager::ScheduleMIR(const std::string &cmd, ElementId_t id, const std::string& ctype)
+{
+   std::unique_lock<std::mutex> lock(fServerState.fMutex);
+   fServerStatus.fTLastMir = std::time(nullptr);
+   fMIRqueue.push(std::shared_ptr<MIR>(new MIR(cmd, id, ctype)));
+   if (fServerState.fVal == ServerState::Waiting)
+      fServerState.fCV.notify_all();
+}
+
+//
+//____________________________________________________________________
+void REveManager::ExecuteMIR(std::shared_ptr<MIR> mir)
+{
+   static const REveException eh("REveManager::ExecuteMIR ");
+
+   class ChangeSentry {
+   public:
+      ChangeSentry()
+      {
+         gEve->GetWorld()->BeginAcceptingChanges();
+         gEve->GetScenes()->AcceptChanges(true);
+      }
+      ~ChangeSentry()
+      {
+         gEve->GetScenes()->AcceptChanges(false);
+         gEve->GetWorld()->EndAcceptingChanges();
+      }
+   };
+   ChangeSentry cs;
+
+   //if (gDebug > 0)
+      ::Info("REveManager::ExecuteCommand", "MIR cmd %s", mir->fCmd.c_str());
+
+   try {
+      REveElement *el = FindElementById(mir->fId);
+      if ( ! el) throw eh + "Element with id " + mir->fId + " not found";
+
+      static const std::regex cmd_re("^(\\w[\\w\\d]*)\\(\\s*(.*)\\s*\\)\\s*;?\\s*$", std::regex::optimize);
+      std::smatch m;
+      std::regex_search(mir->fCmd, m, cmd_re);
+      if (m.size() != 3)
+         throw eh + "Command string parse error: '" + mir->fCmd + "'.";
+
+      static const TClass *elem_cls = TClass::GetClass<REX::REveElement>();
+
+      TClass *call_cls = TClass::GetClass(mir->fCtype.c_str());
+      if ( ! call_cls)
+         throw eh + "Class '" + mir->fCtype + "' not found.";
+
+      void *el_casted = call_cls->DynamicCast(elem_cls, el, false);
+      if ( ! el_casted)
+         throw eh + "Dynamic cast from REveElement to '" + mir->fCtype + "' failed.";
+
+      std::string tag(mir->fCtype + "::" + m.str(1));
+      std::shared_ptr<TMethodCall> mc;
+
+      auto mmi = fMethCallMap.find(tag);
+      if (mmi != fMethCallMap.end())
+      {
+         mc = mmi->second;
+      }
+      else
+      {
+         const TMethod *meth = call_cls->GetMethodAllAny(m.str(1).c_str());
+         if ( ! meth)
+            throw eh + "Can not find TMethod matching '" + m.str(1) + "'.";
+         mc = std::make_shared<TMethodCall>(meth);
+         fMethCallMap.insert(std::make_pair(tag, mc));
+      }
+
+      R__LOCKGUARD_CLING(gInterpreterMutex);
+      mc->Execute(el_casted, m.str(2).c_str());
+
+      // Alternative implementation through Cling. "Leaks" 200 kB per call.
+      // This might be needed for function calls that involve data-types TMethodCall
+      // can not handle.
+      // std::stringstream cmd;
+      // cmd << "((" << mir->fCtype << "*)" << std::hex << std::showbase << (size_t)el << ")->" << mir->fCmd << ";";
+      // std::cout << cmd.str() << std::endl;
+      // gROOT->ProcessLine(cmd.str().c_str());
+   } catch (std::exception &e) {
+      R__LOG_ERROR(REveLog()) << "REveManager::ExecuteCommand " << e.what() << std::endl;
+   } catch (...) {
+      R__LOG_ERROR(REveLog()) << "REveManager::ExecuteCommand unknow execption \n";
+   }
+}
+
+//
+//____________________________________________________________________
+void REveManager::PublishChanges()
+{
+   nlohmann::json jobj = {};
+   jobj["content"] = "BeginChanges";
+   fWebWindow->Send(0, jobj.dump());
+
+   // Process changes in scenes.
+   fWorld->ProcessChanges();
+   fScenes->ProcessSceneChanges();
+   jobj["content"] = "EndChanges";
+
+   if (!gEveLogEntries.empty()) {
+
+      constexpr static int numLevels = static_cast<int>(ELogLevel::kDebug) + 1;
+      constexpr static std::array<const char *, numLevels> sTag{
+         {"{unset-error-level please report}", "FATAL", "Error", "Warning", "Info", "Debug"}};
+
+      std::stringstream strm;
+      for (auto entry : gEveLogEntries) {
+         int cappedLevel = std::min(static_cast<int>(entry.fLevel), numLevels - 1);
+         strm << sTag[cappedLevel];
+         if (!entry.fLocation.fFuncName.empty())
+            strm << " " << entry.fLocation.fFuncName;
+         strm << " " << entry.fMessage; 
+      }
+      jobj["log"] = strm.str();
+      gEveLogEntries.clear();
+   }
+
+   fWebWindow->Send(0, jobj.dump());
+}
+
+//
+//____________________________________________________________________
+void REveManager::MIRExecThread()
+{
+#if defined(R__LINUX)
+   pthread_setname_np(pthread_self(), "mir_exec");
+#endif
+   while (true)
+   {
+      std::unique_lock<std::mutex> lock(fServerState.fMutex);
+      abcLabel:
+      if (fMIRqueue.empty())
+      {
+         fServerState.fCV.wait(lock);
+         goto abcLabel;
+      }
+      else if (fServerState.fVal == ServerState::Waiting)
+      {
+         std::shared_ptr<MIR> mir = fMIRqueue.front();
+         fMIRqueue.pop();
+
+         fServerState.fVal = ServerState::UpdatingScenes;
+         lock.unlock();
+
+         ExecuteMIR(mir);
+
+         lock.lock();
+         fServerState.fVal = fConnList.empty() ? ServerState::Waiting : ServerState::UpdatingClients;
+         PublishChanges();
+      }
+   }
+}
+
+
+//____________________________________________________________________
 void REveManager::Send(unsigned connid, const std::string &data)
 {
    fWebWindow->Send(connid, data);
 }
-
 
 void REveManager::SendBinary(unsigned connid, const void *data, std::size_t len)
 {
    fWebWindow->SendBinary(connid, data, len);
 }
 
-//------------------------------------------------------------------------------
-
-void REveManager::DestroyElementsOf(REveElement::List_t& els)
+bool REveManager::ClientConnectionsFree() const
 {
-   // XXXXX - not called, what's with end accepting changes?
-
-   fWorld->EndAcceptingChanges();
-   fScenes->AcceptChanges(false);
-
-   nlohmann::json jarr = nlohmann::json::array();
-
-   nlohmann::json jhdr = {};
-   jhdr["content"]  = "REveManager::DestroyElementsOf";
-
-   nlohmann::json jels = nlohmann::json::array();
-
-   for (auto &ep : els) {
-      jels.push_back(ep->GetElementId());
-
-      ep->DestroyElements();
+   for (auto &conn : fConnList) {
+      if (conn.fState != Conn::Free)
+         return false;
    }
 
-   jhdr["element_ids"] = jels;
+   return true;
+}
 
-   jarr.push_back(jhdr);
-
-   std::string msg = jarr.dump();
-
-   // XXXX Do we have broadcast?
-
+void REveManager::SceneSubscriberProcessingChanges(unsigned cinnId)
+{
    for (auto &conn : fConnList) {
-      fWebWindow->Send(conn.fId, msg);
+      if (conn.fId == cinnId)
+      {
+         conn.fState = Conn::WaitingResponse;
+         break;
+      }
    }
 }
 
-void REveManager::BroadcastElementsOf(REveElement::List_t &els)
+void REveManager::SceneSubscriberWaitingResponse(unsigned cinnId)
 {
-   // XXXXX - not called, what's with begin accepting changes?
-
-   for (auto &ep : els)
-   {
-      REveScene* scene = dynamic_cast<REveScene*>(ep);
-      assert (scene != nullptr);
-
-      printf("\nEVEMNG ............. streaming scene %s [%s]\n",
-             scene->GetCTitle(), scene->GetCName());
-
-      // This prepares core and render data buffers.
-      scene->StreamElements();
-
-      for (auto &conn : fConnList) {
-         printf("   sending json, len = %d --> to conn_id = %d\n", (int)scene->fOutputJson.size(), conn.fId);
-         fWebWindow->Send(conn.fId, scene->fOutputJson);
-         printf("   sending binary, len = %d --> to conn_id = %d\n", scene->fTotalBinarySize, conn.fId);
-         fWebWindow->SendBinary(conn.fId, &scene->fOutputBinary[0], scene->fTotalBinarySize);
+   for (auto &conn : fConnList) {
+      if (conn.fId == cinnId)
+      {
+         conn.fState = Conn::Processing;
+         break;
       }
    }
-
-   // AMT: These calls may not be necessary
-   fScenes->AcceptChanges(true);
-   fWorld->BeginAcceptingChanges();
 }
 
 //////////////////////////////////////////////////////////////////
@@ -984,4 +1068,93 @@ std::shared_ptr<REveGeomViewer> REveManager::ShowGeometry(const RWebDisplayArgs 
    viewer->Show(args);
 
    return viewer;
+}
+
+//____________________________________________________________________
+void REveManager::BeginChange()
+{
+   {
+      std::unique_lock<std::mutex> lock(fServerState.fMutex);
+      while (fServerState.fVal != ServerState::Waiting) {
+         fServerState.fCV.wait(lock);
+      }
+      fServerState.fVal = ServerState::UpdatingScenes;
+   }
+   GetWorld()->BeginAcceptingChanges();
+   GetScenes()->AcceptChanges(true);
+}
+
+//____________________________________________________________________
+void REveManager::EndChange()
+{
+   GetScenes()->AcceptChanges(false);
+   GetWorld()->EndAcceptingChanges();
+
+   PublishChanges();
+
+   std::unique_lock<std::mutex> lock(fServerState.fMutex);
+   fServerState.fVal = fConnList.empty() ? ServerState::Waiting : ServerState::UpdatingClients;
+   fServerState.fCV.notify_all();
+}
+
+//____________________________________________________________________
+void REveManager::GetServerStatus(REveServerStatus& st)
+{
+   std::unique_lock<std::mutex> lock(fServerState.fMutex);
+   gSystem->GetProcInfo(&fServerStatus.fProcInfo);
+#if defined(_MSC_VER)
+   std::timespec_get(&fServerStatus.fTReport, TIME_UTC);
+#else
+   fServerStatus.fTReport = std::time_t(nullptr);
+#endif
+   st = fServerStatus;
+}
+
+/** \class REveManager::ChangeGuard
+\ingroup REve
+RAII guard for locking Eve manager (ctor) and processing changes (dtor).
+*/
+
+//////////////////////////////////////////////////////////////////////
+//
+// Helper struct to guard update mechanism
+//
+REveManager::ChangeGuard::ChangeGuard()
+{
+   gEve->BeginChange();
+}
+
+REveManager::ChangeGuard::~ChangeGuard()
+{
+   gEve->EndChange();
+}
+
+/** \class REveManager::RExceptionHandler
+\ingroup REve
+Exception handler for Eve exceptions.
+*/
+
+////////////////////////////////////////////////////////////////////////////////
+/// Handle exceptions deriving from REveException.
+
+TStdExceptionHandler::EStatus REveManager::RExceptionHandler::Handle(std::exception &exc)
+{
+   REveException *ex = dynamic_cast<REveException *>(&exc);
+   if (ex) {
+      Info("Handle", "Exception %s", ex->what());
+      // REX::gEve->SetStatusLine(ex->Data());
+      gSystem->Beep();
+      return kSEHandled;
+   }
+   return kSEProceed;
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+/// Utility to stream loggs to client.
+
+bool REveManager::Logger::Handler::Emit(const RLogEntry &entry)
+{
+   gEveLogEntries.emplace_back(entry);
+   return true;
 }

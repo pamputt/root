@@ -20,6 +20,7 @@
 
 #include <memory>
 #include <unordered_map>
+#include <string>
 
 class RooNameReg : public TNamed {
 public:
@@ -31,6 +32,7 @@ public:
   static const TNamed* ptr(const char* stringPtr) ;
   static const char* str(const TNamed* ptr) ;
   static const TNamed* known(const char* stringPtr) ;
+  static const std::size_t& renameCounter() ;
 
   enum {
     kRenamedArg = BIT(19)    // TNamed flag to indicate that some RooAbsArg has been renamed (flag set in new name)
@@ -41,7 +43,12 @@ protected:
 //  RooNameReg(Int_t hashSize = 31) ;
   RooNameReg(const RooNameReg& other) = delete;
 
+  friend class RooAbsArg;
+  friend class RooAbsData;
+  static void incrementRenameCounter() ;
+
   std::unordered_map<std::string,std::unique_ptr<TNamed>> _map;
+  std::size_t _renameCounter = 0;
 
 //  ClassDef(RooNameReg,1) // String name registry
 };

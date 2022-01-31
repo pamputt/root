@@ -11,7 +11,7 @@
  *************************************************************************/
 
 /** \class TGeoVolume
-\ingroup Geometry_classes
+\ingroup Shapes_classes
 
 TGeoVolume, TGeoVolumeMulti, TGeoVolumeAssembly are the volume classes
 
@@ -107,7 +107,7 @@ elements in the hierarchy of volumes. Nodes are unique and distinct geometrical
 objects ONLY from their container point of view. Since volumes can be replicated
 in the geometry, the same node may be found on different branches.
 
-\image html geom_t_example.png
+\image html geom_t_example.png width=600px
 
   An important observation is that volume objects are owned by the TGeoManager
 class. This stores a list of all volumes in the geometry, that is cleaned
@@ -377,13 +377,15 @@ To define an assembly one should just input a name, then start adding other
 volumes (or volume assemblies) as content.
 */
 
-#include "Riostream.h"
+#include <fstream>
+#include <iomanip>
+
 #include "TString.h"
+#include "TBuffer.h"
 #include "TBrowser.h"
 #include "TStyle.h"
 #include "TH2F.h"
 #include "TROOT.h"
-#include "TClass.h"
 #include "TEnv.h"
 #include "TMap.h"
 #include "TFile.h"
@@ -916,7 +918,7 @@ Int_t TGeoVolume::Export(const char *filename, const char *name, Option_t *optio
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-/// Actualize matrix of node indexed <inode>
+/// Actualize matrix of node indexed `<inode>`
 
 void TGeoVolume::cd(Int_t inode) const
 {
@@ -1675,7 +1677,7 @@ Bool_t TGeoVolume::GetOptimalVoxels() const
 char *TGeoVolume::GetPointerName() const
 {
    static TString name;
-   name = TString::Format("p%s_%lx", GetName(), (ULong_t)this);
+   name = TString::Format("p%s_%zx", GetName(), (size_t)this);
    return (char*)name.Data();
 }
 
@@ -1714,6 +1716,7 @@ TGeoVolume *TGeoVolume::CloneVolume() const
    TGeoVolume *vol = new TGeoVolume(GetName(), fShape, fMedium);
    Int_t i;
    // copy volume attributes
+   vol->SetTitle(GetTitle());
    vol->SetLineColor(GetLineColor());
    vol->SetLineStyle(GetLineStyle());
    vol->SetLineWidth(GetLineWidth());
@@ -1858,7 +1861,7 @@ TGeoVolume *TGeoVolume::MakeReflectedVolume(const char *newname) const
    // Reflect the shape (if any) and connect it.
    if (fShape) {
       TGeoShape *reflected_shape =
-         TGeoScaledShape::MakeScaledShape("", fShape, new TGeoScale(1.,1.,-1.));
+         TGeoScaledShape::MakeScaledShape(fShape->GetName(), fShape, new TGeoScale(1.,1.,-1.));
       vol->SetShape(reflected_shape);
    }
    // Reflect the daughters.
@@ -2850,6 +2853,7 @@ TGeoVolume *TGeoVolumeAssembly::CloneVolume() const
    vol->SetOption(fOption);
    vol->SetNumber(fNumber);
    vol->SetNtotal(fNtotal);
+   vol->SetTitle(GetTitle());
    return vol;
 }
 

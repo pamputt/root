@@ -44,11 +44,11 @@ public:
   const TH1* GetHisto() const;
   // set histogram for this sample
   void SetHisto( TH1* histo ) { fhNominal = histo; fHistoName=histo->GetName(); }
-  void SetValue( Double_t Val );
+  void SetValue( Double_t Val ) ;
 
   // Some helper functions
-  // Note that histogram name should not include the path of the histogram in the file.  
-  // This has to be given separatly 
+  // Note that histogram name should not include the path of the histogram in the file.
+  // This has to be given separately
 
   void ActivateStatError();
   void ActivateStatError( std::string HistoName, std::string InputFile, std::string HistoPath="" );
@@ -60,11 +60,11 @@ public:
   void AddNormFactor( const NormFactor& Factor );
 
   void AddHistoSys(    std::string Name, std::string HistoNameLow,  std::string HistoFileLow,  std::string HistoPathLow,
-		                         std::string HistoNameHigh, std::string HistoFileHigh, std::string HistoPathHigh );
+                               std::string HistoNameHigh, std::string HistoFileHigh, std::string HistoPathHigh );
   void AddHistoSys( const HistoSys& Sys );
 
-  void AddHistoFactor( std::string Name, std::string HistoNameLow,  std::string HistoFileLow,  std::string HistoPathLow,  
-		       std::string HistoNameHigh, std::string HistoFileHigh, std::string HistoPathHigh );
+  void AddHistoFactor( std::string Name, std::string HistoNameLow,  std::string HistoFileLow,  std::string HistoPathLow,
+             std::string HistoNameHigh, std::string HistoFileHigh, std::string HistoPathHigh );
   void AddHistoFactor( const HistoFactor& Factor );
 
   void AddShapeFactor( std::string Name );
@@ -108,18 +108,25 @@ public:
 
   std::vector< RooStats::HistFactory::OverallSys >& GetOverallSysList() { return fOverallSysList; }
   std::vector< RooStats::HistFactory::NormFactor >& GetNormFactorList() { return fNormFactorList; }
-
   std::vector< RooStats::HistFactory::HistoSys >&    GetHistoSysList() {    return fHistoSysList; }
   std::vector< RooStats::HistFactory::HistoFactor >& GetHistoFactorList() { return fHistoFactorList; }
-
   std::vector< RooStats::HistFactory::ShapeSys >&    GetShapeSysList() {    return fShapeSysList; }
   std::vector< RooStats::HistFactory::ShapeFactor >& GetShapeFactorList() { return fShapeFactorList; }
 
+  const std::vector< RooStats::HistFactory::OverallSys >& GetOverallSysList()   const { return fOverallSysList; }
+  const std::vector< RooStats::HistFactory::NormFactor >& GetNormFactorList()   const { return fNormFactorList; }
+  const std::vector< RooStats::HistFactory::HistoSys >&    GetHistoSysList()    const { return fHistoSysList; }
+  const std::vector< RooStats::HistFactory::HistoFactor >& GetHistoFactorList() const { return fHistoFactorList; }
+  const std::vector< RooStats::HistFactory::ShapeSys >&    GetShapeSysList()    const { return fShapeSysList; }
+  const std::vector< RooStats::HistFactory::ShapeFactor >& GetShapeFactorList() const { return fShapeFactorList; }
+
+
+  bool HasStatError() const { return fStatErrorActivate; }
   RooStats::HistFactory::StatError& GetStatError() { return fStatError; }
+  const RooStats::HistFactory::StatError& GetStatError() const { return fStatError; }
   void SetStatError( RooStats::HistFactory::StatError Error ) {
     fStatError = std::move(Error);
   }
-
 
 protected:
 

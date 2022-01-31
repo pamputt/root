@@ -24,16 +24,11 @@ if(CMAKE_PROJECT_NAME STREQUAL ROOT)
       Minuit2/ABTypes.h
       Minuit2/AnalyticalGradientCalculator.h
       Minuit2/BFGSErrorUpdator.h
-      Minuit2/BasicFunctionGradient.h
-      Minuit2/BasicFunctionMinimum.h
-      Minuit2/BasicMinimumError.h
-      Minuit2/BasicMinimumParameters.h
-      Minuit2/BasicMinimumSeed.h
-      Minuit2/BasicMinimumState.h
       Minuit2/CombinedMinimizer.h
       Minuit2/CombinedMinimumBuilder.h
       Minuit2/ContoursError.h
       Minuit2/DavidonErrorUpdator.h
+      Minuit2/ExternalInternalGradientCalculator.h
       Minuit2/FCNAdapter.h
       Minuit2/FCNBase.h
       Minuit2/FCNGradAdapter.h
@@ -97,8 +92,6 @@ if(CMAKE_PROJECT_NAME STREQUAL ROOT)
       Minuit2/MnPlot.h
       Minuit2/MnPosDef.h
       Minuit2/MnPrint.h
-      Minuit2/MnRefCountedPointer.h
-      Minuit2/MnReferenceCounter.h
       Minuit2/MnScan.h
       Minuit2/MnSeedGenerator.h
       Minuit2/MnSimplex.h
@@ -114,6 +107,7 @@ if(CMAKE_PROJECT_NAME STREQUAL ROOT)
       Minuit2/ModularFunctionMinimizer.h
       Minuit2/NegativeG2LineSearch.h
       Minuit2/Numerical2PGradientCalculator.h
+      Minuit2/NumericalDerivator.h
       Minuit2/ParametricFunction.h
       Minuit2/ScanBuilder.h
       Minuit2/ScanMinimizer.h
@@ -133,11 +127,10 @@ if(CMAKE_PROJECT_NAME STREQUAL ROOT)
     SOURCES
       src/AnalyticalGradientCalculator.cxx
       src/BFGSErrorUpdator.cxx
-      src/BasicMinimumError.cxx
       src/CMakeLists.txt
       src/CombinedMinimumBuilder.cxx
       src/DavidonErrorUpdator.cxx
-      src/FitterUtil.h
+      src/ExternalInternalGradientCalculator.cxx
       src/FumiliBuilder.cxx
       src/FumiliErrorUpdator.cxx
       src/FumiliGradientCalculator.cxx
@@ -172,6 +165,7 @@ if(CMAKE_PROJECT_NAME STREQUAL ROOT)
       src/MnPlot.cxx
       src/MnPosDef.cxx
       src/MnPrint.cxx
+      src/MnPrintImpl.cxx
       src/MnScan.cxx
       src/MnSeedGenerator.cxx
       src/MnStrategy.cxx
@@ -184,6 +178,7 @@ if(CMAKE_PROJECT_NAME STREQUAL ROOT)
       src/ModularFunctionMinimizer.cxx
       src/NegativeG2LineSearch.cxx
       src/Numerical2PGradientCalculator.cxx
+      src/NumericalDerivator.cxx
       src/ParametricFunction.cxx
       src/ScanBuilder.cxx
       src/SimplexBuilder.cxx
@@ -249,7 +244,7 @@ if(minuit2_mpi)
 endif()
 
 if(CMAKE_PROJECT_NAME STREQUAL ROOT)
-  add_definitions(-DWARNINGMSG)
+  add_definitions(-DUSE_ROOT_ERROR)
   ROOT_ADD_TEST_SUBDIRECTORY(test)
 else()
   include(StandAlone.cmake)

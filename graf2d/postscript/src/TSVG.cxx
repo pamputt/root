@@ -13,12 +13,13 @@
 #pragma optimize("",off)
 #endif
 
-#include <stdlib.h>
-#include <string.h>
-#include <ctype.h>
+#include <cstdlib>
+#include <cstring>
+#include <cctype>
+#include <fstream>
 
-#include "Riostream.h"
 #include "TROOT.h"
+#include "TDatime.h"
 #include "TColor.h"
 #include "TVirtualPad.h"
 #include "TPoints.h"
@@ -27,7 +28,7 @@
 #include "TMath.h"
 #include "TObjString.h"
 #include "TObjArray.h"
-#include "TClass.h"
+#include "snprintf.h"
 
 Int_t TSVG::fgLineJoin = 0;
 Int_t TSVG::fgLineCap  = 0;
@@ -1501,8 +1502,8 @@ void TSVG::DrawPS(Int_t nn, Double_t *xw, Double_t *yw)
 
 ////////////////////////////////////////////////////////////////////////////////
 /// Initialize the SVG file. The main task of the function is to output the
-/// SVG header file which consist in <title>, <desc> and <defs>. The
-/// HeaderPS provided by the user program is written in the <defs> part.
+/// SVG header file which consist in `<title>`, `<desc>` and `<defs>`. The
+/// HeaderPS provided by the user program is written in the `<defs>` part.
 
 void TSVG::Initialize()
 {
@@ -1557,7 +1558,7 @@ void TSVG::MovePS(Double_t ix, Double_t iy)
 
 ////////////////////////////////////////////////////////////////////////////////
 /// Start the SVG page. This function initialize the pad conversion
-/// coefficients and output the <svg> directive which is close later in the
+/// coefficients and output the `<svg>` directive which is close later in the
 /// the function Close.
 
 void TSVG::NewPage()
@@ -1594,51 +1595,8 @@ void TSVG::NewPage()
 
 void TSVG::Range(Float_t xsize, Float_t ysize)
 {
-   Float_t xps, yps, xncm, yncm, dxwn, dywn, xwkwn, ywkwn, xymax;
-
    fXsize = xsize;
    fYsize = ysize;
-
-   xps = xsize;
-   yps = ysize;
-
-   if( xsize <= xps && ysize < yps) {
-      if ( xps > yps ) xymax = xps;
-      else             xymax = yps;
-      xncm  = xsize/xymax;
-      yncm  = ysize/xymax;
-      dxwn  = ((xps/xymax)-xncm)/2;
-      dywn  = ((yps/xymax)-yncm)/2;
-   } else {
-      if (xps/yps < 1) xwkwn = xps/yps;
-      else             xwkwn = 1;
-      if (yps/xps < 1) ywkwn = yps/xps;
-      else             ywkwn = 1;
-
-      if (xsize < ysize)  {
-         xncm = ywkwn*xsize/ysize;
-         yncm = ywkwn;
-         dxwn = (xwkwn-xncm)/2;
-         dywn = 0;
-         if( dxwn < 0) {
-            xncm = xwkwn;
-            dxwn = 0;
-            yncm = xwkwn*ysize/xsize;
-            dywn = (ywkwn-yncm)/2;
-         }
-      } else {
-         xncm = xwkwn;
-         yncm = xwkwn*ysize/xsize;
-         dxwn = 0;
-         dywn = (ywkwn-yncm)/2;
-         if( dywn < 0) {
-            yncm = ywkwn;
-            dywn = 0;
-            xncm = ywkwn*xsize/ysize;
-            dxwn = (xwkwn-xncm)/2;
-         }
-      }
-   }
    fRange = kTRUE;
 }
 
@@ -1648,7 +1606,6 @@ void TSVG::Range(Float_t xsize, Float_t ysize)
 void TSVG::SetFillColor( Color_t cindex )
 {
    fFillColor = cindex;
-   if (gStyle->GetFillColor() <= 0) cindex = 0;
 }
 
 ////////////////////////////////////////////////////////////////////////////////

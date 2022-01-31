@@ -9,7 +9,7 @@
  * For the list of contributors see $ROOTSYS/README/CREDITS.             *
  *************************************************************************/
 
-#include "Riostream.h"
+#include <iostream>
 #include "TROOT.h"
 #include <ft2build.h>
 #include FT_FREETYPE_H
@@ -44,6 +44,10 @@ The list of all available symbols is given in the following example:
 Begin_Macro
 ../../../tutorials/graphics/tmathtext2.C
 End_Macro
+
+#### Limitation:
+TMathText rendering is not implemented for the PDF output.
+PostScript output should be used instead.
 */
 
 const Double_t kPI      = TMath::Pi();
@@ -485,12 +489,12 @@ void TMathText::GetBoundingBox(UInt_t &w, UInt_t &h, Bool_t /*angle*/)
    const TString newText = GetTitle();
    const Int_t length = newText.Length();
    const Char_t *text = newText.Data();
-   const Double_t size = GetTextSize();
 
    Double_t x0;
    Double_t y0;
    Double_t x1;
    Double_t y1;
+   Double_t size = GetTextSizePercent(GetTextSize());
 
    GetSize(x0, y0, x1, y1, size, 0, text, length);
    w = (UInt_t)(TMath::Abs(gPad->XtoAbsPixel(x1) - gPad->XtoAbsPixel(x0)));
@@ -586,6 +590,11 @@ void TMathText::PaintMathText(Double_t x, Double_t y, Double_t angle,
    Short_t saveAlign = fTextAlign;
 
    TAttText::Modify();
+   if (gVirtualPS) { // Initialise TMathTextRenderer
+      if (gPad->IsBatch()) {
+         if (gVirtualPS->InheritsFrom("TImageDump")) gPad->PaintText(0, 0, "");
+      }
+   }
 
    // Do not use Latex if font is low precision.
    if (fTextFont % 10 < 2) {

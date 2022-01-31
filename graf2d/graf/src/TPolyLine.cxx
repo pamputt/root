@@ -9,8 +9,9 @@
  * For the list of contributors see $ROOTSYS/README/CREDITS.             *
  *************************************************************************/
 
-#include "Riostream.h"
+#include <iostream>
 #include "TROOT.h"
+#include "TBuffer.h"
 #include "TMath.h"
 #include "TVirtualPad.h"
 #include "TVirtualX.h"
@@ -232,7 +233,7 @@ void TPolyLine::Draw(Option_t *option)
 ////////////////////////////////////////////////////////////////////////////////
 /// Draw this polyline with new coordinates.
 
-void TPolyLine::DrawPolyLine(Int_t n, Double_t *x, Double_t *y, Option_t *option)
+TPolyLine *TPolyLine::DrawPolyLine(Int_t n, Double_t *x, Double_t *y, Option_t *option)
 {
    TPolyLine *newpolyline = new TPolyLine(n,x,y);
    TAttLine::Copy(*newpolyline);
@@ -240,6 +241,7 @@ void TPolyLine::DrawPolyLine(Int_t n, Double_t *x, Double_t *y, Option_t *option
    newpolyline->fOption = fOption;
    newpolyline->SetBit(kCanDelete);
    newpolyline->AppendPad(option);
+   return newpolyline;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -542,6 +544,7 @@ void TPolyLine::Paint(Option_t *option)
 
 void TPolyLine::PaintPolyLine(Int_t n, Double_t *x, Double_t *y, Option_t *option)
 {
+   if (!gPad) return;
    if (n <= 0) return;
    TAttLine::Modify();  //Change line attributes only if necessary
    TAttFill::Modify();  //Change fill area attributes only if necessary

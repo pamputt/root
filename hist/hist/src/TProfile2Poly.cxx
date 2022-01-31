@@ -11,19 +11,16 @@
 
 #include "TProfile2Poly.h"
 #include "TProfileHelper.h"
-
 #include "TMultiGraph.h"
-#include "TGraph.h"
 #include "TList.h"
-#include "TMath.h"
-#include "Riostream.h"
 
+#include <iostream>
 #include <cassert>
 #include <cmath>
 #include <set>
 
 /** \class TProfile2Poly
-    \ingroup Hist
+    \ingroup Histograms
 2D Profile Histogram with Polygonal Bins.
 
 tprofile2polyRealisticModuleError.C and tprofile2polyRealistic.C illustrate how

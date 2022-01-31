@@ -6,7 +6,7 @@
 /// is welcome!
 
 /*************************************************************************
- * Copyright (C) 1995-2019, Rene Brun and Fons Rademakers.               *
+ * Copyright (C) 1995-2020, Rene Brun and Fons Rademakers.               *
  * All rights reserved.                                                  *
  *                                                                       *
  * For the licensing terms see $ROOTSYS/LICENSE.                         *
@@ -20,22 +20,35 @@
 
 #include <string>
 
+#include <ROOT/RLogger.hxx>
+
 namespace ROOT {
 namespace Experimental {
 
+class RLogChannel;
+/// Log channel for RNTuple diagnostics.
+RLogChannel &NTupleLog();
+
+struct RNTuple;
+
+namespace Internal {
+
+void PrintRNTuple(const RNTuple& ntuple, std::ostream& output);
+
+} // namespace Internal
 
 /**
  * The fields in the ntuple model tree can carry different structural information about the type system.
- * Leaf fields contain just data, collection fields resolve to offset columns, record root fields have no
+ * Leaf fields contain just data, collection fields resolve to offset columns, record fields have no
  * materialization on the primitive column layer.
  */
 enum ENTupleStructure {
-  kLeaf,
-  kCollection,
-  kRecord,
-  kVariant,
-  // unimplemented so far
-  kReference,
+   kLeaf,
+   kCollection,
+   kRecord,
+   kVariant,
+   kReference, // unimplemented so far
+   kInvalid,
 };
 
 /// Integer type long enough to hold the maximum number of entries in a column
@@ -103,38 +116,18 @@ public:
    ClusterSize_t::ValueType GetIndex() const { return fIndex; }
 };
 
-/// Every NTuple is identified by a UUID.  TODO(jblomer): should this be a TUUID?
-using RNTupleUuid = std::string;
+/// Generic information about the physical location of data. Values depend on the concrete storage type.  E.g.,
+/// for a local file fUrl might be unsused and fPosition might be a file offset. Objects on storage can be compressed
+/// and therefore we need to store their actual size.
+/// TODO(jblomer): should move the RNTUpleDescriptor and should be an std::variant
+struct RNTupleLocator {
+   std::int64_t fPosition = 0;
+   std::uint32_t fBytesOnStorage = 0;
+   std::string fUrl;
 
-
-/// 64 possible flags to apply to all versioned entities (so far unused).
-using NTupleFlags_t = std::uint64_t;
-/// For forward and backward compatibility, attach version information to
-/// the consitituents of the file format (column, field, cluster, ntuple).
-class RNTupleVersion {
-private:
-   /// The version used to write an entity
-   std::uint32_t fVersionUse = 0;
-   /// The minimum required version necessary to read an entity
-   std::uint32_t fVersionMin = 0;
-   NTupleFlags_t fFlags = 0;
-
-public:
-   RNTupleVersion() = default;
-   RNTupleVersion(std::uint32_t versionUse, std::uint32_t versionMin)
-     : fVersionUse(versionUse), fVersionMin(versionMin)
-   {}
-   RNTupleVersion(std::uint32_t versionUse, std::uint32_t versionMin, NTupleFlags_t flags)
-     : fVersionUse(versionUse), fVersionMin(versionMin), fFlags(flags)
-   {}
-
-   bool operator ==(const RNTupleVersion &other) const {
-      return fVersionUse == other.fVersionUse && fVersionMin == other.fVersionMin && fFlags == other.fFlags;
+   bool operator==(const RNTupleLocator &other) const {
+      return fPosition == other.fPosition && fBytesOnStorage == other.fBytesOnStorage && fUrl == other.fUrl;
    }
-
-   std::uint32_t GetVersionUse() const { return fVersionUse; }
-   std::uint32_t GetVersionMin() const { return fVersionMin; }
-   NTupleFlags_t GetFlags() const { return fFlags; }
 };
 
 } // namespace Experimental

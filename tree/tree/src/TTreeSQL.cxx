@@ -12,22 +12,28 @@
 /** \class TTreeSQL
 \ingroup tree
 
-Implement TTree for a SQL backend
+ A TTree object is a list of TBranch.
+  To Create a TTree object one must:
+   - Create the TTree header via the TTree constructor
+   - Call the TBranch constructor for every branch.
+
+  To Fill this object, use member function Fill with no parameters.
+    The Fill function loops on all defined TBranch.
+
+TTreeSQL is the TTree implementation interfacing with an SQL
+database
+
 */
 
-#include <Riostream.h>
 #include <vector>
 #include <map>
-#include <stdlib.h>
+#include <cstdlib>
 
 #include "TString.h"
-#include "TROOT.h"
-#include "TSystem.h"
 #include "TError.h"
-#include "TFile.h"
-#include "TTree.h"
 #include "TLeaf.h"
 #include "TBranch.h"
+#include "TList.h"
 
 #include "TSQLRow.h"
 #include "TSQLResult.h"
@@ -539,7 +545,7 @@ Bool_t TTreeSQL::CreateTable(const TString &table)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-/// Initializeation routine
+/// Initialization routine
 
 void TTreeSQL::Init()
 {

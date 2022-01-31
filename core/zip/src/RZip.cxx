@@ -16,10 +16,8 @@
 
 #include "zlib.h"
 
-#include <stdio.h>
-#include <assert.h>
-
-#include <iostream>
+#include <cstdio>
+#include <cassert>
 
 // The size of the ROOT block framing headers for compression:
 // - 3 bytes to identify the compression algorithm and version.
@@ -52,7 +50,7 @@ static void R__unzipZLIB(int *srcsize, unsigned char *src, int *tgtsize, unsigne
 */
 #ifdef R__HAS_DEFAULT_ZSTD
 ROOT::RCompressionSetting::EAlgorithm::EValues R__ZipMode = ROOT::RCompressionSetting::EAlgorithm::EValues::kZSTD;
-#elif R__HAS_DEFAULT_LZ4
+#elif defined(R__HAS_DEFAULT_LZ4)
 ROOT::RCompressionSetting::EAlgorithm::EValues R__ZipMode = ROOT::RCompressionSetting::EAlgorithm::EValues::kLZ4;
 #else
 ROOT::RCompressionSetting::EAlgorithm::EValues R__ZipMode = ROOT::RCompressionSetting::EAlgorithm::EValues::kZLIB;
@@ -220,6 +218,8 @@ static void R__zipZLIB(int cxlevel, int *srcsize, char *src, int *tgtsize, char 
     }
 
     err = deflateEnd(&stream);
+    if (err != Z_OK)
+       printf("error %d in deflateEnd (zlib)\n",err);
 
     tgt[0] = 'Z';               /* Signature ZLib */
     tgt[1] = 'L';
@@ -236,7 +236,6 @@ static void R__zipZLIB(int cxlevel, int *srcsize, char *src, int *tgtsize, char 
     tgt[8] = (char)((l_in_size >> 16) & 0xff);
 
     *irep = stream.total_out + HDRSIZE;
-    return;
 }
 
 

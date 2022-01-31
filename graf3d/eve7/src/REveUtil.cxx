@@ -13,23 +13,18 @@
 #include <ROOT/REveElement.hxx>
 #include <ROOT/REveManager.hxx>
 
+#include <ROOT/RLogger.hxx>
+
 #include "TError.h"
 #include "TGeoManager.h"
 #include "TGeoMatrix.h"
 #include "TClass.h"
 #include "TMath.h"
 
-#include "TStyle.h"
 #include "TColor.h"
 
 #include "TROOT.h"
 #include "TInterpreter.h"
-#include "TSystem.h"
-
-#include "TGClient.h"
-#include "TGMimeTypes.h"
-
-#include "Riostream.h"
 
 #include <list>
 #include <algorithm>
@@ -38,12 +33,13 @@
 using namespace ROOT::Experimental;
 namespace REX = ROOT::Experimental;
 
+
 /** \class REveUtil
 \ingroup REve
 Standard utility functions for Eve.
 */
 
-TObjArray* REX::REveUtil::fgDefaultColors = nullptr;
+TObjArray *REveUtil::fgDefaultColors = nullptr;
 
 namespace
 {
@@ -388,40 +384,11 @@ REveElement objects.
 */
 
 ////////////////////////////////////////////////////////////////////////////////
-/// Default constructor.
-
-REveRefBackPtr::REveRefBackPtr() :
-   REveRefCnt(),
-   fBackRefs()
-{
-}
-
-////////////////////////////////////////////////////////////////////////////////
 /// Destructor. Noop, should complain if back-ref list is not empty.
 
 REveRefBackPtr::~REveRefBackPtr()
 {
    // !!! Complain if list not empty.
-}
-
-////////////////////////////////////////////////////////////////////////////////
-/// Copy constructor. New copy starts with zero reference count and
-/// empty back-reference list.
-
-REveRefBackPtr::REveRefBackPtr(const REveRefBackPtr&) :
-   REveRefCnt(),
-   fBackRefs()
-{
-}
-
-////////////////////////////////////////////////////////////////////////////////
-/// Assignment operator. Reference count and back-reference
-/// information is not assigned as these object hold pointers to a
-/// specific object.
-
-REveRefBackPtr& REveRefBackPtr::operator=(const REveRefBackPtr&)
-{
-   return *this;
 }
 
 ////////////////////////////////////////////////////////////////////////////////

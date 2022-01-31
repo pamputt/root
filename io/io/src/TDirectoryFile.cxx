@@ -23,8 +23,9 @@ End_Macro
  The structure of a file is shown in TFile::TFile
 */
 
-#include "Riostream.h"
+#include <iostream>
 #include "Strlen.h"
+#include "strlcpy.h"
 #include "TDirectoryFile.h"
 #include "TFile.h"
 #include "TBufferFile.h"
@@ -787,17 +788,25 @@ TKey *TDirectoryFile::FindKeyAny(const char *keyname) const
 
    DecodeNameCycle(keyname, name, cycle, kMaxLen);
 
-   TIter next(GetListOfKeys());
-   TKey *key;
-   while ((key = (TKey *) next())) {
-      if (!strcmp(name, key->GetName()))
-         if ((cycle == 9999) || (cycle >= key->GetCycle()))  {
+   auto listOfKeys = dynamic_cast<THashList *>(GetListOfKeys());
+   if (!listOfKeys) {
+      Error("FindKeyAny", "Unexpected type of TDirectoryFile::fKeys!");
+      return nullptr;
+   }
+
+   if (const TList *keyList = listOfKeys->GetListForObject(name)) {
+      for (auto key: TRangeDynCast<TKey>(*keyList)) {
+         if (key && !strcmp(key->GetName(), name)
+             && (cycle == 9999 || cycle >= key->GetCycle())) {
             const_cast<TDirectoryFile*>(this)->cd(); // may be we should not make cd ???
             return key;
          }
+      }
    }
+
    //try with subdirectories
-   next.Reset();
+   TIter next(GetListOfKeys());
+   TKey *key;
    while ((key = (TKey *) next())) {
       //if (!strcmp(key->GetClassName(),"TDirectory")) {
       if (strstr(key->GetClassName(),"TDirectory")) {
@@ -831,17 +840,24 @@ TObject *TDirectoryFile::FindObjectAny(const char *aname) const
 
    DecodeNameCycle(aname, name, cycle, kMaxLen);
 
-   TIter next(GetListOfKeys());
-   TKey *key;
-   //may be a key in the current directory
-   while ((key = (TKey *) next())) {
-      if (!strcmp(name, key->GetName())) {
-         if (cycle == 9999)             return key->ReadObj();
-         if (cycle >= key->GetCycle())  return key->ReadObj();
+   auto listOfKeys = dynamic_cast<THashList *>(GetListOfKeys());
+   if (!listOfKeys) {
+      Error("FindObjectAny", "Unexpected type of TDirectoryFile::fKeys!");
+      return nullptr;
+   }
+
+   if (const TList *keyList = listOfKeys->GetListForObject(name)) {
+      for (auto key: TRangeDynCast<TKey>(*keyList)) {
+         if (key && !strcmp(key->GetName(), name)
+             && (cycle == 9999 || cycle >= key->GetCycle())) {
+            return key->ReadObj();
+         }
       }
    }
+
    //try with subdirectories
-   next.Reset();
+   TIter next(GetListOfKeys());
+   TKey *key;
    while ((key = (TKey *) next())) {
       //if (!strcmp(key->GetClassName(),"TDirectory")) {
       if (strstr(key->GetClassName(),"TDirectory")) {
@@ -864,10 +880,10 @@ TObject *TDirectoryFile::FindObjectAny(const char *aname) const
 ///   - cycle = "" or cycle = 9999 ==> apply to a memory object
 ///
 /// Examples:
-/// | Pattern | Explanation |
-/// |---------|-------------|
-/// |  foo    | get object named foo in memory if object is not in memory, try with highest cycle from file |
-/// |  foo;1  | get cycle 1 of foo on file |
+/// | %Pattern | Explanation |
+/// |----------|-------------|
+/// |   foo    | get object named foo in memory if object is not in memory, try with highest cycle from file |
+/// |   foo;1  | get cycle 1 of foo on file |
 ///
 /// The retrieved object should in principle derive from TObject.
 /// If not, the function TDirectoryFile::Get<T> should be called.
@@ -945,19 +961,23 @@ TObject *TDirectoryFile::Get(const char *namecycle)
 
 //*-*---------------------Case of Key---------------------
 //                        ===========
-   TKey *key;
-   TIter nextkey(GetListOfKeys());
-   while ((key = (TKey *) nextkey())) {
-      if (strcmp(namobj,key->GetName()) == 0) {
-         if ((cycle == 9999) || (cycle == key->GetCycle())) {
+   auto listOfKeys = dynamic_cast<THashList *>(GetListOfKeys());
+   if (!listOfKeys) {
+      Error("Get", "Unexpected type of TDirectoryFile::fKeys!");
+      return nullptr;
+   }
+
+   if (const TList *keyList = listOfKeys->GetListForObject(namobj)) {
+      for (auto key: TRangeDynCast<TKey>(*keyList)) {
+         if (key && !strcmp(key->GetName(), namobj)
+             && (cycle == 9999 || cycle == key->GetCycle())) {
             TDirectory::TContext ctxt(this);
-            idcur = key->ReadObj();
-            break;
+            return key->ReadObj();
          }
       }
    }
 
-   return idcur;
+   return nullptr;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1064,20 +1084,23 @@ void *TDirectoryFile::GetObjectChecked(const char *namecycle, const TClass* expe
 
 //*-*---------------------Case of Key---------------------
 //                        ===========
-   void *idcur = nullptr;
-   TKey *key;
-   TIter nextkey(GetListOfKeys());
-   while ((key = (TKey *) nextkey())) {
-      if (strcmp(namobj,key->GetName()) == 0) {
-         if ((cycle == 9999) || (cycle == key->GetCycle())) {
+   auto listOfKeys = dynamic_cast<THashList *>(GetListOfKeys());
+   if (!listOfKeys) {
+      Error("GetObjectChecked", "Unexpected type of TDirectoryFile::fKeys!");
+      return nullptr;
+   }
+
+   if (const TList *keyList = listOfKeys->GetListForObject(namobj)) {
+      for (auto key: TRangeDynCast<TKey>(*keyList)) {
+         if (key && !strcmp(key->GetName(), namobj)
+             && (cycle == 9999 || cycle == key->GetCycle())) {
             TDirectory::TContext ctxt(this);
-            idcur = key->ReadObjectAny(expectedClass);
-            break;
+            return key->ReadObjectAny(expectedClass);
          }
       }
    }
 
-   return idcur;
+   return nullptr;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1102,14 +1125,18 @@ TKey *TDirectoryFile::GetKey(const char *name, Short_t cycle) const
 {
    if (!fKeys) return nullptr;
 
-   // TIter::TIter() already checks for null pointers
-   TIter next( ((THashList *)(GetListOfKeys()))->GetListForObject(name) );
+   auto listOfKeys = dynamic_cast<THashList *>(GetListOfKeys());
+   if (!listOfKeys) {
+      Error("GetKey", "Unexpected type of TDirectoryFile::fKeys!");
+      return nullptr;
+   }
 
-   TKey *key;
-   while (( key = (TKey *)next() )) {
-      if (!strcmp(name, key->GetName())) {
-         if ((cycle == 9999) || (cycle >= key->GetCycle()))
+   if (const TList *keyList = listOfKeys->GetListForObject(name)) {
+      for (auto key: TRangeDynCast<TKey>(*keyList)) {
+         if (key && !strcmp(key->GetName(), name)
+             && (cycle == 9999 || cycle >= key->GetCycle())) {
             return key;
+         }
       }
    }
 
@@ -1122,11 +1149,11 @@ TKey *TDirectoryFile::GetKey(const char *name, Short_t cycle) const
 /// Indentation is used to identify the directory tree
 /// Subdirectories are listed first, then objects in memory, then objects on the file
 ///
-/// The option can has the following format: <b>[-d |-m][<regexp>]</b>
+/// The option can has the following format: <b>`[-d |-m][<regexp>]`</b>
 /// Options:
 ///   - -d: only list objects in the file
 ///   - -m: only list objects in memory
-///  The <regexp> will be used to match the name of the objects.
+///  The `<regexp>` will be used to match the name of the objects.
 ///  By default memory and disk objects are listed.
 
 void TDirectoryFile::ls(Option_t *option) const
@@ -1163,13 +1190,23 @@ void TDirectoryFile::ls(Option_t *option) const
       }
    }
 
-   if (diskobj) {
-      TKey *key;
-      TIter next(GetListOfKeys());
-      while ((key = (TKey *) next())) {
+   if (diskobj && fKeys) {
+      //*-* Loop on all the keys
+      TObjLink *lnk = fKeys->FirstLink();
+      while (lnk) {
+         TKey *key = (TKey*)lnk->GetObject();
          TString s = key->GetName();
          if (s.Index(re) == kNPOS) continue;
-         key->ls();                 //*-* Loop on all the keys
+         bool first = (lnk->Prev() == nullptr) || (s != lnk->Prev()->GetObject()->GetName());
+         bool hasbackup = (lnk->Next() != nullptr) && (s == lnk->Next()->GetObject()->GetName());
+         if (first)
+            if (hasbackup)
+               key->ls(true);
+            else
+               key->ls();
+         else
+            key->ls(false);
+         lnk = lnk->Next();
       }
    }
    TROOT::DecreaseDirLevel();
@@ -1232,6 +1269,8 @@ TDirectory *TDirectoryFile::mkdir(const char *name, const char *title, Bool_t re
 ///
 /// By default, only the highest cycle of a key is kept. Keys for which
 /// the "KEEP" flag has been set are not removed. See TKey::Keep().
+/// NOTE: This does not reduce the size of a TFile--
+/// the space is simply freed up to be overwritten.
 
 void TDirectoryFile::Purge(Short_t)
 {
@@ -1410,15 +1449,22 @@ Int_t TDirectoryFile::ReadKeys(Bool_t forceRead)
 
 Int_t TDirectoryFile::ReadTObject(TObject *obj, const char *keyname)
 {
-   if (!fFile) { Error("Read","No file open"); return 0; }
-   TKey *key = nullptr;
-   TIter nextkey(GetListOfKeys());
-   while ((key = (TKey *) nextkey())) {
-      if (strcmp(keyname,key->GetName()) == 0) {
-         return key->Read(obj);
+   if (!fFile) { Error("ReadTObject","No file open"); return 0; }
+   auto listOfKeys = dynamic_cast<THashList *>(GetListOfKeys());
+   if (!listOfKeys) {
+      Error("ReadTObject", "Unexpected type of TDirectoryFile::fKeys!");
+      return 0;
+   }
+
+   if (const TList *keyList = listOfKeys->GetListForObject(keyname)) {
+      for (auto key: TRangeDynCast<TKey>(*keyList)) {
+         if (key && !strcmp(key->GetName(), keyname) ) {
+            return key->Read(obj);
+         }
       }
    }
-   Error("Read","Key not found");
+
+   Error("ReadTObject","Key not found");
    return 0;
 }
 
@@ -1783,7 +1829,8 @@ Int_t TDirectoryFile::Write(const char *, Int_t opt, Int_t bufsize)
    while ((obj=next())) {
       nbytes += obj->Write(0,opt,bufsize);
    }
-   SaveSelf(kTRUE);   // force save itself
+   if (R__likely(!(opt & kOnlyPrepStep)))
+      SaveSelf(kTRUE);   // force save itself
 
    return nbytes;
 }

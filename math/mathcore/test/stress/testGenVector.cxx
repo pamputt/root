@@ -44,7 +44,7 @@ public:
    GenVectorTest() : fVectorTest(fNGen) {}
 };
 
-TYPED_TEST_CASE_P(GenVectorTest);
+TYPED_TEST_SUITE_P(GenVectorTest);
 
 // Test of Physics Vector (GenVector package)
 TYPED_TEST_P(GenVectorTest, TestGenVectors)
@@ -79,7 +79,7 @@ TYPED_TEST_P(GenVectorTest, TestGenVectors)
    scale = this->fDim * 20;
    if (this->fDim == 3 && this->V2Name() == "RhoEtaPhiVector") scale *= 12; // for problem with RhoEtaPhi
    if (this->fDim == 4 && ( this->V2Name() == "PtEtaPhiMVector"  || this->V2Name() == "PxPyPzMVector")) {
-#if (defined(__arm__) || defined(__arm64__) || defined(__aarch64__))
+#if (defined(__arm__) || defined(__arm64__) || defined(__aarch64__) || defined(__s390x__))
       scale *= 1.E7;
 #else
       scale *= 10;
@@ -140,7 +140,7 @@ TYPED_TEST_P(GenVectorTest, TestGenVectors)
    }
 }
 
-REGISTER_TYPED_TEST_CASE_P(GenVectorTest, TestGenVectors);
+REGISTER_TYPED_TEST_SUITE_P(GenVectorTest, TestGenVectors);
 
 typedef testing::Types<
    VectorTestTypeWrapper<XYVector, Polar2DVector, 2>, VectorTestTypeWrapper<XYZVector, Polar3DVector, 3>,
@@ -149,4 +149,4 @@ typedef testing::Types<
    VectorTestTypeWrapper<XYZTVector, PxPyPzMVector, 4>>
    VectorGenTypes_t;
 
-INSTANTIATE_TYPED_TEST_CASE_P(StressMathCore, GenVectorTest, VectorGenTypes_t);
+INSTANTIATE_TYPED_TEST_SUITE_P(StressMathCore, GenVectorTest, VectorGenTypes_t);

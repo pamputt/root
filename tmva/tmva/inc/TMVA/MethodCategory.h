@@ -93,10 +93,17 @@ namespace TMVA {
       // regression response
       virtual const std::vector<Float_t>& GetRegressionValues();
 
+      // multi class response
+      virtual const std::vector<Float_t> &GetMulticlassValues();
+
       virtual void MakeClass( const TString& = TString("") ) const {};
 
-   private :
+   protected :
 
+      // signal/background classification response for all current set of data
+      virtual std::vector<Double_t> GetMvaValues(Long64_t firstEvt = 0, Long64_t lastEvt = -1, Bool_t logProgress = false);
+
+   private:
       // initializing mostly monitoring tools of the category process
       void Init();
 

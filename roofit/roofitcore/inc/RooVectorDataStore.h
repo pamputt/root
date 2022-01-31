@@ -16,18 +16,18 @@
 #ifndef ROO_VECTOR_DATA_STORE
 #define ROO_VECTOR_DATA_STORE
 
-#include <list>
-#include <vector>
-#include <string>
-#include <algorithm>
-#include "RooAbsDataStore.h" 
-#include "TString.h"
-#include "RooCatType.h"
+#include "RooAbsDataStore.h"
 #include "RooAbsCategory.h"
 #include "RooAbsReal.h"
 #include "RooChangeTracker.h"
+#include "RooRealVar.h"
 
-#define VECTOR_BUFFER_SIZE 1024
+#include "ROOT/RStringView.hxx"
+#include "Rtypes.h"
+
+#include <list>
+#include <vector>
+#include <algorithm>
 
 class RooAbsArg ;
 class RooArgList ;
@@ -35,13 +35,16 @@ class TTree ;
 class RooFormulaVar ;
 class RooArgSet ;
 
+#define VECTOR_BUFFER_SIZE 1024
+
 class RooVectorDataStore : public RooAbsDataStore {
 public:
 
   RooVectorDataStore() ; 
 
   // Empty ctor
-  RooVectorDataStore(const char* name, const char* title, const RooArgSet& vars, const char* wgtVarName=0) ;
+  RooVectorDataStore(RooStringView name, RooStringView title, const RooArgSet& vars, const char* wgtVarName=0) ;
+
   virtual RooAbsDataStore* clone(const char* newname=0) const override { return new RooVectorDataStore(*this,newname) ; }
   virtual RooAbsDataStore* clone(const RooArgSet& vars, const char* newname=0) const override { return new RooVectorDataStore(*this,vars,newname) ; }
 
@@ -50,11 +53,38 @@ public:
   RooVectorDataStore(const RooVectorDataStore& other, const RooArgSet& vars, const char* newname=0) ;
 
 
-  RooVectorDataStore(const char *name, const char *title, RooAbsDataStore& tds, 
+  RooVectorDataStore(RooStringView name, RooStringView title, RooAbsDataStore& tds,
 		     const RooArgSet& vars, const RooFormulaVar* cutVar, const char* cutRange,
-		     Int_t nStart, Int_t nStop, Bool_t /*copyCache*/, const char* wgtVarName=0) ;
+		     std::size_t nStart, std::size_t nStop, Bool_t /*copyCache*/, const char* wgtVarName=0) ;
 
   virtual ~RooVectorDataStore() ;
+
+  /// \class ArraysStruct
+  /// Output struct for the RooVectorDataStore::getArrays() helper function.
+  /// Meant to be used for RooFit internal use and might change without warning.
+  struct ArraysStruct {
+
+    template<class T>
+    struct ArrayInfo {
+        ArrayInfo(RooStringView n, T const* d) : name{n}, data{d} {}
+        std::string name;
+        T const* data;
+    };
+
+    std::vector<ArrayInfo<double>> reals;
+    std::vector<ArrayInfo<RooAbsCategory::value_type>> cats;
+
+    std::size_t size;
+  };
+
+  /// \name Internal RooFit interface.
+  /// The classes and functions in the internal RooFit interface are
+  /// implementaion details and not part of the public user interface.
+  /// Everything in this group might change without warning.
+  /// @{
+  ArraysStruct getArrays() const;
+  void recomputeSumWeight();
+  /// @}
 
 private:
   RooArgSet varsNoWeight(const RooArgSet& allVars, const char* wgtName);
@@ -73,13 +103,23 @@ public:
 
   virtual const RooArgSet* getNative(Int_t index) const;
 
-  virtual Double_t weight() const override;
+  using RooAbsDataStore::weight ;
+  /// Return the weight of the last-retrieved data point.
+  Double_t weight() const override
+  {
+    if (_extWgtArray)
+      return _extWgtArray[_currentWeightIndex];
+    if (_wgtVar)
+      return _wgtVar->getVal();
+
+    return 1.0;
+  }
   virtual Double_t weightError(RooAbsData::ErrorType etype=RooAbsData::Poisson) const override;
   virtual void weightError(Double_t& lo, Double_t& hi, RooAbsData::ErrorType etype=RooAbsData::Poisson) const override;
-  virtual Double_t weight(Int_t index) const override;
-  virtual Bool_t isWeighted() const override { return (_wgtVar!=0||_extWgtArray!=0) ; }
+  virtual Bool_t isWeighted() const override { return _wgtVar || _extWgtArray; }
 
-  virtual std::vector<RooSpan<const double>> getBatch(std::size_t first, std::size_t last) const override;
+  RooBatchCompute::RunContext getBatches(std::size_t first, std::size_t len) const override;
+  std::map<const std::string, RooSpan<const RooAbsCategory::value_type>> getCategoryBatches(std::size_t /*first*/, std::size_t len) const override;
   virtual RooSpan<const double> getWeightBatch(std::size_t first, std::size_t len) const override;
 
   // Change observable name
@@ -96,9 +136,20 @@ public:
   virtual void append(RooAbsDataStore& other) override;
 
   // General & bookkeeping methods
-  virtual Bool_t valid() const override;
-  virtual Int_t numEntries() const override;
+  virtual Int_t numEntries() const override { return static_cast<int>(size()); }
   virtual Double_t sumEntries() const override { return _sumWeight ; }
+  /// Get size of stored dataset.
+  std::size_t size() const {
+    if (!_realStoreList.empty()) {
+      return _realStoreList.front()->size();
+    } else if (!_realfStoreList.empty()) {
+      return _realfStoreList.front()->size();
+    } else if (!_catStoreList.empty()) {
+      return _catStoreList.front()->size();
+    }
+
+    return 0;
+  }
   virtual void reset() override;
 
   // Buffer redirection routines used in inside RooAbsOptTestStatistics
@@ -117,7 +168,7 @@ public:
 
   const RooVectorDataStore* cache() const { return _cache ; }
 
-  void loadValues(const RooAbsDataStore *tds, const RooFormulaVar* select=0, const char* rangeName=0, Int_t nStart=0, Int_t nStop=2000000000) override;
+  void loadValues(const RooAbsDataStore *tds, const RooFormulaVar* select=0, const char* rangeName=0, std::size_t nStart=0, std::size_t nStop = std::numeric_limits<std::size_t>::max()) override;
   
   void dump() override;
 
@@ -222,16 +273,16 @@ public:
     }
 
     void write(Int_t i) {
+      assert(static_cast<std::size_t>(i) < _vec.size());
       _vec[i] = *_buf ;
     }
     
     void reset() { 
-      // make sure the vector releases the underlying memory
-      std::vector<Double_t> tmp;
-      _vec.swap(tmp);
+      _vec.clear();
     }
 
-    inline void get(Int_t idx) const { 
+    inline void load(std::size_t idx) const {
+      assert(idx < _vec.size());
       *_buf = *(_vec.begin() + idx) ;
     }
 
@@ -242,11 +293,11 @@ public:
       return RooSpan<const double>(beg, end);
     }
 
-    inline void getNative(Int_t idx) const { 
+    inline void loadToNative(std::size_t idx) const {
       *_nativeBuf = *(_vec.begin() + idx) ;
     }
 
-    Int_t size() const { return _vec.size() ; }
+    std::size_t size() const { return _vec.size() ; }
 
     void resize(Int_t siz) {
       if (siz < Int_t(_vec.capacity()) / 2 && _vec.capacity() > (VECTOR_BUFFER_SIZE / sizeof(Double_t))) {
@@ -271,13 +322,15 @@ public:
       return _vec;
     }
 
+    std::vector<double>& data() { return _vec; }
+
   protected:
     std::vector<double> _vec;
 
   private:
     friend class RooVectorDataStore ;
-    RooAbsReal* _nativeReal ;
-    RooAbsReal* _real ;
+    RooAbsReal* _nativeReal ; // Instance which our data belongs to. This is the variable in the dataset.
+    RooAbsReal* _real ; // Instance where we should write data into when load() is called.
     Double_t* _buf ; //!
     Double_t* _nativeBuf ; //!
     RooChangeTracker* _tracker ; //
@@ -378,8 +431,8 @@ public:
       }
     }
 
-    inline void getNative(Int_t idx) const { 
-      RealVector::getNative(idx) ;
+    inline void loadToNative(Int_t idx) const { 
+      RealVector::loadToNative(idx) ;
       if (_vecE) {
         *_nativeBufE = (*_vecE)[idx] ;
       }
@@ -420,7 +473,7 @@ public:
     }
 
     inline void get(Int_t idx) const { 
-      RealVector::get(idx) ;
+      RealVector::load(idx) ;
       if (_vecE) *_bufE = (*_vecE)[idx];
       if (_vecEL) *_bufEL = (*_vecEL)[idx] ;
       if (_vecEH) *_bufEH = (*_vecEH)[idx] ;
@@ -456,6 +509,10 @@ public:
       if (_vecEH) _vecEH->reserve(siz);
     }
 
+    std::vector<double>* dataE() { return _vecE; }
+    std::vector<double>* dataEL() { return _vecEL; }
+    std::vector<double>* dataEH() { return _vecEH; }
+
   private:
     friend class RooVectorDataStore ;
     Double_t *_bufE ; //!
@@ -471,14 +528,14 @@ public:
 
   class CatVector {
   public:
-    CatVector(UInt_t initialCapacity=(VECTOR_BUFFER_SIZE / sizeof(RooCatType))) : 
-      _cat(0), _buf(0), _nativeBuf(0), _vec0(0)
+    CatVector(UInt_t initialCapacity = VECTOR_BUFFER_SIZE) :
+      _cat(nullptr), _buf(nullptr), _nativeBuf(nullptr)
     {
       _vec.reserve(initialCapacity);
     }
 
-    CatVector(RooAbsCategory* cat, UInt_t initialCapacity=(VECTOR_BUFFER_SIZE / sizeof(RooCatType))) : 
-      _cat(cat), _buf(0), _nativeBuf(0), _vec0(0)
+    CatVector(RooAbsCategory* cat, UInt_t initialCapacity = VECTOR_BUFFER_SIZE) :
+      _cat(cat), _buf(nullptr), _nativeBuf(nullptr)
     {
       _vec.reserve(initialCapacity);
     }
@@ -486,214 +543,124 @@ public:
     virtual ~CatVector() {
     }
 
-    CatVector(const CatVector& other, RooAbsCategory* cat=0) : 
+    CatVector(const CatVector& other, RooAbsCategory* cat = nullptr) :
       _cat(cat?cat:other._cat), _buf(other._buf), _nativeBuf(other._nativeBuf), _vec(other._vec) 
-      {
-	_vec0 = _vec.size()>0 ? &_vec.front() : 0 ;
-      }
+    {
+
+    }
 
     CatVector& operator=(const CatVector& other) {
       if (&other==this) return *this;
       _cat = other._cat;
       _buf = other._buf;
       _nativeBuf = other._nativeBuf;
-      if (other._vec.size() <= _vec.capacity() / 2 && _vec.capacity() > (VECTOR_BUFFER_SIZE / sizeof(RooCatType))) {
-	std::vector<RooCatType> tmp;
-	tmp.reserve(std::max(other._vec.size(), VECTOR_BUFFER_SIZE / sizeof(RooCatType)));
-	tmp.assign(other._vec.begin(), other._vec.end());
-	_vec.swap(tmp);
+      if (other._vec.size() <= _vec.capacity() / 2 && _vec.capacity() > VECTOR_BUFFER_SIZE) {
+        std::vector<RooAbsCategory::value_type> tmp;
+        tmp.reserve(std::max(other._vec.size(), std::size_t(VECTOR_BUFFER_SIZE)));
+        tmp.assign(other._vec.begin(), other._vec.end());
+        _vec.swap(tmp);
       } else {
-	_vec = other._vec;
+        _vec = other._vec;
       }
-      _vec0 = _vec.size()>0 ? &_vec.front() : 0;
+
       return *this;
     }
 
-    void setBuffer(RooCatType* newBuf) { 
+    void setBuffer(RooAbsCategory::value_type* newBuf) {
       _buf = newBuf ; 
-      if (_nativeBuf==0) _nativeBuf=newBuf ;
+      if (!_nativeBuf) _nativeBuf = newBuf;
     }
 
-    void setNativeBuffer(RooCatType* newBuf=0) {       
-      _nativeBuf = newBuf ? newBuf : _buf ; 
+    void setNativeBuffer(RooAbsCategory::value_type* newBuf = nullptr) {
+      _nativeBuf = newBuf ? newBuf : _buf;
     }
     
     void fill() { 
       _vec.push_back(*_buf) ; 
-      _vec0 = &_vec.front() ;
-    } ;
-    void write(Int_t i) { 
-      _vec[i]=*_buf ; 
-    } ;
+    }
+
+    void write(std::size_t i) {
+      _vec[i] = *_buf;
+    }
+
     void reset() { 
       // make sure the vector releases the underlying memory
-      std::vector<RooCatType> tmp;
+      std::vector<RooAbsCategory::value_type> tmp;
       _vec.swap(tmp);
-      _vec0 = 0;
     }
-    inline void get(Int_t idx) const { 
-      _buf->assignFast(*(_vec0+idx)) ;
+
+    inline void load(std::size_t idx) const {
+      *_buf = _vec[idx];
     }
-    inline void getNative(Int_t idx) const { 
-      _nativeBuf->assignFast(*(_vec0+idx)) ;
+
+    RooSpan<const RooAbsCategory::value_type> getRange(std::size_t first, std::size_t last) const {
+      auto beg = std::min(_vec.cbegin() + first, _vec.cend());
+      auto end = std::min(_vec.cbegin() + last,  _vec.cend());
+
+      return RooSpan<const RooAbsCategory::value_type>(beg, end);
     }
-    Int_t size() const { return _vec.size() ; }
+
+
+    inline void loadToNative(std::size_t idx) const {
+      *_nativeBuf = _vec[idx];
+    }
+
+    std::size_t size() const { return _vec.size() ; }
 
     void resize(Int_t siz) {
-      if (siz < Int_t(_vec.capacity()) / 2 && _vec.capacity() > (VECTOR_BUFFER_SIZE / sizeof(RooCatType))) {
-	// do an expensive copy, if we save at least a factor 2 in size
-	std::vector<RooCatType> tmp;
-	tmp.reserve(std::max(siz, Int_t(VECTOR_BUFFER_SIZE / sizeof(RooCatType))));
-	if (!_vec.empty())
-	    tmp.assign(_vec.begin(), std::min(_vec.end(), _vec.begin() + siz));
-	if (Int_t(tmp.size()) != siz) 
-	    tmp.resize(siz);
-	_vec.swap(tmp);
+      if (siz < Int_t(_vec.capacity()) / 2 && _vec.capacity() > VECTOR_BUFFER_SIZE) {
+        // do an expensive copy, if we save at least a factor 2 in size
+        std::vector<RooAbsCategory::value_type> tmp;
+        tmp.reserve(std::max(siz, VECTOR_BUFFER_SIZE));
+        if (!_vec.empty())
+          tmp.assign(_vec.begin(), std::min(_vec.end(), _vec.begin() + siz));
+        if (Int_t(tmp.size()) != siz)
+          tmp.resize(siz);
+        _vec.swap(tmp);
       } else {
-	_vec.resize(siz);
+        _vec.resize(siz);
       }
-      _vec0 = _vec.size() > 0 ? &_vec.front() : 0;
     }
 
     void reserve(Int_t siz) {
       _vec.reserve(siz);
-      _vec0 = _vec.size() > 0 ? &_vec.front() : 0;
     }
 
     void setBufArg(RooAbsCategory* arg) { _cat = arg; }
     const RooAbsCategory* bufArg() const { return _cat; }
 
+    std::vector<RooAbsCategory::value_type>& data() { return _vec; }
+
   private:
     friend class RooVectorDataStore ;
-    RooAbsCategory* _cat ;
-    RooCatType* _buf ;  //!
-    RooCatType* _nativeBuf ;  //!
-    std::vector<RooCatType> _vec ;
-    RooCatType* _vec0 ; //!
-    ClassDef(CatVector,1) // STL-vector-based Data Storage class
+    RooAbsCategory* _cat;
+    RooAbsCategory::value_type* _buf;  //!
+    RooAbsCategory::value_type* _nativeBuf;  //!
+    std::vector<RooAbsCategory::value_type> _vec;
+    ClassDef(CatVector,2) // STL-vector-based Data Storage class
   } ;
   
+  std::vector<RealVector*>& realStoreList() { return _realStoreList ; }
+  std::vector<RealFullVector*>& realfStoreList() { return _realfStoreList ; }
+  std::vector<CatVector*>& catStoreList() { return _catStoreList ; }
 
  protected:
 
   friend class RooAbsReal ;
   friend class RooAbsCategory ;
   friend class RooRealVar ;
-  std::vector<RealVector*>& realStoreList() { return _realStoreList ; }
-  std::vector<RealFullVector*>& realfStoreList() { return _realfStoreList ; }
-  std::vector<CatVector*>& catStoreList() { return _catStoreList ; }
 
-  CatVector* addCategory(RooAbsCategory* cat) {
+  CatVector* addCategory(RooAbsCategory* cat);
 
-    // First try a match by name
-    for (auto catVec : _catStoreList) {
-      if (std::string(catVec->bufArg()->GetName())==cat->GetName()) {
-        return catVec;
-      }
-    }
+  RealVector* addReal(RooAbsReal* real);
 
-    // If nothing found this will make an entry
-    _catStoreList.push_back(new CatVector(cat)) ;
-    _nCat++ ;
+  Bool_t isFullReal(RooAbsReal* real);
 
-    // Update cached ptr to first element as push_back may have reallocated
-    _firstCat = &_catStoreList.front() ;
+  Bool_t hasError(RooAbsReal* real);
 
-    return _catStoreList.back() ;
-  }
+  Bool_t hasAsymError(RooAbsReal* real);
 
-  RealVector* addReal(RooAbsReal* real) {
-    
-    // First try a match by name
-    for (auto realVec : _realStoreList) {
-      if (realVec->bufArg()->namePtr()==real->namePtr()) {
-        return realVec;
-      }
-    }    
-
-    // Then check if an entry already exists for a full real    
-    for (auto fullVec : _realfStoreList) {
-      if (fullVec->bufArg()->namePtr()==real->namePtr()) {
-        // Return full vector as RealVector base class here
-        return fullVec;
-      }
-    }    
-
-    // If nothing found this will make an entry
-    _realStoreList.push_back(new RealVector(real)) ;
-
-    return _realStoreList.back() ;
-  }
-
-  Bool_t isFullReal(RooAbsReal* real) {
-    
-    // First try a match by name
-    for (auto fullVec : _realfStoreList) {
-      if (std::string(fullVec->bufArg()->GetName())==real->GetName()) {
-        return kTRUE ;
-      }
-    }        
-    return kFALSE ;
-  }
-
-  Bool_t hasError(RooAbsReal* real) {
-    
-    // First try a match by name
-    for (auto fullVec : _realfStoreList) {
-      if (std::string(fullVec->bufArg()->GetName())==real->GetName()) {
-        return fullVec->_vecE ? kTRUE : kFALSE ;
-      }
-    }        
-    return kFALSE ;
-  }
-
-  Bool_t hasAsymError(RooAbsReal* real) {
-    
-    // First try a match by name
-    for (auto fullVec : _realfStoreList) {
-      if (std::string(fullVec->bufArg()->GetName())==real->GetName()) {
-        return fullVec->_vecEL ? kTRUE : kFALSE ;
-      }
-    }        
-    return kFALSE ;
-  }
-
-  RealFullVector* addRealFull(RooAbsReal* real) {
-    
-    // First try a match by name
-    for (auto fullVec : _realfStoreList) {
-      if (std::string(fullVec->bufArg()->GetName())==real->GetName()) {
-	    return fullVec;
-      }
-    }    
-
-    // Then check if an entry already exists for a bare real    
-    for (auto realVec : _realStoreList) {
-      if (std::string(realVec->bufArg()->GetName())==real->GetName()) {
-
-        // Convert element to full and add to full list
-        _realfStoreList.push_back(new RealFullVector(*realVec,real)) ;
-        _nRealF++ ;
-        _firstRealF = &_realfStoreList.front() ;
-
-        // Delete bare element
-        _realStoreList.erase(std::find(_realStoreList.begin(), _realStoreList.end(), realVec));
-        delete realVec;
-
-        return _realfStoreList.back() ;
-      }
-    }    
-
-    // If nothing found this will make an entry
-    _realfStoreList.push_back(new RealFullVector(real)) ;
-    _nRealF++ ;
-
-    // Update cached ptr to first element as push_back may have reallocated
-    _firstRealF = &_realfStoreList.front() ;
-
-
-    return _realfStoreList.back() ;
-  }
+  RealFullVector* addRealFull(RooAbsReal* real);
 
   virtual Bool_t hasFilledCache() const override { return _cache ? kTRUE : kFALSE ; }
 
@@ -706,15 +673,9 @@ public:
   std::vector<RealVector*> _realStoreList ;
   std::vector<RealFullVector*> _realfStoreList ;
   std::vector<CatVector*> _catStoreList ;
-  std::vector<double> _weights;
 
   void setAllBuffersNative() ;
 
-  Int_t _nRealF ;
-  Int_t _nCat ;
-  Int_t _nEntries ;
-  RealFullVector** _firstRealF ; //! do not persist
-  CatVector** _firstCat ; //! do not persist
   Double_t _sumWeight ; 
   Double_t _sumWeightCarry;
 
@@ -723,17 +684,14 @@ public:
   const Double_t* _extWgtErrHiArray ;    //! External weight array - high error
   const Double_t* _extSumW2Array ;       //! External sum of weights array
 
-  mutable Double_t  _curWgt ;      // Weight of current event
-  mutable Double_t  _curWgtErrLo ; // Weight of current event
-  mutable Double_t  _curWgtErrHi ; // Weight of current event
-  mutable Double_t  _curWgtErr ;   // Weight of current event
+  mutable ULong64_t _currentWeightIndex{0}; //
 
   RooVectorDataStore* _cache ; //! Optimization cache
   RooAbsArg* _cacheOwner ; //! Cache owner
 
   Bool_t _forcedUpdate ; //! Request for forced cache update 
 
-  ClassDefOverride(RooVectorDataStore,3) // STL-vector-based Data Storage class
+  ClassDefOverride(RooVectorDataStore, 7) // STL-vector-based Data Storage class
 };
 
 

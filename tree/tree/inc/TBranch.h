@@ -23,18 +23,17 @@
 //     the list of TLeaves (branch description)                         //
 //////////////////////////////////////////////////////////////////////////
 
-#include <memory>
-
-#include "Compression.h"
+#include "TNamed.h"
 #include "TAttFill.h"
+#include "TObjArray.h"
 #include "TBranchCacheInfo.h"
 #include "TDataType.h"
-#include "TNamed.h"
-#include "TObjArray.h"
+#include "Compression.h"
 #include "ROOT/TIOFeatures.hxx"
 
 class TTree;
 class TBasket;
+class TBranchElement;
 class TLeaf;
 class TBrowser;
 class TDirectory;
@@ -94,18 +93,19 @@ protected:
    friend class TTreeCache;
    friend class TTreeCloner;
    friend class TTree;
+   friend class TBranchElement;
    friend class ROOT::Experimental::Internal::TBulkBranchRead;
 
-   // TBranch status bits
+   /// TBranch status bits
    enum EStatusBits {
-      kDoNotProcess = ::kDoNotProcess, // Active bit for branches
-      kIsClone      = ::kIsClone,      // to indicate a TBranchClones
-      kBranchObject = ::kBranchObject, // branch is a TObject*
-      kBranchAny    = ::kBranchAny,    // branch is an object*
+      kDoNotProcess = ::kDoNotProcess, ///< Active bit for branches
+      kIsClone      = ::kIsClone,      ///< To indicate a TBranchClones
+      kBranchObject = ::kBranchObject, ///< Branch is a TObject*
+      kBranchAny    = ::kBranchAny,    ///< Branch is an object*
       // kMapObject    = kBranchObject | kBranchAny;
       kAutoDelete   = BIT(15),
 
-      kDoNotUseBufferMap = BIT(22) // If set, at least one of the entry in the branch will use the buffer's map of classname and objects.
+      kDoNotUseBufferMap = BIT(22)     ///< If set, at least one of the entry in the branch will use the buffer's map of classname and objects.
    };
 
    using BulkObj = ROOT::Experimental::Internal::TBulkBranchRead;
@@ -166,11 +166,13 @@ protected:
    void     SetSkipZip(Bool_t skip = kTRUE) { fSkipZip = skip; }
    void     Init(const char *name, const char *leaflist, Int_t compress);
 
-   TBasket *GetFreshBasket(TBuffer *user_buffer);
+   TBasket *GetFreshBasket(Int_t basketnumber, TBuffer *user_buffer);
    TBasket *GetFreshCluster();
    Int_t    WriteBasket(TBasket* basket, Int_t where) { return WriteBasketImpl(basket, where, nullptr); }
 
    TString  GetRealFileName() const;
+
+   virtual void SetAddressImpl(void *addr, Bool_t /* implied */) { SetAddress(addr); }
 
 private:
    Int_t    GetBasketAndFirst(TBasket*& basket, Long64_t& first, TBuffer* user_buffer);
@@ -220,6 +222,7 @@ public:
    virtual Int_t     GetEntryExport(Long64_t entry, Int_t getall, TClonesArray *list, Int_t n);
            Int_t     GetEntryOffsetLen() const { return fEntryOffsetLen; }
            Int_t     GetEvent(Long64_t entry=0) {return GetEntry(entry);}
+   virtual TString   GetFullName() const;
    const char       *GetIconName() const;
    virtual Int_t     GetExpectedType(TClass *&clptr,EDataType &type);
    virtual TLeaf    *GetLeaf(const char *name) const;

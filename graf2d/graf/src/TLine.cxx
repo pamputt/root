@@ -11,8 +11,9 @@
 
 #include <stdlib.h>
 
-#include "Riostream.h"
+#include <iostream>
 #include "TROOT.h"
+#include "TBuffer.h"
 #include "TLine.h"
 #include "TVirtualPad.h"
 #include "TClass.h"
@@ -25,7 +26,20 @@ ClassImp(TLine);
 /** \class TLine
 \ingroup BasicGraphics
 
-A simple line.
+Use the TLine constructor to create a simple line.
+
+~~~ {.cpp}
+   TLine(Double_t x1,Double_t y1,Double_t x2,Double_t y2)
+~~~
+
+`x1`, `y1`, `x2`, `y2` are the coordinates of the first and the second point.
+
+_**Example**_:
+
+~~~ {.cpp}
+   root[] l = new TLine(0.2,0.2,0.8,0.3)
+   root[] l->Draw()
+~~~
 */
 
 

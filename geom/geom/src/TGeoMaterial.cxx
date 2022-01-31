@@ -10,18 +10,39 @@
  *************************************************************************/
 
 /** \class TGeoMaterial
-\ingroup Geometry_classes
+\ingroup Materials_classes
 
 Base class describing materials.
 
-\image html geom_material.jpg
+## Important note about units
+Since **v6-17-02** the geometry package adopted a system of units, upon the request to support 
+an in-memory material representation consistent with the one in Geant4. The adoption was done 
+gradually and starting with **v6-19-02** (backported to **v6-18-02**) the package supports changing 
+the default units to either ROOT (CGS) or Geant4 ones. In the same version the Geant4 units were 
+set to be the default ones, changing the previous behavior and making material properties such 
+as radiation and interaction lengths having in memory values an order of magnitude lower. This behavior 
+affected versions up to **v6-25-01**, after which the default units were restored to be the ROOT ones.
+
+For users needing to restore the CGS behavior for material properties, the following sequence needs 
+to be called before creating the TGeoManager instance:
+ * From **v6-18-02** to **v6-22-06**:
+```
+    TGeoUnit::setUnitType(TGeoUnit::kTGeoUnits);
+```
+
+ * From **v6-22-08** to **v6-25-01**:
+```
+    TGeoManager::LockDefaultUnits(false);
+    TGeoManager::SetDefaultUnits(kRootUnits);
+    TGeoManager::LockDefaultUnits(true);
+```
 */
 
-#include "Riostream.h"
+#include <iostream>
+#include <limits>
 #include "TMath.h"
 #include "TObjArray.h"
-#include "TStyle.h"
-#include "TList.h"
+#include "TGeoElement.h"
 #include "TGeoManager.h"
 #include "TGeoExtension.h"
 #include "TGeoMaterial.h"
@@ -53,7 +74,7 @@ TGeoMaterial::TGeoMaterial()
               fUserExtension(0),
               fFWExtension(0)
 {
-   TGeoUnit::setUnitType(TGeoUnit::unitType()); // Ensure nobody changes the units afterwards
+   TGeoManager::SetDefaultUnits(TGeoManager::GetDefaultUnits()); // Ensure nobody changes the units afterwards
    SetUsed(kFALSE);
    fIndex    = -1;
    fTemperature = STP_temperature;
@@ -81,7 +102,7 @@ TGeoMaterial::TGeoMaterial(const char *name)
               fUserExtension(0),
               fFWExtension(0)
 {
-   TGeoUnit::setUnitType(TGeoUnit::unitType()); // Ensure nobody changes the units afterwards
+   TGeoManager::SetDefaultUnits(TGeoManager::GetDefaultUnits()); // Ensure nobody changes the units afterwards
    fName = fName.Strip();
    SetUsed(kFALSE);
    fIndex    = -1;
@@ -116,7 +137,7 @@ TGeoMaterial::TGeoMaterial(const char *name, Double_t a, Double_t z,
               fUserExtension(0),
               fFWExtension(0)
 {
-   TGeoUnit::setUnitType(TGeoUnit::unitType()); // Ensure nobody changes the units afterwards
+   TGeoManager::SetDefaultUnits(TGeoManager::GetDefaultUnits()); // Ensure nobody changes the units afterwards
    fName = fName.Strip();
    SetUsed(kFALSE);
    fIndex    = -1;
@@ -157,7 +178,7 @@ TGeoMaterial::TGeoMaterial(const char *name, Double_t a, Double_t z, Double_t rh
               fUserExtension(0),
               fFWExtension(0)
 {
-   TGeoUnit::setUnitType(TGeoUnit::unitType()); // Ensure nobody changes the units afterwards
+   TGeoManager::SetDefaultUnits(TGeoManager::GetDefaultUnits()); // Ensure nobody changes the units afterwards
    fName = fName.Strip();
    SetUsed(kFALSE);
    fIndex    = -1;
@@ -191,7 +212,7 @@ TGeoMaterial::TGeoMaterial(const char *name, TGeoElement *elem, Double_t rho)
               fUserExtension(0),
               fFWExtension(0)
 {
-   TGeoUnit::setUnitType(TGeoUnit::unitType()); // Ensure nobody changes the units afterwards
+   TGeoManager::SetDefaultUnits(TGeoManager::GetDefaultUnits()); // Ensure nobody changes the units afterwards
    fName = fName.Strip();
    SetUsed(kFALSE);
    fIndex    = -1;
@@ -232,7 +253,7 @@ TGeoMaterial::TGeoMaterial(const TGeoMaterial& gm) :
 
 {
    //copy constructor
-   TGeoUnit::setUnitType(TGeoUnit::unitType()); // Ensure nobody changes the units afterwards
+   TGeoManager::SetDefaultUnits(TGeoManager::GetDefaultUnits()); // Ensure nobody changes the units afterwards
    fProperties.SetOwner();
    TIter next(&fProperties);
    TNamed *property;
@@ -443,9 +464,9 @@ void TGeoMaterial::SetRadLen(Double_t radlen, Double_t intlen)
       if (intlen>=0) fIntLen = 1.E30;
       return;
    }
-   TGeoUnit::UnitType typ = TGeoUnit::unitType();
+   TGeoManager::EDefaultUnits typ = TGeoManager::GetDefaultUnits();
    // compute radlen systematically with G3 formula for a valid material
-   if ( typ == TGeoUnit::kTGeoUnits && radlen>=0 ) {
+   if ( typ == TGeoManager::kRootUnits && radlen>=0 ) {
       //taken grom Geant3 routine GSMATE
       constexpr Double_t alr2av = 1.39621E-03*TGeoUnit::cm2;
       constexpr Double_t al183  = 5.20948;
@@ -453,7 +474,7 @@ void TGeoMaterial::SetRadLen(Double_t radlen, Double_t intlen)
                    (al183-TMath::Log(fZ)/3-TGeoMaterial::Coulomb(fZ)));
       fRadLen *= TGeoUnit::cm;
    }
-   else if ( typ == TGeoUnit::kTGeant4Units && radlen>=0 ) {
+   else if ( typ == TGeoManager::kG4Units && radlen>=0 ) {
       //taken grom Geant3 routine GSMATE
       constexpr Double_t alr2av = 1.39621E-03*TGeant4Unit::cm2;
       constexpr Double_t al183  = 5.20948;
@@ -462,7 +483,7 @@ void TGeoMaterial::SetRadLen(Double_t radlen, Double_t intlen)
       fRadLen *= TGeant4Unit::cm;
    }
    // Compute interaction length using the same formula as in GEANT4
-   if ( typ == TGeoUnit::kTGeoUnits && intlen>=0 ) {
+   if ( typ == TGeoManager::kRootUnits && intlen>=0 ) {
       constexpr Double_t lambda0 = 35.*TGeoUnit::g/TGeoUnit::cm2;  // [g/cm^2]
       Double_t nilinv = 0.0;
       TGeoElement *elem = GetElement();
@@ -475,7 +496,7 @@ void TGeoMaterial::SetRadLen(Double_t radlen, Double_t intlen)
       nilinv *= TGeoUnit::amu/lambda0;
       fIntLen = (nilinv<=0) ? TGeoShape::Big() : (TGeoUnit::cm/nilinv);
    }
-   else if ( typ == TGeoUnit::kTGeant4Units && intlen>=0 ) {
+   else if ( typ == TGeoManager::kG4Units && intlen>=0 ) {
       constexpr Double_t lambda0 = 35.*TGeant4Unit::g/TGeant4Unit::cm2;  // [g/cm^2]
       Double_t nilinv = 0.0;
       TGeoElement *elem = GetElement();
@@ -498,7 +519,7 @@ void TGeoMaterial::SetRadLen(Double_t radlen, Double_t intlen)
 
 Double_t TGeoMaterial::Coulomb(Double_t z)
 {
-   Double_t az    = TGeoUnit::unitType() == TGeoUnit::kTGeoUnits
+   Double_t az    = TGeoManager::kRootUnits == TGeoManager::GetDefaultUnits()
      ? TGeoUnit::fine_structure_const*z : TGeant4Unit::fine_structure_const*z;
    Double_t az2   = az*az;
    Double_t az4   = az2 * az2;
@@ -562,6 +583,18 @@ Int_t TGeoMaterial::GetDefaultColor() const
 
 ////////////////////////////////////////////////////////////////////////////////
 /// Get a pointer to the element this material is made of.
+/// This second call is to avoid warnings to not call a virtual
+/// method from the constructor
+
+TGeoElement *TGeoMaterial::GetElement() const
+{
+   if (fElement) return fElement;
+   TGeoElementTable *table = gGeoManager->GetElementTable();
+   return table->GetElement(Int_t(fZ));
+}
+
+////////////////////////////////////////////////////////////////////////////////
+/// Get a pointer to the element this material is made of.
 
 TGeoElement *TGeoMaterial::GetElement(Int_t) const
 {
@@ -569,6 +602,7 @@ TGeoElement *TGeoMaterial::GetElement(Int_t) const
    TGeoElementTable *table = gGeoManager->GetElementTable();
    return table->GetElement(Int_t(fZ));
 }
+
 ////////////////////////////////////////////////////////////////////////////////
 /// Single interface to get element properties.
 
@@ -642,7 +676,7 @@ TGeoMaterial *TGeoMaterial::DecayMaterial(Double_t time, Double_t precision)
 ////////////////////////////////////////////////////////////////////////////////
 /// Fills a user array with all the elements deriving from the possible
 /// decay of the top element composing the mixture. Each element contained
-/// by <population> may be a radionuclide having a Bateman solution attached.
+/// by `<population>` may be a radionuclide having a Bateman solution attached.
 /// The precision represent the minimum cumulative branching ratio for
 /// which decay products are still taken into account.
 /// To visualize the time evolution of each decay product one can use:
@@ -687,7 +721,7 @@ void TGeoMaterial::FillMaterialEvolution(TObjArray *population, Double_t precisi
 }
 
 /** \class TGeoMixture
-\ingroup Geometry_classes
+\ingroup Materials_classes
 
 Mixtures of elements.
 
@@ -744,12 +778,12 @@ TGeoMixture::~TGeoMixture()
 
 void TGeoMixture::AverageProperties()
 {
-   TGeoUnit::UnitType typ = TGeoUnit::unitType();
-   const Double_t cm   = (typ==TGeoUnit::kTGeoUnits) ? TGeoUnit::cm   : TGeant4Unit::cm;
-   const Double_t cm2  = (typ==TGeoUnit::kTGeoUnits) ? TGeoUnit::cm2  : TGeant4Unit::cm2;
-   const Double_t amu  = (typ==TGeoUnit::kTGeoUnits) ? TGeoUnit::amu  : TGeant4Unit::amu; // [MeV/c^2]
-   const Double_t gram = (typ==TGeoUnit::kTGeoUnits) ? TGeoUnit::gram : TGeant4Unit::gram;
-   const Double_t na   = (typ==TGeoUnit::kTGeoUnits) ? TGeoUnit::Avogadro : TGeant4Unit::Avogadro;
+   TGeoManager::EDefaultUnits typ = TGeoManager::GetDefaultUnits();
+   const Double_t cm   = (typ==TGeoManager::kRootUnits) ? TGeoUnit::cm   : TGeant4Unit::cm;
+   const Double_t cm2  = (typ==TGeoManager::kRootUnits) ? TGeoUnit::cm2  : TGeant4Unit::cm2;
+   const Double_t amu  = (typ==TGeoManager::kRootUnits) ? TGeoUnit::amu  : TGeant4Unit::amu; // [MeV/c^2]
+   const Double_t gram = (typ==TGeoManager::kRootUnits) ? TGeoUnit::gram : TGeant4Unit::gram;
+   const Double_t na   = (typ==TGeoManager::kRootUnits) ? TGeoUnit::Avogadro : TGeant4Unit::Avogadro;
    const Double_t alr2av  = 1.39621E-03 * cm2;
    const Double_t al183   = 5.20948;
    const Double_t lambda0 = 35.*gram/cm2;  // [g/cm^2]
@@ -784,11 +818,20 @@ void TGeoMixture::AverageProperties()
 void TGeoMixture::AddElement(Double_t a, Double_t z, Double_t weight)
 {
    TGeoElementTable *table = gGeoManager->GetElementTable();
-   if (z<1 || z>table->GetNelements()-1)
+
+   // Check preconditions
+   if (weight < 0e0)    {
+      Fatal("AddElement", "Cannot add element with negative weight %g to mixture %s", weight, GetName());
+   }
+   else if ( weight < std::numeric_limits<Double_t>::epsilon() )   {
+      return;
+   }
+   else if (z<1 || z>table->GetNelements()-1)   {
       Fatal("AddElement", "Cannot add element having Z=%d to mixture %s", (Int_t)z, GetName());
+   }
    Int_t i;
    for (i=0; i<fNelements; i++) {
-      if (TMath::Abs(z-fZmixture[i])<1.e-6  && TMath::Abs(a-fAmixture[i])<1.e-6) {
+      if (!fElements && TMath::Abs(z-fZmixture[i])<1.e-6  && TMath::Abs(a-fAmixture[i])<1.e-6) {
          fWeights[i] += weight;
          AverageProperties();
          return;
@@ -837,6 +880,18 @@ void TGeoMixture::AddElement(TGeoMaterial *mat, Double_t weight)
 {
    TGeoElement *elnew, *elem;
    Double_t a,z;
+
+   // Check preconditions
+   if (!mat)   {
+      Fatal("AddElement", "Cannot add INVALID material to mixture %s", GetName());
+   }
+   else if (weight < 0e0)   {
+      Fatal("AddElement", "Cannot add material %s with negative weight %g to mixture %s",
+            mat->GetName(), weight, GetName());
+   }
+   else if ( weight < std::numeric_limits<Double_t>::epsilon() )   {
+      return;
+   }
    if (!mat->IsMixture()) {
       elem = mat->GetBaseElement();
       if (elem) {
@@ -861,7 +916,7 @@ void TGeoMixture::AddElement(TGeoMaterial *mat, Double_t weight)
       if (!elnew) continue;
       // check if we have the element already defined in the parent mixture
       for (j=0; j<fNelements; j++) {
-         if (fWeights[j]<=0) continue;
+         if ( fWeights[j] < 0e0 ) continue;
          elem = GetElement(j);
          if (elem == elnew) {
             // element found, compute new weight
@@ -886,13 +941,29 @@ void TGeoMixture::AddElement(TGeoElement *elem, Double_t weight)
    TGeoElementTable *table = gGeoManager->GetElementTable();
    if (!fElements) fElements = new TObjArray(128);
    Bool_t exist = kFALSE;
+
+   // Check preconditions
+   if (!elem)   {
+      Fatal("AddElement", "Cannot add INVALID element to mixture %s", GetName());
+   }
+   else if (weight < 0e0)   {
+      Fatal("AddElement", "Cannot add element %s with negative weight %g to mixture %s",
+            elem->GetName(), weight, GetName());
+   }
+   else if ( weight < std::numeric_limits<Double_t>::epsilon() )   {
+      return;
+   }
    // If previous elements were defined by A/Z, add corresponding TGeoElements
    for (Int_t i=0; i<fNelements; i++) {
       elemold = (TGeoElement*)fElements->At(i);
-      if (!elemold) fElements->AddAt(elemold = table->GetElement((Int_t)fZmixture[i]), i);
+      if (!elemold)  {
+        fElements->AddAt(elemold = table->GetElement((Int_t)fZmixture[i]), i);
+      }
       if (elemold == elem) exist = kTRUE;
    }
-   if (!exist) fElements->AddAtAndExpand(elem, fNelements);
+   if (!exist)   {
+     fElements->AddAtAndExpand(elem, fNelements);
+   }
    AddElement(elem->A(), elem->Z(), weight);
 }
 
@@ -1045,6 +1116,10 @@ void TGeoMixture::Print(const Option_t * /*option*/) const
    printf("Mixture %s %s   Aeff=%g Zeff=%g rho=%g radlen=%g intlen=%g index=%i\n", GetName(), GetTitle(),
           fA,fZ,fDensity, fRadLen, fIntLen, fIndex);
    for (Int_t i=0; i<fNelements; i++) {
+      if (fElements && fElements->At(i)) {
+         fElements->At(i)->Print();
+         continue;
+      }
       if (fNatoms) printf("   Element #%i : %s  Z=%6.2f A=%6.2f w=%6.3f natoms=%d\n", i, GetElement(i)->GetName(),fZmixture[i],
              fAmixture[i], fWeights[i], fNatoms[i]);
       else printf("   Element #%i : %s  Z=%6.2f A=%6.2f w=%6.3f\n", i, GetElement(i)->GetName(),fZmixture[i],
@@ -1130,7 +1205,7 @@ TGeoMaterial *TGeoMixture::DecayMaterial(Double_t time, Double_t precision)
 ////////////////////////////////////////////////////////////////////////////////
 /// Fills a user array with all the elements deriving from the possible
 /// decay of the top elements composing the mixture. Each element contained
-/// by <population> may be a radionuclide having a Bateman solution attached.
+/// by `<population>` may be a radionuclide having a Bateman solution attached.
 /// The precision represent the minimum cumulative branching ratio for
 /// which decay products are still taken into account.
 /// To visualize the time evolution of each decay product one can use:
@@ -1193,7 +1268,7 @@ Double_t TGeoMaterial::ScreenFactor(Double_t z)
 
 void TGeoMixture::ComputeDerivedQuantities()
 {
-   const Double_t Na = (TGeoUnit::unitType()==TGeoUnit::kTGeoUnits)
+   const Double_t Na = (TGeoManager::GetDefaultUnits()==TGeoManager::kRootUnits)
      ? TGeoUnit::Avogadro : TGeant4Unit::Avogadro;
 
    if ( fVecNbOfAtomsPerVolume ) delete [] fVecNbOfAtomsPerVolume;
@@ -1215,7 +1290,7 @@ void TGeoMixture::ComputeDerivedQuantities()
 void TGeoMixture::ComputeRadiationLength()
 {
    // Formula taken from G4Material.cxx L556
-   const Double_t cm = (TGeoUnit::unitType()==TGeoUnit::kTGeoUnits) ? TGeoUnit::cm : TGeant4Unit::cm;
+   const Double_t cm = (TGeoManager::GetDefaultUnits()==TGeoManager::kRootUnits) ? TGeoUnit::cm : TGeant4Unit::cm;
    Double_t radinv = 0.0 ;
    for (Int_t i=0;i<fNelements;++i) {
      radinv += fVecNbOfAtomsPerVolume[i]*((TGeoElement*)fElements->At(i))->GetfRadTsai();
@@ -1228,10 +1303,10 @@ void TGeoMixture::ComputeRadiationLength()
 void TGeoMixture::ComputeNuclearInterLength()
 {
    // Formula taken from G4Material.cxx L567
-   TGeoUnit::UnitType typ = TGeoUnit::unitType();
-   const Double_t g   = (typ==TGeoUnit::kTGeoUnits) ? TGeoUnit::g   : TGeant4Unit::g;
-   const Double_t cm  = (typ==TGeoUnit::kTGeoUnits) ? TGeoUnit::cm  : TGeant4Unit::cm;
-   const Double_t amu = (typ==TGeoUnit::kTGeoUnits) ? TGeoUnit::amu : TGeant4Unit::amu;
+   TGeoManager::EDefaultUnits typ = TGeoManager::GetDefaultUnits();
+   const Double_t g   = (typ==TGeoManager::kRootUnits) ? TGeoUnit::g   : TGeant4Unit::g;
+   const Double_t cm  = (typ==TGeoManager::kRootUnits) ? TGeoUnit::cm  : TGeant4Unit::cm;
+   const Double_t amu = (typ==TGeoManager::kRootUnits) ? TGeoUnit::amu : TGeant4Unit::amu;
    const Double_t lambda0  = 35*g/(cm*cm);
    const Double_t twothird = 2.0/3.0;
    Double_t NILinv = 0.0;

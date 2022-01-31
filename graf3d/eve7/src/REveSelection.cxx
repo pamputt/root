@@ -13,11 +13,15 @@
 #include <ROOT/REveProjectionBases.hxx>
 #include <ROOT/REveCompound.hxx>
 #include <ROOT/REveManager.hxx>
+#include <ROOT/REveSecondarySelectable.hxx>
 
 #include "TClass.h"
 #include "TColor.h"
 
-#include "json.hpp"
+#include <iostream>
+#include <regex>
+
+#include <nlohmann/json.hpp>
 
 using namespace ROOT::Experimental;
 namespace REX = ROOT::Experimental;
@@ -472,11 +476,17 @@ void REveSelection::UserUnPickedElement(REveElement* el)
 
 //==============================================================================
 
-void REveSelection::NewElementPicked(ElementId_t id, bool multi, bool secondary, const std::set<int>& secondary_idcs)
+////////////////////////////////////////////////////////////////////////////////
+/// Called from GUI when user picks or un-picks an element.
+
+void REveSelection::NewElementPicked(ElementId_t id, bool multi, bool secondary, const std::set<int>& in_secondary_idcs)
 {
    static const REveException eh("REveSelection::NewElementPicked ");
 
    REveElement *pel = nullptr, *el = nullptr;
+
+   // AMT the forth/last argument is optional and therefore need to be constant
+   std::set<int> secondary_idcs = in_secondary_idcs;
 
    if (id > 0)
    {
@@ -485,6 +495,14 @@ void REveSelection::NewElementPicked(ElementId_t id, bool multi, bool secondary,
      if ( ! pel) throw eh + "picked element id=" + id + " not found.";
 
      el = MapPickedToSelected(pel);
+
+     if (el != pel) {
+        REveSecondarySelectable* ss = dynamic_cast<REveSecondarySelectable*>(el);
+        if (!secondary && ss) {
+           secondary = true;
+           secondary_idcs = ss->RefSelectedSet();
+        }
+     }
    }
 
    if (gDebug > 0) {
@@ -510,12 +528,29 @@ void REveSelection::NewElementPicked(ElementId_t id, bool multi, bool secondary,
       {
          if (rec)
          {
-            if (secondary || rec->is_secondary()) // ??? should actually be && ???
+            assert(secondary == rec->is_secondary());
+            if (secondary || rec->is_secondary())
             {
-               // XXXX union or difference:
-               // - if all secondary_idcs are already in the record, toggle
-               //   - if final result is empty set, remove element from selection
-               // - otherwise union
+               std::set<int> dup;
+               for (auto &ns :  secondary_idcs)
+               {
+                  int nsi = ns;
+                  auto ir = rec->f_sec_idcs.insert(nsi);
+                  if (!ir.second)
+                     dup.insert(nsi);
+               }
+
+               // erase duplicates
+               for (auto &dit :  dup)
+                  rec->f_sec_idcs.erase(dit);
+
+               secondary_idcs  = rec->f_sec_idcs;
+               if (!secondary_idcs.empty()) {
+                  AddNiece(el);
+                  rec = find_record(el);
+                  rec->f_is_sec   = true;
+                  rec->f_sec_idcs = secondary_idcs;
+               }
             }
             else
             {
@@ -525,6 +560,9 @@ void REveSelection::NewElementPicked(ElementId_t id, bool multi, bool secondary,
          else
          {
             AddNiece(el);
+            rec = find_record(el);
+            rec->f_is_sec   = true;
+            rec->f_sec_idcs = secondary_idcs;
          }
       }
       else
@@ -541,12 +579,15 @@ void REveSelection::NewElementPicked(ElementId_t id, bool multi, bool secondary,
          {
             if (secondary)
             {
-               // Could check rec->is_secondary() and compare indices.
-               // if sets are identical, issue SelectionRepeated()
-               // else modify record for the new one, issue Repeated
-
-               rec->f_is_sec   = true;
-               rec->f_sec_idcs = secondary_idcs;
+                bool modified = (rec->f_sec_idcs != secondary_idcs);
+               RemoveNieces();
+               // re-adding is needed to refresh implied selected
+               if (modified) {
+                  AddNiece(el);
+                  rec = find_record(el);
+                  rec->f_is_sec   = true;
+                  rec->f_sec_idcs = secondary_idcs;
+               }
             }
             else
             {
@@ -576,6 +617,36 @@ void REveSelection::NewElementPicked(ElementId_t id, bool multi, bool secondary,
 
    if (changed)
      StampObjProps();
+}
+
+///////////////////////////////////////////////////////////////////////////////////
+/// Wrapper for NewElementPickedStr that takes secondary indices as C-style string.
+/// Needed to be able to use TMethodCall interface.
+
+void REveSelection::NewElementPickedStr(ElementId_t id, bool multi, bool secondary, const char* secondary_idcs)
+{
+   static const REveException eh("REveSelection::NewElementPickedStr ");
+
+   if (secondary_idcs == 0 || secondary_idcs[0] == 0)
+   {
+      NewElementPicked(id, multi, secondary);
+      return;
+   }
+
+   static const std::regex comma_re("\\s*,\\s*", std::regex::optimize);
+   std::string   str(secondary_idcs);
+   std::set<int> sis;
+   std::sregex_token_iterator itr(str.begin(), str.end(), comma_re, -1);
+   std::sregex_token_iterator end;
+
+   try {
+      while (itr != end) sis.insert(std::stoi(*itr++));
+   }
+   catch (const std::invalid_argument&) {
+      throw eh + "invalid secondary index argument '" + *itr + "' - must be int.";
+   }
+
+   NewElementPicked(id, multi, secondary, sis);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -632,13 +703,28 @@ Int_t REveSelection::WriteCoreJson(nlohmann::json &j, Int_t /* rnr_offset */)
 
       rec["primary"] = i.first->GetElementId();
 
+      // XXX if not empty / f_is_sec is false ???
+      for (auto &sec_id : i.second.f_sec_idcs)
+         sec.push_back(sec_id);
+
       // XXX if not empty ???
-      for (auto &imp_el : i.second.f_implied) imp.push_back(imp_el->GetElementId());
+      for (auto &imp_el : i.second.f_implied) {
+         imp.push_back(imp_el->GetElementId());
+         imp_el->FillExtraSelectionData(rec["extra"], sec);
+
+      }
       rec["implied"]  = imp;
 
-      // XXX if not empty / f_is_sec is false ???
-      for (auto &sec_id : i.second.f_sec_idcs) sec.push_back(sec_id);
+
+      if (i.first->RequiresExtraSelectionData()) {
+         i.first->FillExtraSelectionData(rec["extra"], sec);
+      }
+
       rec["sec_idcs"] = sec;
+
+      // stream tooltip in highlight type
+      if (!fIsMaster)
+         rec["tooltip"] = i.first->GetHighlightTooltip(i.second.f_sec_idcs);
 
       sel_list.push_back(rec);
    }

@@ -33,6 +33,8 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+#include <string>
+#include <utility>
 
 #ifndef WIN32
 #define TWin32SendClass char
@@ -49,6 +51,7 @@ namespace clang {
    class DeclContext;
    class EnumDecl;
    class FunctionDecl;
+   class IdentifierIterator;
    class NamedDecl;
    class NamespaceDecl;
    class TagDecl;
@@ -162,9 +165,19 @@ private: // Data Members
       operator bool() const { return (bool)fState; }
    };
 
-   std::vector<MutexStateAndRecurseCount> fInitialMutex{1};
+   struct MutexStateAndRecurseCountDelta {
+      using StateDelta = ROOT::TVirtualRWMutex::StateDelta;
+
+      MutexStateAndRecurseCount   fInitialState;
+      std::unique_ptr<StateDelta> fDelta;
+   };
+
+   MutexStateAndRecurseCount fInitialMutex;
 
    DeclId_t GetDeclId(const llvm::GlobalValue *gv) const;
+
+   static Int_t DeepAutoLoadImpl(const char *cls, std::unordered_set<std::string> &visited, bool nameIsNormalized);
+   static Int_t ShallowAutoLoadImpl(const char *cls);
 
    Bool_t fHeaderParsingOnDemand;
    Bool_t fIsAutoParsingSuspended;
@@ -224,9 +237,9 @@ public: // Public Interface
    Int_t   ReloadAllSharedLibraryMaps();
    Int_t   UnloadAllSharedLibraryMaps();
    Int_t   UnloadLibraryMap(const char* library);
-   Long_t  ProcessLine(const char* line, EErrorCode* error = 0);
-   Long_t  ProcessLineAsynch(const char* line, EErrorCode* error = 0);
-   Long_t  ProcessLineSynch(const char* line, EErrorCode* error = 0);
+   Longptr_t ProcessLine(const char* line, EErrorCode* error = 0);
+   Longptr_t ProcessLineAsynch(const char* line, EErrorCode* error = 0);
+   Longptr_t ProcessLineSynch(const char* line, EErrorCode* error = 0);
    void    PrintIntro();
    bool    RegisterPrebuiltModulePath(const std::string& FullPath,
                                       const std::string& ModuleMapName = "module.modulemap") const;
@@ -240,6 +253,7 @@ public: // Public Interface
                           const char** classesHeaders,
                           Bool_t lateRegistration = false,
                           Bool_t hasCxxModule = false);
+   virtual void AddAvailableIndentifiers(TSeqCollection& Idents);
    void    RegisterTClassUpdate(TClass *oldcl,DictFuncPtr_t dict);
    void    UnRegisterTClassUpdate(const TClass *oldcl);
 
@@ -263,7 +277,7 @@ public: // Public Interface
    ECheckClassInfo CheckClassInfo(const char *name, Bool_t autoload, Bool_t isClassOrNamespaceOnly = kFALSE);
 
    Bool_t  CheckClassTemplate(const char *name);
-   Long_t  Calc(const char* line, EErrorCode* error = 0);
+   Longptr_t Calc(const char* line, EErrorCode* error = 0);
    void    CreateListOfBaseClasses(TClass* cl) const;
    void    CreateListOfDataMembers(TClass* cl) const;
    void    CreateListOfMethods(TClass* cl) const;
@@ -298,7 +312,7 @@ public: // Public Interface
    void    Execute(TObject* obj, TClass* cl, const char* method, const char* params, Bool_t objectIsConst, int* error = 0);
    void    Execute(TObject* obj, TClass* cl, TMethod* method, TObjArray* params, int* error = 0);
    void    ExecuteWithArgsAndReturn(TMethod* method, void* address, const void* args[] = 0, int nargs = 0, void* ret= 0) const;
-   Long_t  ExecuteMacro(const char* filename, EErrorCode* error = 0);
+   Longptr_t ExecuteMacro(const char* filename, EErrorCode* error = 0);
    void    RecursiveRemove(TObject* obj);
    Bool_t  IsErrorMessagesEnabled() const;
    Bool_t  SetErrorMessages(Bool_t enable = kTRUE);
@@ -340,6 +354,7 @@ public: // Public Interface
    virtual int    SetClassAutoparsing(int) ;
            Bool_t IsAutoParsingSuspended() const { return fIsAutoParsingSuspended; }
    virtual void   SetErrmsgcallback(void* p) const;
+   virtual void   ReportDiagnosticsToErrorHandler(bool enable = true);
    virtual void   SetTempLevel(int val) const;
    virtual int    UnloadFile(const char* path) const;
 
@@ -355,7 +370,7 @@ public: // Public Interface
 
    // core/meta helper functions.
    virtual EReturnType MethodCallReturnType(TFunction *func) const;
-   virtual void GetFunctionName(const clang::FunctionDecl *decl, std::string &name) const;
+   virtual void GetFunctionName(const clang::Decl *decl, std::string &name) const;
    virtual bool DiagnoseIfInterpreterException(const std::exception &e) const;
 
    // CallFunc interface
@@ -365,7 +380,7 @@ public: // Public Interface
    virtual void   CallFunc_Exec(CallFunc_t* func, void* address, TInterpreterValue& val) const;
    virtual void   CallFunc_ExecWithReturn(CallFunc_t* func, void* address, void* ret) const;
    virtual void   CallFunc_ExecWithArgsAndReturn(CallFunc_t* func, void* address, const void* args[] = 0, int nargs = 0, void* ret = 0) const;
-   virtual Long_t    CallFunc_ExecInt(CallFunc_t* func, void* address) const;
+   virtual Longptr_t CallFunc_ExecInt(CallFunc_t* func, void* address) const;
    virtual Long64_t  CallFunc_ExecInt64(CallFunc_t* func, void* address) const;
    virtual Double_t  CallFunc_ExecDouble(CallFunc_t* func, void* address) const;
    virtual CallFunc_t*   CallFunc_Factory() const;
@@ -382,15 +397,15 @@ public: // Public Interface
    virtual void   CallFunc_SetArg(CallFunc_t* func, Double_t param) const;
    virtual void   CallFunc_SetArg(CallFunc_t* func, Long64_t param) const;
    virtual void   CallFunc_SetArg(CallFunc_t* func, ULong64_t param) const;
-   virtual void   CallFunc_SetArgArray(CallFunc_t* func, Long_t* paramArr, Int_t nparam) const;
+   virtual void   CallFunc_SetArgArray(CallFunc_t* func, Longptr_t* paramArr, Int_t nparam) const;
    virtual void   CallFunc_SetArgs(CallFunc_t* func, const char* param) const;
-   virtual void   CallFunc_SetFunc(CallFunc_t* func, ClassInfo_t* info, const char* method, const char* params, Long_t* Offset) const;
-   virtual void   CallFunc_SetFunc(CallFunc_t* func, ClassInfo_t* info, const char* method, const char* params, bool objectIsConst, Long_t* Offset) const;
+   virtual void   CallFunc_SetFunc(CallFunc_t* func, ClassInfo_t* info, const char* method, const char* params, Longptr_t* Offset) const;
+   virtual void   CallFunc_SetFunc(CallFunc_t* func, ClassInfo_t* info, const char* method, const char* params, bool objectIsConst, Longptr_t* Offset) const;
    virtual void   CallFunc_SetFunc(CallFunc_t* func, MethodInfo_t* info) const;
-   virtual void   CallFunc_SetFuncProto(CallFunc_t* func, ClassInfo_t* info, const char* method, const char* proto, Long_t* Offset, ROOT::EFunctionMatchMode mode = ROOT::kConversionMatch) const;
-   virtual void   CallFunc_SetFuncProto(CallFunc_t* func, ClassInfo_t* info, const char* method, const char* proto, bool objectIsConst, Long_t* Offset, ROOT::EFunctionMatchMode mode = ROOT::kConversionMatch) const;
-   virtual void   CallFunc_SetFuncProto(CallFunc_t* func, ClassInfo_t* info, const char* method, const std::vector<TypeInfo_t*> &proto, Long_t* Offset, ROOT::EFunctionMatchMode mode = ROOT::kConversionMatch) const;
-   virtual void   CallFunc_SetFuncProto(CallFunc_t* func, ClassInfo_t* info, const char* method, const std::vector<TypeInfo_t*> &proto, bool objectIsConst, Long_t* Offset, ROOT::EFunctionMatchMode mode = ROOT::kConversionMatch) const;
+   virtual void   CallFunc_SetFuncProto(CallFunc_t* func, ClassInfo_t* info, const char* method, const char* proto, Longptr_t* Offset, ROOT::EFunctionMatchMode mode = ROOT::kConversionMatch) const;
+   virtual void   CallFunc_SetFuncProto(CallFunc_t* func, ClassInfo_t* info, const char* method, const char* proto, bool objectIsConst, Longptr_t* Offset, ROOT::EFunctionMatchMode mode = ROOT::kConversionMatch) const;
+   virtual void   CallFunc_SetFuncProto(CallFunc_t* func, ClassInfo_t* info, const char* method, const std::vector<TypeInfo_t*> &proto, Longptr_t* Offset, ROOT::EFunctionMatchMode mode = ROOT::kConversionMatch) const;
+   virtual void   CallFunc_SetFuncProto(CallFunc_t* func, ClassInfo_t* info, const char* method, const std::vector<TypeInfo_t*> &proto, bool objectIsConst, Longptr_t* Offset, ROOT::EFunctionMatchMode mode = ROOT::kConversionMatch) const;
 
    virtual std::string CallFunc_GetWrapperCode(CallFunc_t *func) const;
 
@@ -406,7 +421,7 @@ public: // Public Interface
    virtual ClassInfo_t*  ClassInfo_Factory(ClassInfo_t* cl) const;
    virtual ClassInfo_t*  ClassInfo_Factory(const char* name) const;
    virtual ClassInfo_t*  ClassInfo_Factory(DeclId_t declid) const;
-   virtual Long_t   ClassInfo_GetBaseOffset(ClassInfo_t* fromDerived, ClassInfo_t* toBase, void * address, bool isDerivedObject) const;
+   virtual Longptr_t ClassInfo_GetBaseOffset(ClassInfo_t* fromDerived, ClassInfo_t* toBase, void * address, bool isDerivedObject) const;
    virtual int    ClassInfo_GetMethodNArg(ClassInfo_t* info, const char* method, const char* proto, Bool_t objectIsConst = false, ROOT::EFunctionMatchMode mode = ROOT::kConversionMatch) const;
    virtual bool   ClassInfo_HasDefaultConstructor(ClassInfo_t* info, Bool_t testio = kFALSE) const;
    virtual bool   ClassInfo_HasMethod(ClassInfo_t* info, const char* name) const;
@@ -418,8 +433,8 @@ public: // Public Interface
    virtual EDataType ClassInfo_GetUnderlyingType(ClassInfo_t* info) const;
    virtual bool   ClassInfo_IsLoaded(ClassInfo_t* info) const;
    virtual bool   ClassInfo_IsValid(ClassInfo_t* info) const;
-   virtual bool   ClassInfo_IsValidMethod(ClassInfo_t* info, const char* method, const char* proto, Long_t* offset, ROOT::EFunctionMatchMode /* mode */ = ROOT::kConversionMatch) const;
-   virtual bool   ClassInfo_IsValidMethod(ClassInfo_t* info, const char* method, const char* proto, Bool_t objectIsConst, Long_t* offset, ROOT::EFunctionMatchMode /* mode */ = ROOT::kConversionMatch) const;
+   virtual bool   ClassInfo_IsValidMethod(ClassInfo_t* info, const char* method, const char* proto, Longptr_t* offset, ROOT::EFunctionMatchMode /* mode */ = ROOT::kConversionMatch) const;
+   virtual bool   ClassInfo_IsValidMethod(ClassInfo_t* info, const char* method, const char* proto, Bool_t objectIsConst, Longptr_t* offset, ROOT::EFunctionMatchMode /* mode */ = ROOT::kConversionMatch) const;
    virtual int    ClassInfo_Next(ClassInfo_t* info) const;
    virtual void*  ClassInfo_New(ClassInfo_t* info) const;
    virtual void*  ClassInfo_New(ClassInfo_t* info, int n) const;
@@ -427,7 +442,7 @@ public: // Public Interface
    virtual void*  ClassInfo_New(ClassInfo_t* info, void* arena) const;
    virtual Long_t ClassInfo_Property(ClassInfo_t* info) const;
    virtual int    ClassInfo_Size(ClassInfo_t* info) const;
-   virtual Long_t ClassInfo_Tagnum(ClassInfo_t* info) const;
+   virtual Longptr_t ClassInfo_Tagnum(ClassInfo_t* info) const;
    virtual const char* ClassInfo_FileName(ClassInfo_t* info) const;
    virtual const char* ClassInfo_FullName(ClassInfo_t* info) const;
    virtual const char* ClassInfo_Name(ClassInfo_t* info) const;
@@ -441,9 +456,9 @@ public: // Public Interface
                                                    ClassInfo_t* base) const;
    virtual int    BaseClassInfo_Next(BaseClassInfo_t* bcinfo) const;
    virtual int    BaseClassInfo_Next(BaseClassInfo_t* bcinfo, int onlyDirect) const;
-   virtual Long_t BaseClassInfo_Offset(BaseClassInfo_t* toBaseClassInfo, void * address, bool isDerivedObject) const;
+   virtual Longptr_t BaseClassInfo_Offset(BaseClassInfo_t* toBaseClassInfo, void * address, bool isDerivedObject) const;
    virtual Long_t BaseClassInfo_Property(BaseClassInfo_t* bcinfo) const;
-   virtual Long_t BaseClassInfo_Tagnum(BaseClassInfo_t* bcinfo) const;
+   virtual Longptr_t BaseClassInfo_Tagnum(BaseClassInfo_t* bcinfo) const;
    virtual ClassInfo_t*BaseClassInfo_ClassInfo(BaseClassInfo_t * /* bcinfo */) const;
    virtual const char* BaseClassInfo_FullName(BaseClassInfo_t* bcinfo) const;
    virtual const char* BaseClassInfo_Name(BaseClassInfo_t* bcinfo) const;
@@ -453,13 +468,13 @@ public: // Public Interface
    virtual DeclId_t GetDeclId(DataMemberInfo_t *info) const;
    virtual int    DataMemberInfo_ArrayDim(DataMemberInfo_t* dminfo) const;
    virtual void   DataMemberInfo_Delete(DataMemberInfo_t* dminfo) const;
-   virtual DataMemberInfo_t*  DataMemberInfo_Factory(ClassInfo_t* clinfo = 0) const;
+   virtual DataMemberInfo_t*  DataMemberInfo_Factory(ClassInfo_t* clinfo, TDictionary::EMemberSelection selection) const;
    virtual DataMemberInfo_t  *DataMemberInfo_Factory(DeclId_t declid, ClassInfo_t* clinfo) const;
    virtual DataMemberInfo_t*  DataMemberInfo_FactoryCopy(DataMemberInfo_t* dminfo) const;
    virtual bool   DataMemberInfo_IsValid(DataMemberInfo_t* dminfo) const;
    virtual int    DataMemberInfo_MaxIndex(DataMemberInfo_t* dminfo, Int_t dim) const;
    virtual int    DataMemberInfo_Next(DataMemberInfo_t* dminfo) const;
-   virtual Long_t DataMemberInfo_Offset(DataMemberInfo_t* dminfo) const;
+   virtual Longptr_t DataMemberInfo_Offset(DataMemberInfo_t* dminfo) const;
    virtual Long_t DataMemberInfo_Property(DataMemberInfo_t* dminfo) const;
    virtual Long_t DataMemberInfo_TypeProperty(DataMemberInfo_t* dminfo) const;
    virtual int    DataMemberInfo_TypeSize(DataMemberInfo_t* dminfo) const;
@@ -595,10 +610,10 @@ private: // Private Utility Functions and Classes
    };
 
    TCling();
-   TCling(const TCling&); // NOT IMPLEMENTED
-   TCling& operator=(const TCling&); // NOT IMPLEMENTED
+   TCling(const TCling&) = delete;
+   TCling& operator=(const TCling&) = delete;
 
-   void Execute(TMethod*, TObjArray*, int* /*error*/ = 0)
+   void Execute(TMethod*, TObjArray*, int* /*error*/ = nullptr)
    {
    }
 

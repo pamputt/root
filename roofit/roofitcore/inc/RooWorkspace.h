@@ -24,8 +24,8 @@
 #include "TUUID.h"
 #include <map>
 #include <list>
+#include <memory>
 #include <string>
-#include "ROOT/RMakeUnique.hxx"
 
 class TClass ;
 class RooAbsPdf ;
@@ -93,6 +93,9 @@ public:
   Bool_t loadSnapshot(const char* name) ;  
   const RooArgSet* getSnapshot(const char* name) const ;
 
+  // Retrieve list of parameter snapshots
+  RooLinkedList getSnapshots(){ return this->_snapshots; }
+
   void merge(const RooWorkspace& /*other*/) {} ;
 
   // Join p.d.f.s and datasets for simultaneous analysis
@@ -100,20 +103,20 @@ public:
   //   RooAbsData* joinData(const char* jointDataName, const char* indexName, const char* inputMapping) ; 
 
   // Accessor functions 
-  RooAbsPdf* pdf(const char* name) const ;
-  RooAbsReal* function(const char* name) const ;
-  RooRealVar* var(const char* name) const ;
-  RooCategory* cat(const char* name) const ;
-  RooAbsCategory* catfunc(const char* name) const ;
-  RooAbsData* data(const char* name) const ;
-  RooAbsData* embeddedData(const char* name) const ;
-  RooAbsArg* arg(const char* name) const ;
-  RooAbsArg* fundArg(const char* name) const ;
-  RooArgSet argSet(const char* nameList) const ;
+  RooAbsPdf* pdf(RooStringView name) const ;
+  RooAbsReal* function(RooStringView name) const ;
+  RooRealVar* var(RooStringView name) const ;
+  RooCategory* cat(RooStringView name) const ;
+  RooAbsCategory* catfunc(RooStringView name) const ;
+  RooAbsData* data(RooStringView name) const ;
+  RooAbsData* embeddedData(RooStringView name) const ;
+  RooAbsArg* arg(RooStringView name) const ;
+  RooAbsArg* fundArg(RooStringView name) const ;
+  RooArgSet argSet(RooStringView nameList) const ;
   TIterator* componentIterator() const { return _allOwnedNodes.createIterator() ; }
   const RooArgSet& components() const { return _allOwnedNodes ; }
-  TObject* genobj(const char* name) const ;
-  TObject* obj(const char* name) const ;
+  TObject* genobj(RooStringView name) const ;
+  TObject* obj(RooStringView name) const ;
 
   // Group accessors
   RooArgSet allVars() const;
@@ -130,6 +133,15 @@ public:
   Bool_t cd(const char* path = 0) ;
 
   Bool_t writeToFile(const char* fileName, Bool_t recreate=kTRUE) ;
+
+  /// Make internal collection use an unordered_map for
+  /// faster searching. Important when large trees are
+  /// imported / or modified in the workspace.
+  /// Note that RooAbsCollection may eventually switch
+  /// this on by itself.
+  void useFindsWithHashLookup(bool flag) {
+    _allOwnedNodes.useHashMapForFind(flag);
+  }
 
   virtual void RecursiveRemove(TObject *obj);
 
@@ -236,6 +248,7 @@ public:
  private:
     friend class RooAbsArg;
     friend class RooAbsPdf;
+    friend class RooConstraintSum;
     Bool_t defineSetInternal(const char *name, const RooArgSet &aset);
 
     Bool_t isValidCPPID(const char *name);

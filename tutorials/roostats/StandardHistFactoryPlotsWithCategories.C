@@ -1,7 +1,7 @@
 /// \file
 /// \ingroup tutorial_roostats
 /// \notebook -js
-///  StandardHistFactoryPlotsWithCategories
+/// StandardHistFactoryPlotsWithCategories
 ///
 ///  This is a standard demo that can be used with any ROOT file
 ///  prepared in the standard way.  You specify:
@@ -178,9 +178,9 @@ void StandardHistFactoryPlotsWithCategories(const char *infile = "", const char 
    int nPlots = 0;
    if (!simPdf) {
 
-      TIterator *it = mc->GetNuisanceParameters()->createIterator();
+      TIter it = mc->GetNuisanceParameters()->createIterator();
       RooRealVar *var = NULL;
-      while ((var = (RooRealVar *)it->Next()) != NULL) {
+      while ((var = (RooRealVar *)it.Next()) != NULL) {
          RooPlot *frame = obs->frame();
          frame->SetYTitle(var->GetName());
          data->plotOn(frame, MarkerSize(1));
@@ -211,9 +211,9 @@ void StandardHistFactoryPlotsWithCategories(const char *infile = "", const char 
 
          obs = ((RooRealVar *)obstmp->first());
 
-         TIterator *it = mc->GetNuisanceParameters()->createIterator();
+         TIter it = mc->GetNuisanceParameters()->createIterator();
          RooRealVar *var = NULL;
-         while (nPlots < nPlotsMax && (var = (RooRealVar *)it->Next())) {
+         while (nPlots < nPlotsMax && (var = (RooRealVar *)it.Next())) {
             TCanvas *c2 = new TCanvas("c2");
             RooPlot *frame = obs->frame();
             frame->SetName(Form("frame%d", nPlots));

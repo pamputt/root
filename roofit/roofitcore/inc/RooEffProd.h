@@ -20,7 +20,7 @@
 class RooEffProd: public RooAbsPdf {
 public:
   // Constructors, assignment etc
-  inline RooEffProd() : _nset(0), _fixedNset(0) { };
+  inline RooEffProd() : _cacheMgr(this,10), _nset(0), _fixedNset(0) { };
   virtual ~RooEffProd();
   RooEffProd(const char *name, const char *title, RooAbsPdf& pdf, RooAbsReal& efficiency);
   RooEffProd(const RooEffProd& other, const char* name=0);
@@ -29,8 +29,6 @@ public:
 
   virtual RooAbsGenContext* genContext(const RooArgSet &vars, const RooDataSet *prototype,
                                        const RooArgSet* auxProto, Bool_t verbose) const;
-
-  virtual Double_t getValV(const RooArgSet* set=0) const ;
 
   virtual Bool_t forceAnalyticalInt(const RooAbsArg& /*dep*/) const { 
     // Return kTRUE to force RooRealIntegral to offer all observables for internal integration

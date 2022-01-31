@@ -18,6 +18,9 @@ namespace ROOT {
 
 namespace RDF {
 
+/// \brief A simple data-source implementation, for demo purposes.
+///
+/// Constructing an RDataFrame as `RDataFrame(nEntries)` is a superior alternative.
 class RTrivialDS final : public ROOT::RDF::RDataSource {
 private:
    unsigned int fNSlots = 0U;
@@ -34,6 +37,8 @@ protected:
 
 public:
    RTrivialDS(ULong64_t size, bool skipEvenEntries = false);
+   /// This ctor produces a data-source that returns infinite entries
+   RTrivialDS();
    ~RTrivialDS();
    const std::vector<std::string> &GetColumnNames() const;
    bool HasColumn(std::string_view colName) const;
@@ -41,11 +46,16 @@ public:
    std::vector<std::pair<ULong64_t, ULong64_t>> GetEntryRanges();
    bool SetEntry(unsigned int slot, ULong64_t entry);
    void SetNSlots(unsigned int nSlots);
-   void Initialise();
+   void Initialize();
    std::string GetLabel();
 };
 
-RInterface<RDFDetail::RLoopManager, RTrivialDS> MakeTrivialDataFrame(ULong64_t size, bool skipEvenEntries = false);
+/// \brief Make a RDF wrapping a RTrivialDS with the specified amount of entries.
+///
+/// Constructing an RDataFrame as `RDataFrame(nEntries)` is a superior alternative.
+RInterface<RDFDetail::RLoopManager> MakeTrivialDataFrame(ULong64_t size, bool skipEvenEntries = false);
+/// \brief Make a RDF wrapping a RTrivialDS with infinite entries, for demo purposes.
+RInterface<RDFDetail::RLoopManager> MakeTrivialDataFrame();
 
 } // ns RDF
 

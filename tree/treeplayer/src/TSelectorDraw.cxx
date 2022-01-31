@@ -35,6 +35,7 @@ A specialized TSelector for TTree::Draw.
 #include "TStyle.h"
 #include "TClass.h"
 #include "TColor.h"
+#include "strlcpy.h"
 
 ClassImp(TSelectorDraw);
 
@@ -1518,8 +1519,8 @@ void TSelectorDraw::TakeAction()
       Bool_t candle = (fAction == 7);
       // Using CINT to avoid a dependency in TParallelCoord
       if (!fOption.Contains("goff"))
-         gROOT->ProcessLine(TString::Format("TParallelCoord::BuildParallelCoord((TSelectorDraw*)0x%lx,0x%lx)",
-                                (ULong_t)this, (ULong_t)candle));
+         gROOT->ProcessLine(TString::Format("TParallelCoord::BuildParallelCoord((TSelectorDraw*)0x%zx,0x%zx)",
+                                (size_t)this, (size_t)candle));
    } else if (fAction == 8) {
       //gROOT->ProcessLineFast(TString::Format("(new TGL5DDataSet((TTree *)0x%1x))->Draw(\"%s\");", fTree, fOption.Data()));
    }
@@ -1659,6 +1660,7 @@ void TSelectorDraw::TakeEstimate()
                      // h2 will be deleted, the axis setting is delegated to only
                      // the TGraph.
                      h2 = 0;
+                     fObject = pm->GetHistogram();
                   }
                }
             }

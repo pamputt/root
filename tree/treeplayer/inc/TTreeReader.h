@@ -29,6 +29,7 @@
 #include <deque>
 #include <iterator>
 #include <unordered_map>
+#include <string>
 
 class TDictionary;
 class TDirectory;
@@ -63,7 +64,7 @@ public:
 
    public:
       /// Default-initialize the iterator as "past the end".
-      Iterator_t(): fEntry(-1), fReader() {}
+      Iterator_t(): fEntry(-1), fReader(nullptr) {}
 
       /// Initialize the iterator with the reader it steers and a
       /// tree entry number; -1 is invalid.
@@ -97,7 +98,7 @@ public:
             this->operator*();
             // Don't set the old entry: op* will if needed, and
             // in most cases it just adds a lot of spinning back
-            // and forth: in most cases teh sequence is ++i; *i.
+            // and forth: in most cases the sequence is ++i; *i.
          }
          return *this;
       }
@@ -141,22 +142,23 @@ public:
       kExternalLoadTree  ///< User code called LoadTree directly.
    };
 
-   static constexpr const char * const fgEntryStatusText[kEntryBeyondEnd + 1] = {
+   static constexpr const char * const fgEntryStatusText[kEntryUnknownError + 1] = {
       "valid entry",
       "the tree does not exist",
       "the tree entry number does not exist",
       "cannot access chain element",
       "problem in opening a chain's file",
       "problem reading dictionary info from tree",
-      "last entry loop has reached its end"
+      "last entry loop has reached its end",
+      "one of the readers was not successfully initialized",
+      "LoadTree return less than -4, likely a 'newer' error code"
    };
 
    TTreeReader();
 
    TTreeReader(TTree* tree, TEntryList* entryList = nullptr);
    TTreeReader(const char* keyname, TDirectory* dir, TEntryList* entryList = nullptr);
-   TTreeReader(const char* keyname, TEntryList* entryList = nullptr):
-   TTreeReader(keyname, nullptr, entryList) {}
+   TTreeReader(const char *keyname, TEntryList *entryList = nullptr) : TTreeReader(keyname, nullptr, entryList) {}
 
    ~TTreeReader();
 
@@ -200,11 +202,6 @@ public:
    /// \return the `entry`'s read status, i.e. whether the entry is available.
    EEntryStatus SetLocalEntry(Long64_t entry) { return SetEntryBase(entry, kTRUE); }
 
-   ///  Set the begin and end entry numbers
-   ///
-   /// \param beginEntry The first entry that `Next()` will load.
-   /// \param endEntry The entry that `Next()` will return `kFALSE` on (i.e. not
-   ///   load anymore).
    EEntryStatus SetEntriesRange(Long64_t beginEntry, Long64_t endEntry);
 
    ///  Get the begin and end entry numbers
@@ -281,7 +278,7 @@ private:
    enum EStatusBits {
       kBitIsChain = BIT(14), ///< our tree is a chain
       kBitHaveWarnedAboutEntryListAttachedToTTree = BIT(15), ///< the tree had a TEntryList and we have warned about that
-      kBitSetEntryBaseCallingLoadTree = BIT(16) ///< SetEntryBase is in the process of calling TChain/TTree::LoadTree.
+      kBitSetEntryBaseCallingLoadTree = BIT(16) ///< SetEntryBase is in the process of calling TChain/TTree::%LoadTree.
    };
 
    TTree* fTree = nullptr; ///< tree that's read

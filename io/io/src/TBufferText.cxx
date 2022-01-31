@@ -28,9 +28,9 @@ actions list for both are the same.
 #include "TFile.h"
 #include "TVirtualMutex.h"
 #include "TInterpreter.h"
-#include "TROOT.h"
 #include "TExMap.h"
 #include "TError.h"
+#include "snprintf.h"
 
 ClassImp(TBufferText);
 
@@ -227,9 +227,12 @@ Int_t TBufferText::WriteClassBuffer(const TClass *cl, void *pointer)
 /// This function assumes that the class version and the byte count
 /// information have been read.
 ///
+/// \param[in] cl pointer to the local TClass
+/// \param[out] pointer void pointer to object
 /// \param[in] version The version number of the class
 /// \param[in] start   The starting position in the buffer b
 /// \param[in] count   The number of bytes for this object in the buffer
+/// \param[in] onFileClass pointer to TClass object on file
 ///
 
 Int_t TBufferText::ReadClassBuffer(const TClass *cl, void *pointer, Int_t version, UInt_t start, UInt_t count,

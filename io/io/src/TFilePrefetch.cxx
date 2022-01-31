@@ -12,10 +12,13 @@
 #include "TFilePrefetch.h"
 #include "TTimeStamp.h"
 #include "TSystem.h"
+#include "TMD5.h"
 #include "TVirtualPerfStats.h"
 #include "TVirtualMonitoring.h"
+#include "TSemaphore.h"
+#include "TFPBlock.h"
+#include "strlcpy.h"
 
-#include <iostream>
 #include <string>
 #include <sstream>
 #include <cstdio>

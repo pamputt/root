@@ -13,10 +13,9 @@
 #define ROOT_TMarker
 
 
+#include "TObject.h"
 #include "TAttMarker.h"
-#include "TNamed.h"
 #include "TAttBBox2D.h"
-#include "GuiTypes.h"
 
 class TPoint;
 
@@ -40,7 +39,7 @@ public:
    void             Copy(TObject &marker) const;
    virtual Int_t    DistancetoPrimitive(Int_t px, Int_t py);
    virtual void     Draw(Option_t *option="");
-   virtual void     DrawMarker(Double_t x, Double_t y);
+   virtual TMarker *DrawMarker(Double_t x, Double_t y);
    virtual void     ExecuteEvent(Int_t event, Int_t px, Int_t py);
    Double_t         GetX() const  {return fX;}
    Double_t         GetY() const  {return fY;}

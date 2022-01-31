@@ -18,9 +18,12 @@
 #include <set>
 #include <string>
 #include <unordered_set>
+#include <vector>
+#include <list>
+#include <map>
+#include <utility>
 
-//#include <atomic>
-#include <stdlib.h>
+#include <cstdlib>
 
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic push
@@ -187,10 +190,13 @@ public:
 //______________________________________________________________________________
 class AnnotatedRecordDecl {
 private:
+   static std::string BuildDemangledTypeInfo(const clang::RecordDecl *rDecl,
+                                             const std::string &normalizedName);
    long fRuleIndex;
    const clang::RecordDecl* fDecl;
    std::string fRequestedName;
    std::string fNormalizedName;
+   std::string fDemangledTypeInfo;
    bool fRequestStreamerInfo;
    bool fRequestNoStreamer;
    bool fRequestNoInputOperator;
@@ -261,6 +267,7 @@ public:
 
    const char *GetRequestedName() const { return fRequestedName.c_str(); }
    const char *GetNormalizedName() const { return fNormalizedName.c_str(); }
+   const std::string &GetDemangledTypeInfo() const { return fDemangledTypeInfo; }
    bool HasClassVersion() const { return fRequestedVersionNumber >=0 ; }
    bool RequestStreamerInfo() const {
       // Equivalent to CINT's cl.RootFlag() & G__USEBYTECOUNT
@@ -848,7 +855,7 @@ namespace AST2SourceTools {
 //______________________________________________________________________________
 const std::string Decls2FwdDecls(const std::vector<const clang::Decl*> &decls,
                                  bool (*ignoreFiles)(const clang::PresumedLoc&) ,
-                                 const cling::Interpreter& interp);
+                                 const cling::Interpreter& interp, std::string *logs);
 
 //______________________________________________________________________________
 int PrepareArgsForFwdDecl(std::string& templateArgs,
@@ -871,6 +878,12 @@ int FwdDeclFromRcdDecl(const clang::RecordDecl& recordDecl,
 int FwdDeclFromTmplDecl(const clang::TemplateDecl& tmplDecl,
                         const cling::Interpreter& interpreter,
                         std::string& defString);
+
+//______________________________________________________________________________
+int FwdDeclIfTmplSpec(const clang::RecordDecl& recordDecl,
+                      const cling::Interpreter& interpreter,
+                      std::string& defString,
+                      const std::string &normalizedName);
 //______________________________________________________________________________
 int GetDefArg(const clang::ParmVarDecl& par, std::string& valAsString, const clang::PrintingPolicy& pp);
 

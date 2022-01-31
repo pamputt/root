@@ -11,8 +11,9 @@
 
 #include <stdlib.h>
 
-#include "Riostream.h"
+#include <iostream>
 #include "TROOT.h"
+#include "TBuffer.h"
 #include "TEllipse.h"
 #include "TVirtualPad.h"
 #include "TMath.h"
@@ -172,7 +173,7 @@ void TEllipse::Draw(Option_t *option)
 ////////////////////////////////////////////////////////////////////////////////
 /// Draw this ellipse with new coordinates.
 
-void TEllipse::DrawEllipse(Double_t x1, Double_t y1,Double_t r1,Double_t r2,Double_t phimin,Double_t phimax,Double_t theta,Option_t *option)
+TEllipse *TEllipse::DrawEllipse(Double_t x1, Double_t y1,Double_t r1,Double_t r2,Double_t phimin,Double_t phimax,Double_t theta,Option_t *option)
 {
    TEllipse *newellipse = new TEllipse(x1, y1, r1, r2, phimin, phimax,theta);
    TAttLine::Copy(*newellipse);
@@ -180,6 +181,7 @@ void TEllipse::DrawEllipse(Double_t x1, Double_t y1,Double_t r1,Double_t r2,Doub
    newellipse->SetBit(kCanDelete);
    newellipse->AppendPad(option);
    if (TestBit(kNoEdges)) newellipse->SetBit(kNoEdges);
+   return newellipse;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -662,6 +664,7 @@ void TEllipse::Streamer(TBuffer &R__b)
 Rectangle_t TEllipse::GetBBox()
 {
    Rectangle_t BBox;
+   if (!gPad) return (BBox);
    BBox.fX = gPad->XtoPixel(fX1-fR1);
    BBox.fY = gPad->YtoPixel(fY1+fR2);
    BBox.fWidth = gPad->XtoPixel(fX1+fR1)-gPad->XtoPixel(fX1-fR1);
@@ -675,6 +678,7 @@ Rectangle_t TEllipse::GetBBox()
 TPoint TEllipse::GetBBoxCenter()
 {
    TPoint p;
+   if (!gPad) return (p);
    p.SetX(gPad->XtoPixel(fX1));
    p.SetY(gPad->YtoPixel(fY1));
    return(p);
@@ -685,6 +689,7 @@ TPoint TEllipse::GetBBoxCenter()
 
 void TEllipse::SetBBoxCenter(const TPoint &p)
 {
+   if (!gPad) return;
    fX1 = gPad->PixeltoX(p.GetX());
    fY1 = gPad->PixeltoY(p.GetY()-gPad->VtoPixel(0));
 }
@@ -694,6 +699,7 @@ void TEllipse::SetBBoxCenter(const TPoint &p)
 
 void TEllipse::SetBBoxCenterX(const Int_t x)
 {
+   if (!gPad) return;
    fX1 = gPad->PixeltoX(x);
 }
 
@@ -702,6 +708,7 @@ void TEllipse::SetBBoxCenterX(const Int_t x)
 
 void TEllipse::SetBBoxCenterY(const Int_t y)
 {
+   if (!gPad) return;
    fY1 = gPad->PixeltoY(y-gPad->VtoPixel(0));
 }
 
@@ -724,6 +731,7 @@ void TEllipse::SetBBoxX1(const Int_t x)
 
 void TEllipse::SetBBoxX2(const Int_t x)
 {
+   if (!gPad) return;
    Double_t x2 = gPad->PixeltoX(x);
    if (x2<fX1-fR1) return;
 
@@ -736,6 +744,7 @@ void TEllipse::SetBBoxX2(const Int_t x)
 
 void TEllipse::SetBBoxY1(const Int_t y)
 {
+   if (!gPad) return;
    Double_t y1 = gPad->PixeltoY(y-gPad->VtoPixel(0));
    if (y1<fY1-fR2) return;
 
@@ -749,6 +758,7 @@ void TEllipse::SetBBoxY1(const Int_t y)
 
 void TEllipse::SetBBoxY2(const Int_t y)
 {
+   if (!gPad) return;
    Double_t y2 = gPad->PixeltoY(y-gPad->VtoPixel(0));
 
    if (y2>fY1+fR2) return;

@@ -100,7 +100,6 @@ protected:
 
   RooListProxy _convSet  ;             //  Set of (resModel (x) basisFunc) convolution objects
   RooArgList _basisList ;              //!  List of created basis functions
-  mutable RooArgSet* _convNormSet ;    //!  Subset of last normalization that applies to convolutions
 
 
   class CacheElem : public RooAbsCacheElement {
@@ -116,11 +115,11 @@ protected:
     RooArgList _coefVarList ;
     RooArgList _normList ;
   } ;
-  mutable RooObjCacheManager _coefNormMgr ; // Coefficient normalization manager
+  mutable RooObjCacheManager _coefNormMgr ; //! Coefficient normalization manager
 
   mutable RooAICRegistry _codeReg ;   //! Registry of analytical integration codes
 
-  ClassDef(RooAbsAnaConvPdf,2) // Abstract Composite Convoluted PDF
+  ClassDef(RooAbsAnaConvPdf,3) // Abstract Composite Convoluted PDF
 };
 
 #endif

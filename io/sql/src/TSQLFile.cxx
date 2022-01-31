@@ -162,7 +162,6 @@ Author: S.Linev, GSI Darmstadt,   S.Linev@gsi.de
 #include "TSQLFile.h"
 
 #include "TROOT.h"
-#include "TSystem.h"
 #include "TObjArray.h"
 #include "TList.h"
 #include "TArrayC.h"
@@ -185,7 +184,8 @@ Author: S.Linev, GSI Darmstadt,   S.Linev@gsi.de
 #include "TSQLClassInfo.h"
 #include "TSQLObjectData.h"
 
-#include "Riostream.h"
+#include <iostream>
+#include <fstream>
 
 ClassImp(TSQLFile);
 
@@ -383,7 +383,6 @@ TSQLFile::TSQLFile(const char *dbname, Option_t *option, const char *user, const
             goto zombie;
          }
       SQLDeleteAllTables();
-      recreate = kFALSE;
       create = kTRUE;
       fOption = "CREATE";
    }

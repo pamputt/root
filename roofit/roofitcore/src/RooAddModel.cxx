@@ -15,28 +15,29 @@
  *****************************************************************************/
 
 //////////////////////////////////////////////////////////////////////////////
+/// \class RooAddModel
 ///
 /// RooAddModel is an efficient implementation of a sum of PDFs of the form
 /// \f[
-///  c_1*\mathrm{PDF}_1 + c_2*\mathrm{PDF}_2 + ... c_n*\mathrm{PDF}_n
-/// \]f
+///  c_1 \cdot \mathrm{PDF}_1 + c_2 \cdot \mathrm{PDF}_2 + ... + c_n \cdot \mathrm{PDF}_n
+/// \f]
 /// or
 /// \f[
-///  c_1*\mathrm{PDF}_1 + c_2*\mathrm{PDF}_2 + ... (1-\sum(c_1, \ldots, c_{n-1}))*\mathrm{PDF}_n
-///
+///  c_1 \cdot \mathrm{PDF}_1 + c_2 \cdot \mathrm{PDF}_2 + ... + \left( 1-\sum_{i=1}^{n-1} c_i \right) \cdot \mathrm{PDF}_n
+/// \f]
 /// The first form is for extended likelihood fits, where the
 /// expected number of events is \f$ \sum_i c_i \f$. The coefficients \f$ c_i \f$
 /// can either be explicitly provided, or, if all components support
-/// extended likelihood fits, they can be calculated the contribution
+/// extended likelihood fits, they can be calculated from the contribution
 /// of each PDF to the total number of expected events.
 ///
 /// In the second form, the sum of the coefficients is enforced to be one,
 /// and the coefficient of the last PDF is calculated from that condition.
 ///
-/// RooAddPdf relies on each component PDF to be normalized and will perform
+/// RooAddModel relies on each component PDF to be normalized, and will perform
 /// no normalization other than calculating the proper last coefficient \f$ c_n \f$, if requested.
 /// An (enforced) condition for this assumption is that each \f$ \mathrm{PDF}_i \f$ is independent
-/// of each coefficient i.
+/// of each coefficient \f$ i \f$.
 ///
 ///
 
@@ -65,6 +66,8 @@ RooAddModel::RooAddModel() :
   _refCoefNorm("!refCoefNorm","Reference coefficient normalization set",this,kFALSE,kFALSE),
   _refCoefRangeName(0),
   _projectCoefs(false),
+  _projCacheMgr(this,10),
+  _intCacheMgr(this,10),
   _codeReg(10),
   _snormList(0),
   _haveLastCoef(false),
@@ -82,10 +85,10 @@ RooAddModel::RooAddModel() :
 /// The number of coefficients must be either equal to the number of PDFs,
 /// in which case extended MLL fitting is enabled, or be one less.
 ///
-/// All PDFs must inherit from RooAbsPdf. All coefficients must inherit from RooAbsReal
+/// All PDFs must inherit from RooAbsPdf. All coefficients must inherit from RooAbsReal.
 
 RooAddModel::RooAddModel(const char *name, const char *title, const RooArgList& inPdfList, const RooArgList& inCoefList, Bool_t ownPdfList) :
-  RooResolutionModel(name,title,((RooResolutionModel*)inPdfList.at(0))->convVar()),
+  RooResolutionModel(name,title,(static_cast<RooResolutionModel*>(inPdfList.at(0)))->convVar()),
   _refCoefNorm("!refCoefNorm","Reference coefficient normalization set",this,kFALSE,kFALSE),
   _refCoefRangeName(0),
   _projectCoefs(kFALSE),
@@ -98,29 +101,32 @@ RooAddModel::RooAddModel(const char *name, const char *title, const RooArgList& 
   _allExtendable(kFALSE)
 { 
   if (inPdfList.getSize()>inCoefList.getSize()+1) {
-    coutE(InputArguments) << "RooAddModel::RooAddModel(" << GetName() 
-			  << ") number of pdfs and coefficients inconsistent, must have Npdf=Ncoef or Npdf=Ncoef+1" << endl ;
-    assert(0) ;
+    std::stringstream msgSs;
+    msgSs << "RooAddModel::RooAddModel(" << GetName()
+          << ") number of pdfs and coefficients inconsistent, must have Npdf=Ncoef or Npdf=Ncoef+1";
+    const std::string msgStr = msgSs.str();
+    coutE(InputArguments) << msgStr << endl;
+    throw std::runtime_error(msgStr);
   }
  
   // Constructor with N PDFs and N or N-1 coefs
-  TIterator* pdfIter = inPdfList.createIterator() ;
-  TIterator* coefIter = inCoefList.createIterator() ;
-  RooAbsPdf* pdf ;
-  RooAbsReal* coef ;
+  auto pdfIter = inPdfList.fwdIterator() ;
 
-  while((coef = (RooAbsPdf*)coefIter->Next())) {
-    pdf = (RooAbsPdf*) pdfIter->Next() ;
+  for(auto const& coef : inCoefList) {
+    auto pdf = pdfIter.next() ;
     if (!pdf) {
-      coutE(InputArguments) << "RooAddModel::RooAddModel(" << GetName() 
-			    << ") number of pdfs and coefficients inconsistent, must have Npdf=Ncoef or Npdf=Ncoef+1" << endl ;
-      assert(0) ;
+      std::stringstream msgSs;
+      msgSs << "RooAddModel::RooAddModel(" << GetName() 
+            << ") number of pdfs and coefficients inconsistent, must have Npdf=Ncoef or Npdf=Ncoef+1";
+      const std::string msgStr = msgSs.str();
+      coutE(InputArguments) << msgStr << endl;
+      throw std::runtime_error(msgStr);
     }
     if (!dynamic_cast<RooAbsReal*>(coef)) {
       coutE(InputArguments) << "RooAddModel::RooAddModel(" << GetName() << ") coefficient " << coef->GetName() << " is not of type RooAbsReal, ignored" << endl ;
       continue ;
     }
-    if (!dynamic_cast<RooAbsReal*>(pdf)) {
+    if (!dynamic_cast<RooAbsPdf*>(pdf)) {
       coutE(InputArguments) << "RooAddModel::RooAddModel(" << GetName() << ") pdf " << pdf->GetName() << " is not of type RooAbsPdf, ignored" << endl ;
       continue ;
     }
@@ -128,19 +134,18 @@ RooAddModel::RooAddModel(const char *name, const char *title, const RooArgList& 
     _coefList.add(*coef) ;    
   }
 
-  pdf = (RooAbsPdf*) pdfIter->Next() ;
-  if (pdf) {
-    if (!dynamic_cast<RooAbsReal*>(pdf)) {
-      coutE(InputArguments) << "RooAddModel::RooAddModel(" << GetName() << ") last pdf " << coef->GetName() << " is not of type RooAbsPdf, fatal error" << endl ;
-      assert(0) ;
+  if (auto pdf = pdfIter.next()) {
+    if (!dynamic_cast<RooAbsPdf*>(pdf)) {
+      std::stringstream msgSs;
+      msgSs << "RooAddModel::RooAddModel(" << GetName() << ") last pdf " << pdf->GetName() << " is not of type RooAbsPdf, fatal error";
+      const std::string msgStr = msgSs.str();
+      coutE(InputArguments) << msgStr << endl;
+      throw std::runtime_error(msgStr);
     }
     _pdfList.add(*pdf) ;  
   } else {
     _haveLastCoef=kTRUE ;
   }
-
-  delete pdfIter ;
-  delete coefIter  ;
 
   _coefCache = new Double_t[_pdfList.getSize()] ;
   _coefErrCount = _errorCount ;
@@ -189,7 +194,7 @@ RooAddModel::~RooAddModel()
 /// By default the interpretation of the fraction coefficients is
 /// performed in the contextual choice of observables. This makes the
 /// shape of the p.d.f explicitly dependent on the choice of
-/// observables. This method instructs RooAddPdf to freeze the
+/// observables. This method instructs RooAddModel to freeze the
 /// interpretation of the coefficients to be done in the given set of
 /// observables. If frozen, fractions are automatically transformed
 /// from the reference normalization set to the contextual normalization
@@ -213,10 +218,10 @@ void RooAddModel::fixCoefNormalization(const RooArgSet& refCoefNorm)
 
 ////////////////////////////////////////////////////////////////////////////////
 /// By default the interpretation of the fraction coefficients is
-/// performed in the default range. This make the shape of a RooAddPdf
+/// performed in the default range. This make the shape of a RooAddModel
 /// explicitly dependent on the range of the observables. To allow
 /// a range independent definition of the fraction this function
-/// instructs RooAddPdf to freeze its interpretation in the given
+/// instructs RooAddModel to freeze its interpretation in the given
 /// named range. If the current normalization range is different
 /// from the reference range, the appropriate fraction coefficients
 /// are automically calculation from the reference fractions using
@@ -740,16 +745,12 @@ Double_t RooAddModel::analyticalIntegralWN(Int_t code, const RooArgSet* normSet,
 
   // If cache has been sterilized, revive this slot
   if (cache==0) {
-    RooArgSet* vars = getParameters(RooArgSet()) ;
-    RooArgSet* nset = _intCacheMgr.nameSet1ByIndex(code-1)->select(*vars) ;
-    RooArgSet* iset = _intCacheMgr.nameSet2ByIndex(code-1)->select(*vars) ;
+    std::unique_ptr<RooArgSet> vars{getParameters(RooArgSet())} ;
+    RooArgSet nset = _intCacheMgr.selectFromSet1(*vars, code-1) ;
+    RooArgSet iset = _intCacheMgr.selectFromSet2(*vars, code-1) ;
 
-    Int_t code2(-1) ;
-    getCompIntList(nset,iset,compIntList,code2,rangeName) ;
-
-    delete vars ;
-    delete nset ;
-    delete iset ;
+    int code2 = -1 ;
+    getCompIntList(&nset,&iset,compIntList,code2,rangeName) ;
   } else {
 
     compIntList = &cache->_intList ;
@@ -852,7 +853,7 @@ void RooAddModel::selectNormalizationRange(const char* rangeName, Bool_t force)
 
 
 ////////////////////////////////////////////////////////////////////////////////
-/// Return specialized context to efficiently generate toy events from RooAddPdfs
+/// Return specialized context to efficiently generate toy events from RooAddModels.
 
 RooAbsGenContext* RooAddModel::genContext(const RooArgSet &vars, const RooDataSet *prototype, 
 					const RooArgSet* auxProto, Bool_t verbose) const 

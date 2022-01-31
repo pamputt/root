@@ -1,8 +1,3 @@
-[![Travis status](https://travis-ci.org/root-project/cling.svg?branch=master)](https://travis-ci.org/root-project/cling)
-<!-- a target="_blank" href="https://ci.appveyor.com/project/root-project/cling-j0wdg">
-  ![Appveyor status](https://ci.appveyor.com/api/projects/status/github/root-project/cling?svg=true&branch=master)
-</a -->
-
 Cling - The Interactive C++ Interpreter
 =========================================
 
@@ -18,7 +13,7 @@ concept, in order to leverage rapid application development. Implemented as a
 small extension to LLVM and Clang, the interpreter reuses their strengths such
 as the praised concise and expressive compiler diagnostics.
 
-See also [cling's web page.](https://cdn.rawgit.com/root-project/cling/master/www/index.html)
+See also [cling's web page.](https://rawcdn.githack.com/root-project/cling/d59d27ad61f2f3a78cd46e652cd9fb8adb893565/www/index.html)
 
 Please note that some of the resources are rather old and most of the stated
 limitations are outdated.
@@ -45,7 +40,7 @@ Our nightly binary snapshots can be found
 ### Building from Source with Cling Packaging Tool
 Cling's tree has a user-friendly, command-line utility written in Python called
 Cling Packaging Tool (CPT) which can build Cling from source and generate
-installer bundles for a wide range of platforms. CPT requires Python 2.7 or
+installer bundles for a wide range of platforms. CPT requires Python 3 or
 later.
 
 If you have Cling's source cloned locally, you can find the tool in
@@ -140,8 +135,10 @@ Our release steps to follow when cutting a new release:
   3. Add a new entry in the news section of our [website](www/news.html)
   4. Commit the changes.
   5. `git tag -a v0.x -m "Tagging release v0.x"`
-  6. Create a draft release in github and copy the contents of the release notes.
-  7. Wait for green builds.
-  8. Upload binaries to github (Travis should do this automatically).
-  9. Publish the tag and announce it on the mailing list.
-  10. Increment the current version and append `~dev`.
+  6. Tag `cling-patches` of `clang.git`:
+     `git tag -a cling-v0.x -m "Tagging clang for cling v0.x"`
+  7. Create a draft release in github and copy the contents of the release notes.
+  8. Wait for green builds.
+  9. Upload binaries to github (Travis should do this automatically).
+  10. Publish the tag and announce it on the mailing list.
+  11. Increment the current version and append `~dev`.

@@ -50,6 +50,7 @@ SafeAdjustWindowRectEx(RECT * lpRect,
       WIN32_API_FAILED("AdjustWindowRectEx");
       return FALSE;
    }
+#if 0 // multiple screens can give negative values
    if (lpRect->left < 0) {
       lpRect->right -= lpRect->left;
       lpRect->left = 0;
@@ -58,6 +59,7 @@ SafeAdjustWindowRectEx(RECT * lpRect,
       lpRect->bottom -= lpRect->top;
       lpRect->top = 0;
    }
+#endif
    return TRUE;
 }
 
@@ -398,7 +400,7 @@ GdkWindow *gdk_window_new(GdkWindow * parent,
       rect.right = rect.left + private->drawable.width;
       rect.bottom = rect.top + private->drawable.height;
 
-      //SafeAdjustWindowRectEx(&rect, dwStyle, FALSE, dwExStyle);
+      SafeAdjustWindowRectEx(&rect, dwStyle, FALSE, dwExStyle);
 
       if (x != CW_USEDEFAULT) {
          x = rect.left;
@@ -476,7 +478,7 @@ GdkWindow *gdk_window_new(GdkWindow * parent,
    return window;
 }
 
-GdkWindow *gdk_window_foreign_new(guint32 anid)
+GdkWindow *gdk_window_foreign_new(gulong anid)
 {
    GdkWindow *window;
    GdkWindowPrivate *private;
@@ -770,7 +772,7 @@ void gdk_window_move(GdkWindow * window, gint x, gint y)
 
          dwStyle = GetWindowLong(GDK_DRAWABLE_XID(window), GWL_STYLE);
          dwExStyle = GetWindowLong(GDK_DRAWABLE_XID(window), GWL_EXSTYLE);
-         //SafeAdjustWindowRectEx(&rect, dwStyle, FALSE, dwExStyle);
+         SafeAdjustWindowRectEx(&rect, dwStyle, FALSE, dwExStyle);
 
          x = rect.left;
          y = rect.top;
@@ -1454,7 +1456,7 @@ gdk_window_set_cursor (GdkWindow *window,
       xcursor = cursor_private->xcursor;
     
    GDK_NOTE (MISC, g_print ("gdk_window_set_cursor: %#x %#x\n",
-               (guint) GDK_DRAWABLE_XID (window), (guint) xcursor));
+               (gulong) GDK_DRAWABLE_XID (window), (gulong) xcursor));
                
    /* First get the old cursor, if any (we wait to free the old one */
    /* since it may be the current cursor set in the win32 api right now) */
@@ -1474,8 +1476,8 @@ gdk_window_set_cursor (GdkWindow *window,
          WIN32_API_FAILED ("CopyCursor");
       }
       GDK_NOTE (MISC, g_print ("...CopyCursor (%#x) = %#x\n",
-                   (guint) xcursor,
-                   (guint) GDK_WINDOW_WIN32DATA (window)->xcursor));
+                   (gulong) xcursor,
+                   (gulong) GDK_WINDOW_WIN32DATA (window)->xcursor));
    }
     
    /* Set new cursor in all cases if we're over our window */
@@ -1498,7 +1500,7 @@ gdk_window_set_cursor (GdkWindow *window,
    /* in use before we destroy it, in case we're not over our window */
    /* but the cursor is still set to our old one. */
    if (prev_xcursor != NULL) {
-      GDK_NOTE (MISC, g_print ("...DestroyCursor (%#x)\n",(guint) prev_xcursor));
+      GDK_NOTE (MISC, g_print ("...DestroyCursor (%#x)\n",(gulong) prev_xcursor));
       DestroyCursor (prev_xcursor);
    }
 }

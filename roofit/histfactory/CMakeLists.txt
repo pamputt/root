@@ -64,6 +64,8 @@ ROOT_STANDARD_LIBRARY_PACKAGE(HistFactory
     src/Systematics.cxx
   DICTIONARY_OPTIONS
     "-writeEmptyRootPCM"
+  LIBRARIES
+    RooBatchCompute
   DEPENDENCIES
     RooFit
     RooFitCore
@@ -77,6 +79,12 @@ ROOT_STANDARD_LIBRARY_PACKAGE(HistFactory
     RooStats
     XMLParser
 )
+
+# For recent clang, this can facilitate auto-vectorisation.
+# In RooFit, the errno side effect is not needed, anyway:
+if(NOT MSVC)
+  target_compile_options(HistFactory PUBLIC -fno-math-errno)
+endif()
 
 ROOT_EXECUTABLE(hist2workspace
   MakeModelAndMeasurements.cxx
@@ -92,7 +100,7 @@ ROOT_EXECUTABLE(hist2workspace
 #---Createhist2workspaceCommandLineOptions------------------------------------------------------------------
 generateHeader(hist2workspace
   ${CMAKE_CURRENT_SOURCE_DIR}/src/hist2workspace-argparse.py
-  ${CMAKE_BINARY_DIR}/include/hist2workspaceCommandLineOptionsHelp.h
+  ${CMAKE_BINARY_DIR}/ginclude/hist2workspaceCommandLineOptionsHelp.h
 )
 
 file(COPY config/prepareHistFactory DESTINATION  ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})

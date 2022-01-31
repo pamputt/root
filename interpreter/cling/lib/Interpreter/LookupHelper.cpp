@@ -46,6 +46,7 @@ namespace cling {
     clang::Preprocessor::CleanupAndRestoreCacheRAII fCleanupRAII;
     clang::Parser::ParserCurTokRestoreRAII fSavedCurToken;
     ParserStateRAII ResetParserState;
+    clang::Sema::SFINAETrap fSFINAETrap;
     void prepareForParsing(llvm::StringRef code, llvm::StringRef bufferName,
                            LookupHelper::DiagSetting diagOnOff);
   public:
@@ -53,10 +54,11 @@ namespace cling {
                      llvm::StringRef bufferName,
                      LookupHelper::DiagSetting diagOnOff)
         : m_LH(LH), SaveIsRecursivelyRunning(LH.IsRecursivelyRunning),
-          fCleanupRAII(LH.m_Parser.get()->getPreprocessor()),
-          fSavedCurToken(*LH.m_Parser.get()),
-          ResetParserState(*LH.m_Parser.get(),
-                           !LH.IsRecursivelyRunning /*skipToEOF*/) {
+          fCleanupRAII(LH.m_Parser->getPreprocessor()),
+          fSavedCurToken(*LH.m_Parser),
+          ResetParserState(*LH.m_Parser,
+                           !LH.IsRecursivelyRunning /*skipToEOF*/),
+          fSFINAETrap(m_LH.m_Parser->getActions()) {
       LH.IsRecursivelyRunning = true;
       prepareForParsing(code, bufferName, diagOnOff);
     }
@@ -69,7 +71,7 @@ namespace cling {
                                            llvm::StringRef bufferName,
                                           LookupHelper::DiagSetting diagOnOff) {
     ++m_LH.m_TotalParseRequests;
-    Parser& P = *m_LH.m_Parser.get();
+    Parser& P = *m_LH.m_Parser;
     Sema& S = P.getActions();
     Preprocessor& PP = P.getPreprocessor();
     //
@@ -81,7 +83,9 @@ namespace cling {
                                       diagOnOff == LookupHelper::NoDiagnostics);
     //
     //  Tell Sema we are not in the process of doing an instantiation.
-    //
+    //  fSFINAETrap will reset any SFINAE error count of a SFINAE context from "above".
+    //  fSFINAETrap will reset this value to the previous one; the line below is overwriting
+    //  the value set by fSFINAETrap.
     P.getActions().InNonInstantiationSFINAEContext = true;
     //
     //  Tell the parser to not attempt spelling correction.
@@ -496,9 +500,9 @@ namespace cling {
     //  Try parsing the type name.
     //
     clang::ParsedAttributes Attrs(P.getAttrFactory());
-
-    TypeResult Res(P.ParseTypeName(0,Declarator::TypeNameContext,clang::AS_none,
-                                   0,&Attrs));
+    // FIXME: All arguments to ParseTypeName are the default arguments. Remove.
+    TypeResult Res(P.ParseTypeName(0, DeclaratorContext::TypeNameContext,
+                                   clang::AS_none, 0, &Attrs));
     if (Res.isUsable()) {
       // Accept it only if the whole name was parsed.
       if (P.NextToken().getKind() == clang::tok::eof) {
@@ -712,8 +716,17 @@ namespace cling {
                         }
                       } else {
                         // NOTE: We cannot instantiate the scope: not a valid decl.
-                        // Need to rollback transaction.
-                        UnloadDecl(&S, TD);
+                        // Need to unload it if this decl is a definition.
+                        // But do not unload pre-existing fwd decls. Note that this might have failed
+                        // because several other Decls failed to instantiate, leaving several Decls
+                        // in invalid state. We should be unloading all of them, i.e. inload the
+                        // current (possibly nested) transaction.
+                        auto *T = const_cast<Transaction*>(m_Interpreter->getCurrentTransaction());
+                        // Must not unload the Transaction, which might delete
+                        // it: the RAII above still points to it! Instead, just
+                        // mark it as "erroneous" which causes the RAII to
+                        // unload it in due time.
+                        T->setIssuedDiags(Transaction::kErrors);
                         *setResultType = nullptr;
                         return 0;
                       }
@@ -1099,6 +1112,23 @@ namespace cling {
     }
 
     //
+    //  Tell the diagnostic engine to ignore all diagnostics.
+    //
+    bool OldSuppressAllDiagnostics
+      = S.getDiagnostics().getSuppressAllDiagnostics();
+    S.getDiagnostics().setSuppressAllDiagnostics(
+        diagOnOff == LookupHelper::NoDiagnostics);
+
+    struct ResetDiagSuppression {
+      bool _Old;
+      Sema& _S;
+      ResetDiagSuppression(Sema &S, bool Old): _Old(Old), _S(S) {}
+      ~ResetDiagSuppression() {
+        _S.getDiagnostics().setSuppressAllDiagnostics();
+      }
+    } DiagSuppressionRAII(S, OldSuppressAllDiagnostics);
+
+    //
     //  Construct the overload candidate set.
     //
     OverloadCandidateSet Candidates(FuncNameInfo.getLoc(),
@@ -1179,17 +1209,8 @@ namespace cling {
           // of comparison.
           TheDecl = TheDecl->getCanonicalDecl();
           if (TheDecl->isTemplateInstantiation() && !TheDecl->isDefined()) {
-            //
-            //  Tell the diagnostic engine to ignore all diagnostics.
-            //
-            bool OldSuppressAllDiagnostics
-              = S.getDiagnostics().getSuppressAllDiagnostics();
-            S.getDiagnostics().setSuppressAllDiagnostics(
-                diagOnOff == LookupHelper::NoDiagnostics);
-
             S.InstantiateFunctionDefinition(SourceLocation(), TheDecl,
                                             true /*recursive instantiation*/);
-            S.getDiagnostics().setSuppressAllDiagnostics(OldSuppressAllDiagnostics);
           }
           if (TheDecl->isInvalidDecl()) {
             // if the decl is invalid try to clean up
@@ -1227,11 +1248,11 @@ namespace cling {
         // Double check const-ness.
         if (const clang::CXXMethodDecl *md =
             llvm::dyn_cast<clang::CXXMethodDecl>(TheDecl)) {
-          if (md->getTypeQualifiers() & clang::Qualifiers::Const) {
+          if (md->getMethodQualifiers().hasConst()) {
             if (!objectIsConst) {
               TheDecl = 0;
             }
-          } else {
+          } else { // FIXME: The else should be attached to the if hasConst stmt
             if (objectIsConst) {
               TheDecl = 0;
             }
@@ -1376,7 +1397,7 @@ namespace cling {
                              /*AllowDestructorName*/true,
                              /*AllowConstructorName*/true,
                              /*AllowDeductionGuide*/ false,
-                             ParsedType(), TemplateKWLoc,
+                             ParsedType(), &TemplateKWLoc,
                              FuncId)) {
       // Failed parse, cleanup.
       return false;
@@ -1672,7 +1693,7 @@ namespace cling {
           // memory corruption on the OpaqueValueExpr. See ROOT-7749.
           clang::QualType NonRefQT(QT.getNonReferenceType());
           ExprMemory.resize(++nargs);
-          new (&ExprMemory[nargs-1]) OpaqueValueExpr(TSI->getTypeLoc().getLocStart(),
+          new (&ExprMemory[nargs-1]) OpaqueValueExpr(TSI->getTypeLoc().getBeginLoc(),
                                                      NonRefQT, VK);
         }
         // Type names should be comma separated.
@@ -2073,7 +2094,7 @@ namespace cling {
       // getStringType can be called multiple times with Cache being null, and
       // the local cache should be discarded when that occurs.
       if (!Cache)
-        m_StringTy = {};
+        m_StringTy = {{}};
       QualType Qt = findType("std::string", WithDiagnostics);
       m_StringTy[kStdString] = Qt.isNull() ? nullptr : Qt.getTypePtr();
       if (!m_StringTy[kStdString]) return kNotAString;

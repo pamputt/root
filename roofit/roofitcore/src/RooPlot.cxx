@@ -21,7 +21,7 @@
 
 A RooPlot is a plot frame and a container for graphics objects
 within that frame. As a frame, it provides the TH1-style public interface
-for settting plot ranges, configuring axes, etc. As a container, it
+for setting plot ranges, configuring axes, etc. As a container, it
 holds an arbitrary set of objects that might be histograms of data,
 curves representing a fit model, or text labels. Use the Draw()
 method to draw a frame and the objects it contains. Use the various
@@ -52,6 +52,7 @@ object onto a one-dimensional plot.
 #include "RooMsgService.h"
 
 #include "TClass.h"
+#include "TBuffer.h"
 #include "TH1D.h"
 #include "TBrowser.h"
 #include "TVirtualPad.h"
@@ -62,9 +63,10 @@ object onto a one-dimensional plot.
 #include "TAttText.h"
 #include "TDirectoryFile.h"
 #include "TLegend.h"
+#include "strlcpy.h"
 
-#include "Riostream.h"
-#include <string.h>
+#include <iostream>
+#include <cstring>
 
 using namespace std;
 
@@ -73,7 +75,7 @@ ClassImp(RooPlot);
 
 Bool_t RooPlot::_addDirStatus = kTRUE ;
 
-Bool_t RooPlot::addDirectoryStatus() { return _addDirStatus ; }
+Bool_t RooPlot::addDirectoryStatus() { return _addDirStatus; }
 Bool_t RooPlot::setAddDirectoryStatus(Bool_t flag) { Bool_t ret = flag ; _addDirStatus = flag ; return ret ; }
 
 
@@ -83,11 +85,8 @@ Bool_t RooPlot::setAddDirectoryStatus(Bool_t flag) { Bool_t ret = flag ; _addDir
 
 RooPlot::RooPlot() : _hist(0), _plotVarClone(0), _plotVarSet(0), _normVars(0), _normObj(0), _dir(0)
 {
-  _iterator= _items.MakeIterator() ;
-
   if (gDirectory && addDirectoryStatus()) {
-    _dir = gDirectory ;
-    gDirectory->Append(this) ;
+    SetDirectory(gDirectory);
   }
 }
 
@@ -99,16 +98,10 @@ RooPlot::RooPlot(Double_t xmin, Double_t xmax) :
   _hist(0), _items(), _plotVarClone(0), _plotVarSet(0), _normObj(0),
   _defYmin(1e-5), _defYmax(1), _dir(0)
 {
-  Bool_t histAddDirStatus = TH1::AddDirectoryStatus();
-  TH1::AddDirectory(kFALSE) ;
-
   _hist = new TH1D(histName(),"A RooPlot",100,xmin,xmax) ;
   _hist->Sumw2(kFALSE) ;
   _hist->GetSumw2()->Set(0) ;
-
-
-  TH1::AddDirectory(histAddDirStatus) ;
-
+  _hist->SetDirectory(nullptr);
 
   // Create an empty frame with the specified x-axis limits.
   initialize();
@@ -118,20 +111,16 @@ RooPlot::RooPlot(Double_t xmin, Double_t xmax) :
 
 
 ////////////////////////////////////////////////////////////////////////////////
-/// Construct of a two-dimensioanl RooPlot with ranges [xmin,xmax] x [ymin,ymax]
+/// Construct of a two-dimensional RooPlot with ranges [xmin,xmax] x [ymin,ymax]
 
 RooPlot::RooPlot(Double_t xmin, Double_t xmax, Double_t ymin, Double_t ymax) :
   _hist(0), _items(), _plotVarClone(0),
   _plotVarSet(0), _normObj(0), _defYmin(1e-5), _defYmax(0), _dir(0)
 {
-  Bool_t histAddDirStatus = TH1::AddDirectoryStatus();
-  TH1::AddDirectory(kFALSE) ;
-
   _hist = new TH1D(histName(),"A RooPlot",100,xmin,xmax) ;
   _hist->Sumw2(kFALSE) ;
   _hist->GetSumw2()->Set(0) ;
-
-  TH1::AddDirectory(histAddDirStatus) ;
+  _hist->SetDirectory(nullptr);
 
   SetMinimum(ymin);
   SetMaximum(ymax);
@@ -147,14 +136,10 @@ RooPlot::RooPlot(const RooAbsRealLValue &var1, const RooAbsRealLValue &var2) :
   _hist(0), _items(),
   _plotVarClone(0), _plotVarSet(0), _normObj(0), _defYmin(1e-5), _defYmax(0), _dir(0)
 {
-  Bool_t histAddDirStatus = TH1::AddDirectoryStatus();
-  TH1::AddDirectory(kFALSE) ;
-
   _hist = new TH1D(histName(),"A RooPlot",100,var1.getMin(),var1.getMax()) ;
   _hist->Sumw2(kFALSE) ;
   _hist->GetSumw2()->Set(0) ;
-
-  TH1::AddDirectory(histAddDirStatus) ;
+  _hist->SetDirectory(nullptr);
 
   if(!var1.hasMin() || !var1.hasMax()) {
     coutE(InputArguments) << "RooPlot::RooPlot: cannot create plot for variable without finite limits: "
@@ -184,14 +169,10 @@ RooPlot::RooPlot(const RooAbsRealLValue &var1, const RooAbsRealLValue &var2,
   _hist(0), _items(), _plotVarClone(0),
   _plotVarSet(0), _normObj(0), _defYmin(1e-5), _defYmax(0), _dir(0)
 {
-  Bool_t histAddDirStatus = TH1::AddDirectoryStatus();
-  TH1::AddDirectory(kFALSE) ;
-
   _hist = new TH1D(histName(),"A RooPlot",100,xmin,xmax) ;
   _hist->Sumw2(kFALSE) ;
   _hist->GetSumw2()->Set(0) ;
-
-  TH1::AddDirectory(histAddDirStatus) ;
+  _hist->SetDirectory(nullptr);
 
   SetMinimum(ymin);
   SetMaximum(ymax);
@@ -209,14 +190,10 @@ RooPlot::RooPlot(const char* name, const char* title, const RooAbsRealLValue &va
   _hist(0), _items(),
   _plotVarClone(0), _plotVarSet(0), _normObj(0), _defYmin(1e-5), _defYmax(1), _dir(0)
 {
-  Bool_t histAddDirStatus = TH1::AddDirectoryStatus();
-  TH1::AddDirectory(kFALSE) ;
-
   _hist = new TH1D(name,title,nbins,xmin,xmax) ;
   _hist->Sumw2(kFALSE) ;
   _hist->GetSumw2()->Set(0) ;
-
-  TH1::AddDirectory(histAddDirStatus) ;
+  _hist->SetDirectory(nullptr);
 
   // plotVar can be a composite in case of a RooDataSet::plot, need deepClone
   _plotVarSet = (RooArgSet*) RooArgSet(var).snapshot() ;
@@ -239,14 +216,10 @@ RooPlot::RooPlot(const RooAbsRealLValue &var, Double_t xmin, Double_t xmax, Int_
   _hist(0), _items(),
   _plotVarClone(0), _plotVarSet(0), _normObj(0), _defYmin(1e-5), _defYmax(1), _dir(0)
 {
-  Bool_t histAddDirStatus = TH1::AddDirectoryStatus();
-  TH1::AddDirectory(kFALSE) ;
-
   _hist = new TH1D(histName(),"RooPlot",nbins,xmin,xmax) ;
   _hist->Sumw2(kFALSE) ;
   _hist->GetSumw2()->Set(0) ;
-
-  TH1::AddDirectory(histAddDirStatus) ;
+  _hist->SetDirectory(nullptr);
 
   // plotVar can be a composite in case of a RooDataSet::plot, need deepClone
   _plotVarSet = (RooArgSet*) RooArgSet(var).snapshot() ;
@@ -289,12 +262,10 @@ RooPlot* RooPlot::frameWithLabels(const RooAbsRealLValue &var){
   RooPlot* pl = new RooPlot();
   int nbins = var.getBinning().numBins();
 
-  Bool_t histAddDirStatus = TH1::AddDirectoryStatus();
-  TH1::AddDirectory(kFALSE) ;
   pl->_hist = new TH1D(pl->histName(),"RooPlot",nbins,var.getMin(),var.getMax()) ;
   pl->_hist->Sumw2(kFALSE) ;
   pl->_hist->GetSumw2()->Set(0) ;
-  TH1::AddDirectory(histAddDirStatus) ;
+  pl->_hist->SetDirectory(nullptr);
 
   pl->_hist->SetNdivisions(-nbins);
   for(int i=0; i<nbins; ++i){
@@ -338,21 +309,18 @@ void RooPlot::initialize()
   SetName(histName()) ;
 
   if (gDirectory && addDirectoryStatus()) {
-    _dir = gDirectory ;
-    gDirectory->Append(this) ;
+    SetDirectory(gDirectory);
   }
 
   // We do not have useful stats of our own
   _hist->SetStats(kFALSE);
+  _hist->SetDirectory(nullptr);
   // Default vertical padding of our enclosed objects
   setPadFactor(0.05);
   // We don't know our normalization yet
   _normNumEvts= 0;
   _normBinWidth = 0;
   _normVars= 0;
-  // Create an iterator over our enclosed objects
-  _iterator= _items.MakeIterator();
-  assert(0 != _iterator);
 }
 
 
@@ -362,9 +330,9 @@ void RooPlot::initialize()
 TString RooPlot::histName() const
 {
   if (_plotVarClone) {
-    return TString(Form("frame_%s_%lx",_plotVarClone->GetName(),(ULong_t)this)) ;
+    return TString(Form("frame_%s_%zx",_plotVarClone->GetName(),(size_t)this)) ;
   } else {
-    return TString(Form("frame_%lx",(ULong_t)this)) ;
+    return TString(Form("frame_%zx",(size_t)this)) ;
   }
 }
 
@@ -376,17 +344,29 @@ RooPlot::~RooPlot()
 {
   // Delete the items in our container and our iterator.
   if (_dir) {
-    if (!_dir->TestBit(TDirectoryFile::kCloseDirectory)) {
-      _dir->GetList()->RecursiveRemove(this) ;
-    }
+    _dir->GetList()->RecursiveRemove(this) ;
   }
 
   _items.Delete();
-  delete _iterator;
   if(_plotVarSet) delete _plotVarSet;
   if(_normVars) delete _normVars;
   delete _hist ;
 
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+/// Set the directory that this plot is associated to.
+/// Setting it to `nullptr` will remove the object from all directories.
+/// Like TH1::SetDirectory.
+void RooPlot::SetDirectory(TDirectory *dir) {
+  if (_dir) {
+    _dir->GetList()->RecursiveRemove(this);
+  }
+  _dir = dir;
+  if (_dir) {
+    _dir->Append(this);
+  }
 }
 
 
@@ -721,7 +701,7 @@ void RooPlot::Draw(Option_t *option)
     _hist->Draw("FUNC");
   }
 
-  _iterator->Reset();
+  std::unique_ptr<TIterator> _iterator(_items.MakeIterator());
   TObject *obj = 0;
   while((obj= _iterator->Next())) {
     DrawOpt opt(_iterator->GetOption()) ;
@@ -785,7 +765,7 @@ void RooPlot::printArgs(ostream& os) const
 void RooPlot::printValue(ostream& os) const
 {
   os << "(" ;
-  _iterator->Reset();
+  std::unique_ptr<TIterator> _iterator(_items.MakeIterator());
   TObject *obj = 0;
   Bool_t first(kTRUE) ;
   while((obj= _iterator->Next())) {
@@ -825,7 +805,7 @@ void RooPlot::printMultiline(ostream& os, Int_t /*content*/, Bool_t verbose, TSt
   os << indent << "  Plot frame contains " << _items.GetSize() << " object(s):" << endl;
 
   if(verbose) {
-    _iterator->Reset();
+    std::unique_ptr<TIterator> _iterator(_items.MakeIterator());
     TObject *obj = 0;
     Int_t i=0 ;
     while((obj= _iterator->Next())) {
@@ -1006,8 +986,8 @@ TObject *RooPlot::findObject(const char *name, const TClass* clas) const
 
   TIterator* iter = _items.MakeIterator() ;
   while((obj=iter->Next())) {
-    if ((!name || !TString(name).CompareTo(obj->GetName())) &&
-	(!clas || (obj->IsA()==clas))) {
+    if ((!name || name[0] == '\0' || !TString(name).CompareTo(obj->GetName()))
+        && (!clas || (obj->IsA()==clas))) {
       ret = obj ;
     }
   }
@@ -1116,8 +1096,7 @@ void RooPlot::SetMinimum(Double_t minimum)
 
 
 ////////////////////////////////////////////////////////////////////////////////
-/// Calculate and return reduced chi-squared of curve with given name with respect
-/// to histogram with given name.
+/// Calculate and return reduced chi-squared between a curve and a histogram.
 ///
 /// \param[in] curvename  Name of the curve or nullptr for last curve
 /// \param[in] histname   Name of the histogram to compare to or nullptr for last added histogram
@@ -1125,8 +1104,11 @@ void RooPlot::SetMinimum(Double_t minimum)
 /// number. This means that the curve was fitted to the data with nFitParam floating
 /// parameters, which needs to be reflected in the calculation of \f$\chi^2 / \mathrm{ndf}\f$.
 /// 
-/// \return \f$ \chi^2 / \mathrm{ndf} \f$
-
+/// \return \f$ \chi^2 / \mathrm{ndf} \f$ between the plotted curve and the data.
+///
+/// \note The \f$ \chi^2 \f$ is calculated between a *plot of the original distribution* and the data.
+/// It therefore has more rounding errors than directly calculating the \f$ \chi^2 \f$ from a PDF or
+/// function. To do this, use RooChi2Var.
 Double_t RooPlot::chiSquare(const char* curvename, const char* histname, int nFitParam) const
 {
 
@@ -1149,10 +1131,17 @@ Double_t RooPlot::chiSquare(const char* curvename, const char* histname, int nFi
 
 
 ////////////////////////////////////////////////////////////////////////////////
-/// Return a RooHist containing the residuals of histogram 'histname' with respect
-/// to curve 'curvename'. If normalize is true the residuals are divided by the error
-/// on the histogram, effectively returning a pull histogram
-
+/// Return a RooHist (derives from TGraphAsymErrors) containing the residuals of a histogram.
+/// The plotting range of the graph is adapted to the plotting range of the current plot.
+///
+/// \param histname Name of the data histogram.
+/// Passing an empty string or `nullptr` will create residuals of the last-plotted histogram.
+/// \param curvename Name of the curve to compare to data.
+/// Passing an empty string or `nullptr` will create residuals of the last-plotted curve.
+/// \param normalize If true, the residuals are divided by the error
+/// of the histogram, effectively returning a pull histogram.
+/// \param useAverage If true, the histogram is compared with the curve averaged in each bin.
+/// Otherwise, the curve is evaluated at the bin centres, which is not accurate for strongly curved distributions.
 RooHist* RooPlot::residHist(const char* histname, const char* curvename, bool normalize, bool useAverage) const
 {
   // Find curve object
@@ -1169,7 +1158,12 @@ RooHist* RooPlot::residHist(const char* histname, const char* curvename, bool no
     return 0 ;
   }
 
-  return hist->makeResidHist(*curve,normalize,useAverage) ;
+  auto residhist = hist->makeResidHist(*curve,normalize,useAverage);
+  residhist->GetHistogram()->GetXaxis()->SetRangeUser(_hist->GetXaxis()->GetXmin(), _hist->GetXaxis()->GetXmax());
+  residhist->GetHistogram()->GetXaxis()->SetTitle(_hist->GetXaxis()->GetTitle());
+  residhist->GetHistogram()->GetYaxis()->SetTitle(normalize ? "(Data - curve) / #sigma_{data}" : "Data - curve");
+
+  return residhist;
 }
 
 
@@ -1272,45 +1266,83 @@ Int_t RooPlot::defaultPrintContents(Option_t* /*opt*/) const
 
 
 
+/// \see TH1::GetXaxis()
 TAxis* RooPlot::GetXaxis() const { return _hist->GetXaxis() ; }
+/// \see TH1::GetYaxis()
 TAxis* RooPlot::GetYaxis() const { return _hist->GetYaxis() ; }
+/// \see TH1::GetNbinsX()
 Int_t  RooPlot::GetNbinsX() const { return _hist->GetNbinsX() ; }
+/// \see TH1::GetNdivisions()
 Int_t  RooPlot::GetNdivisions(Option_t* axis) const { return _hist->GetNdivisions(axis) ; }
+/// \see TH1::GetMinimum()
 Double_t  RooPlot::GetMinimum(Double_t minval) const { return _hist->GetMinimum(minval) ; }
+/// \see TH1::GetMaximum()
 Double_t   RooPlot::GetMaximum(Double_t maxval) const { return _hist->GetMaximum(maxval) ; }
 
 
+/// \see TH1::SetAxisColor()
 void RooPlot::SetAxisColor(Color_t color, Option_t* axis) { _hist->SetAxisColor(color,axis) ; }
+/// \see TH1::SetAxisRange()
 void RooPlot::SetAxisRange(Double_t xmin, Double_t xmax, Option_t* axis) { _hist->SetAxisRange(xmin,xmax,axis) ; }
+/// \see TH1::SetBarOffset()
 void RooPlot::SetBarOffset(Float_t offset) { _hist->SetBarOffset(offset) ; }
+/// \see TH1::SetBarWidth()
 void RooPlot::SetBarWidth(Float_t width) { _hist->SetBarWidth(width) ; }
+/// \see TH1::SetContour()
 void RooPlot::SetContour(Int_t nlevels, const Double_t* levels) { _hist->SetContour(nlevels,levels) ; }
+/// \see TH1::SetContourLevel()
 void RooPlot::SetContourLevel(Int_t level, Double_t value) { _hist->SetContourLevel(level,value) ; }
+/// \see TH1::SetDrawOption()
 void RooPlot::SetDrawOption(Option_t* option) { _hist->SetDrawOption(option) ; }
+/// \see TH1::SetFillAttributes()
 void RooPlot::SetFillAttributes() { _hist->SetFillAttributes() ; }
+/// \see TH1::SetFillColor()
 void RooPlot::SetFillColor(Color_t fcolor) { _hist->SetFillColor(fcolor) ; }
+/// \see TH1::SetFillStyle()
 void RooPlot::SetFillStyle(Style_t fstyle) { _hist->SetFillStyle(fstyle) ; }
+/// \see TH1::SetLabelColor()
 void RooPlot::SetLabelColor(Color_t color, Option_t* axis) { _hist->SetLabelColor(color,axis) ; }
+/// \see TH1::SetLabelFont()
 void RooPlot::SetLabelFont(Style_t font, Option_t* axis) { _hist->SetLabelFont(font,axis) ; }
+/// \see TH1::SetLabelOffset()
 void RooPlot::SetLabelOffset(Float_t offset, Option_t* axis) { _hist->SetLabelOffset(offset,axis) ; }
+/// \see TH1::SetLabelSize()
 void RooPlot::SetLabelSize(Float_t size, Option_t* axis) { _hist->SetLabelSize(size,axis) ; }
+/// \see TH1::SetLineAttributes()
 void RooPlot::SetLineAttributes() { _hist->SetLineAttributes() ; }
+/// \see TH1::SetLineColor()
 void RooPlot::SetLineColor(Color_t lcolor) { _hist->SetLineColor(lcolor) ; }
+/// \see TH1::SetLineStyle()
 void RooPlot::SetLineStyle(Style_t lstyle) { _hist->SetLineStyle(lstyle) ; }
+/// \see TH1::SetLineWidth()
 void RooPlot::SetLineWidth(Width_t lwidth) { _hist->SetLineWidth(lwidth) ; }
+/// \see TH1::SetMarkerAttributes()
 void RooPlot::SetMarkerAttributes() { _hist->SetMarkerAttributes() ; }
+/// \see TH1::SetMarkerColor()
 void RooPlot::SetMarkerColor(Color_t tcolor) { _hist->SetMarkerColor(tcolor) ; }
+/// \see TH1::SetMarkerSize()
 void RooPlot::SetMarkerSize(Size_t msize) { _hist->SetMarkerSize(msize) ; }
+/// \see TH1::SetMarkerStyle()
 void RooPlot::SetMarkerStyle(Style_t mstyle) { _hist->SetMarkerStyle(mstyle) ; }
+/// \see TH1::SetNdivisions()
 void RooPlot::SetNdivisions(Int_t n, Option_t* axis) { _hist->SetNdivisions(n,axis) ; }
+/// \see TH1::SetOption()
 void RooPlot::SetOption(Option_t* option) { _hist->SetOption(option) ; }
+/// Like TH1::SetStats(), but statistics boxes are *off* by default in RooFit.
 void RooPlot::SetStats(Bool_t stats) { _hist->SetStats(stats) ; }
+/// \see TH1::SetTickLength()
 void RooPlot::SetTickLength(Float_t length, Option_t* axis) { _hist->SetTickLength(length,axis) ; }
+/// \see TH1::SetTitleFont()
 void RooPlot::SetTitleFont(Style_t font, Option_t* axis) { _hist->SetTitleFont(font,axis) ; }
+/// \see TH1::SetTitleOffset()
 void RooPlot::SetTitleOffset(Float_t offset, Option_t* axis) { _hist->SetTitleOffset(offset,axis) ; }
+/// \see TH1::SetTitleSize()
 void RooPlot::SetTitleSize(Float_t size, Option_t* axis) { _hist->SetTitleSize(size,axis) ; }
+/// \see TH1::SetXTitle()
 void RooPlot::SetXTitle(const char *title) { _hist->SetXTitle(title) ; }
+/// \see TH1::SetYTitle()
 void RooPlot::SetYTitle(const char *title) { _hist->SetYTitle(title) ; }
+/// \see TH1::SetZTitle()
 void RooPlot::SetZTitle(const char *title) { _hist->SetZTitle(title) ; }
 
 
@@ -1335,8 +1367,8 @@ void RooPlot::Streamer(TBuffer &R__b)
   // Custom streamer, needed for backward compatibility
 
   if (R__b.IsReading()) {
-
-    TH1::AddDirectory(kFALSE) ;
+    const bool oldAddDir = TH1::AddDirectoryStatus();
+    TH1::AddDirectory(false);
 
     // The default c'tor might have registered this with a TDirectory.
     // Streaming the TNamed will make this not retrievable anymore, so
@@ -1369,7 +1401,7 @@ void RooPlot::Streamer(TBuffer &R__b)
       R__b.CheckByteCount(R__s, R__c, RooPlot::IsA());
     }
 
-    TH1::AddDirectory(kTRUE) ;
+    TH1::AddDirectory(oldAddDir);
     if (_dir)
       _dir->Append(this);
 

@@ -58,11 +58,11 @@ for details on this ANN.
 #include "TMVA/ClassifierFactory.h"
 #include "TMVA/Tools.h"
 
-#include "Riostream.h"
 #include "TLeaf.h"
 #include "TEventList.h"
 #include "TROOT.h"
 #include "TMultiLayerPerceptron.h"
+#include "ThreadLocalStorage.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -182,8 +182,8 @@ void TMVA::MethodTMlpANN::CreateMLPOptions( TString layerSpec )
 ///
 /// know options:
 ///
-///  - NCycles       <integer>    Number of training cycles (too many cycles could overtrain the network)
-///  - HiddenLayers  <string>     Layout of the hidden layers (nodes per layer)
+///  - NCycles       `<integer>`    Number of training cycles (too many cycles could overtrain the network)
+///  - HiddenLayers  `<string>`     Layout of the hidden layers (nodes per layer)
 ///     * specifications for each hidden layer are separated by comma
 ///     * for each layer the number of nodes can be either absolut (simply a number)
 ///          or relative to the number of input nodes to the neural net (N)

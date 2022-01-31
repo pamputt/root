@@ -16,6 +16,7 @@
 #include "cling/Interpreter/LookupHelper.h"
 #include "cling/Interpreter/Transaction.h"
 #include "cling/Interpreter/Value.h"
+#include "cling/Interpreter/Visibility.h"
 #include "cling/Utils/AST.h"
 #include "cling/Utils/Casting.h"
 #include "cling/Utils/Output.h"
@@ -53,7 +54,8 @@
 using namespace cling;
 
 // Implements the CValuePrinter interface.
-extern "C" void cling_PrintValue(void * /*cling::Value**/ V) {
+extern "C" CLING_LIB_EXPORT
+void cling_PrintValue(void * /*cling::Value* V*/) {
   //Value* value = (Value*)V;
 
   //std::string typeStr = printTypeInternal(*value);
@@ -63,6 +65,7 @@ extern "C" void cling_PrintValue(void * /*cling::Value**/ V) {
 // Exported for RuntimePrintValue.h
 namespace cling {
   namespace valuePrinterInternal {
+    CLING_LIB_EXPORT
     extern const char* const kEmptyCollection = "{}";
 
     struct OpaqueString{};
@@ -176,18 +179,20 @@ static std::string printAddress(const void* Ptr, const char Prfx = 0) {
 } // anonymous namespace
 
 namespace cling {
-
   // General fallback - prints the address
+  CLING_LIB_EXPORT
   std::string printValue(const void *ptr) {
     return printAddress(ptr, '@');
   }
 
   // void pointer
+  CLING_LIB_EXPORT
   std::string printValue(const void **ptr) {
     return printAddress(*ptr);
   }
 
   // Bool
+  CLING_LIB_EXPORT
   std::string printValue(const bool *val) {
     return *val ? kTrueStr : kFalseStr;
   }
@@ -215,61 +220,72 @@ namespace cling {
     return Strm.str();
   }
 
+  CLING_LIB_EXPORT
   std::string printValue(const char *val) {
     return printOneChar(*val);
   }
 
+  CLING_LIB_EXPORT
   std::string printValue(const signed char *val) {
     return printOneChar(*val);
   }
 
+  CLING_LIB_EXPORT
   std::string printValue(const unsigned char *val) {
     return printOneChar(*val);
   }
 
   // Ints
+  CLING_LIB_EXPORT
   std::string printValue(const short *val) {
     cling::smallstream strm;
     strm << *val;
     return strm.str();
   }
 
+  CLING_LIB_EXPORT
   std::string printValue(const unsigned short *val) {
     cling::smallstream strm;
     strm << *val;
     return strm.str();
   }
 
+  CLING_LIB_EXPORT
   std::string printValue(const int *val) {
     cling::smallstream strm;
     strm << *val;
     return strm.str();
   }
 
+  CLING_LIB_EXPORT
   std::string printValue(const unsigned int *val) {
     cling::smallstream strm;
     strm << *val;
     return strm.str();
   }
 
+  CLING_LIB_EXPORT
   std::string printValue(const long *val) {
     cling::smallstream strm;
     strm << *val;
     return strm.str();
   }
 
+  CLING_LIB_EXPORT
   std::string printValue(const unsigned long *val) {
     cling::smallstream strm;
     strm << *val;
     return strm.str();
   }
 
+  CLING_LIB_EXPORT
   std::string printValue(const long long *val) {
     cling::smallstream strm;
     strm << *val;
     return strm.str();
   }
 
+  CLING_LIB_EXPORT
   std::string printValue(const unsigned long long *val) {
     cling::smallstream strm;
     strm << *val;
@@ -277,18 +293,21 @@ namespace cling {
   }
 
   // Reals
+  CLING_LIB_EXPORT
   std::string printValue(const float *val) {
     cling::smallstream strm;
     strm << llvm::format("%#.6g", *val) << 'f';
     return strm.str();
   }
 
+  CLING_LIB_EXPORT
   std::string printValue(const double *val) {
     cling::smallstream strm;
     strm << llvm::format("%#.8g", *val);
     return strm.str();
   }
 
+  CLING_LIB_EXPORT
   std::string printValue(const long double *val) {
     cling::smallstream strm;
     strm << llvm::format("%#.8Lg", *val) << 'L';
@@ -297,7 +316,7 @@ namespace cling {
   }
 
   // Char pointers
-  std::string printString(const char *const *Ptr, size_t N = 10000) {
+  static std::string printString(const char *const *Ptr, size_t N = 10000) {
     // Assumption is this is a string.
     // N is limit to prevent endless loop if Ptr is not really a string.
 
@@ -338,15 +357,18 @@ namespace cling {
     return Strm.str();
   }
 
+  CLING_LIB_EXPORT
   std::string printValue(const char *const *val) {
     return printString(val);
   }
 
+  CLING_LIB_EXPORT
   std::string printValue(const char **val) {
     return printString(val);
   }
 
   // std::string
+  CLING_LIB_EXPORT
   std::string printValue(const std::string *val) {
     return "\"" + *val + "\"";
   }
@@ -431,7 +453,7 @@ namespace cling {
 #else // !LLVM_UTF8
 
   template <class T> struct CharTraits { typedef T value_type; };
-#if defined(LLVM_ON_WIN32) // Likely only to be needed when _MSC_VER < 19??
+#if defined(_WIN32) // Likely only to be needed when _MSC_VER < 19??
   template <> struct CharTraits<char16_t> { typedef unsigned short value_type; };
   template <> struct CharTraits<char32_t> { typedef unsigned int value_type; };
 #endif
@@ -460,33 +482,38 @@ namespace cling {
 
   // declaration: cling/Utils/UTF8.h & cling/Interpreter/RuntimePrintValue.h
   template <class T>
+  CLING_LIB_EXPORT
   std::string toUTF8(const T* const Str, size_t N, const char Prefix);
 
   template <>
+  CLING_LIB_EXPORT
   std::string toUTF8<char16_t>(const char16_t* const Str, size_t N,
                                const char Prefix) {
     return utf8Value(Str, N, Prefix, encodeUTF8);
   }
 
   template <>
+  CLING_LIB_EXPORT
   std::string toUTF8<char32_t>(const char32_t* const Str, size_t N,
                                const char Prefix) {
     return utf8Value(Str, N, Prefix, encodeUTF8);
   }
 
   template <>
+  CLING_LIB_EXPORT
   std::string toUTF8<wchar_t>(const wchar_t* const Str, size_t N,
                               const char Prefix) {
     static_assert(sizeof(wchar_t) == sizeof(char16_t) ||
                   sizeof(wchar_t) == sizeof(char32_t), "Bad wchar_t size");
 
     if (sizeof(wchar_t) == sizeof(char32_t))
-      return toUTF8(reinterpret_cast<const char32_t * const>(Str), N, Prefix);
+      return toUTF8(reinterpret_cast<const char32_t *>(Str), N, Prefix);
 
-    return toUTF8(reinterpret_cast<const char16_t * const>(Str), N, Prefix);
+    return toUTF8(reinterpret_cast<const char16_t *>(Str), N, Prefix);
   }
 
   template <>
+  CLING_LIB_EXPORT
   std::string toUTF8<char>(const char* const Str, size_t N, const char Prefix) {
     return utf8Value(Str, N, Prefix, quoteString);
   }
@@ -500,14 +527,17 @@ namespace cling {
     return encodeUTF8(Src->data(), Src->size(), Prefix);
   }
 
+  CLING_LIB_EXPORT
   std::string printValue(const std::u16string* Val) {
     return toUTF8(Val, 'u');
   }
 
+  CLING_LIB_EXPORT
   std::string printValue(const std::u32string* Val) {
     return toUTF8(Val, 'U');
   }
 
+  CLING_LIB_EXPORT
   std::string printValue(const std::wstring* Val) {
     return toUTF8(Val, 'L');
   }
@@ -527,14 +557,17 @@ namespace cling {
     return Strm.str();
   }
 
+  CLING_LIB_EXPORT
   std::string printValue(const char16_t *Val) {
     return toUnicode(Val, 'u');
   }
 
+  CLING_LIB_EXPORT
   std::string printValue(const char32_t *Val) {
     return toUnicode(Val, 'U');
   }
 
+  CLING_LIB_EXPORT
   std::string printValue(const wchar_t *Val) {
     return toUnicode(Val, 'L', 'x');
   }
@@ -626,8 +659,8 @@ static const char* BuildAndEmitVPWrapperBody(cling::Interpreter &Interp,
   if (RetStmt.isInvalid())
     return "ERROR in cling's callPrintValue(): cannot build return expression";
 
-  auto *Body = new (Ctx) clang::CompoundStmt(noSrcLoc);
-  Body->setStmts(Ctx, {RetStmt.get()});
+  auto *Body
+    = clang::CompoundStmt::Create(Ctx, {RetStmt.get()}, noSrcLoc, noSrcLoc);
   WrapperFD->setBody(Body);
   auto &Consumer = Interp.getCI()->getASTConsumer();
   Consumer.HandleTopLevelDecl(clang::DeclGroupRef(WrapperFD));
@@ -706,7 +739,7 @@ executePrintValue(const Value& V, const T& val) {
 
 template <typename T> static
 typename std::enable_if<HasExplicitPrintValue<const T>::value, std::string>::type
-executePrintValue(const Value& V, const T& val) {
+executePrintValue(const Value& /*V*/, const T& val) {
   return printValue(&val);
 }
 
@@ -780,7 +813,7 @@ static std::string printFunctionValue(const Value &V, const void *ptr,
       if (SRange.isValid()) {
         clang::SourceManager &SM = C.getSourceManager();
         clang::SourceLocation LocBegin = SRange.getBegin();
-        LocBegin = SM.getExpansionRange(LocBegin).first;
+        LocBegin = SM.getExpansionRange(LocBegin).getBegin();
         o << "  at " << SM.getFilename(LocBegin);
         unsigned LineNo = SM.getSpellingLineNumber(LocBegin, &Invalid);
         if (!Invalid)
@@ -790,7 +823,7 @@ static std::string printFunctionValue(const Value &V, const void *ptr,
         cBegin = SM.getCharacterData(LocBegin, &Invalid);
         if (!Invalid) {
           clang::SourceLocation LocEnd = SRange.getEnd();
-          LocEnd = SM.getExpansionRange(LocEnd).second;
+          LocEnd = SM.getExpansionRange(LocEnd).getEnd();
           cEnd = SM.getCharacterData(LocEnd, &Invalid);
           if (Invalid)
             cBegin = 0;
@@ -916,6 +949,7 @@ static std::string printUnpackedClingValue(const Value &V) {
 
 namespace cling {
   // cling::Value
+  CLING_LIB_EXPORT
   std::string printValue(const Value *value) {
     cling::smallstream strm;
 

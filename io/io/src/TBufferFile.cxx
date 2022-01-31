@@ -34,7 +34,6 @@ The concrete implementation of TBuffer for writing/reading to/from a ROOT file o
 #include "TStreamerInfoActions.h"
 #include "TInterpreter.h"
 #include "TVirtualMutex.h"
-#include "TROOT.h"
 
 #if (defined(__linux) || defined(__APPLE__)) && defined(__i386__) && \
      defined(__GNUC__)
@@ -359,10 +358,10 @@ Int_t TBufferFile::CheckByteCount(UInt_t startpos, UInt_t bcnt, const TClass *cl
 
    Int_t  offset = 0;
 
-   Long_t endpos = Long_t(fBuffer) + startpos + bcnt + sizeof(UInt_t);
+   Longptr_t endpos = Longptr_t(fBuffer) + startpos + bcnt + sizeof(UInt_t);
 
-   if (Long_t(fBufCur) != endpos) {
-      offset = Int_t(Long_t(fBufCur) - endpos);
+   if (Longptr_t(fBufCur) != endpos) {
+      offset = Int_t(Longptr_t(fBufCur) - endpos);
 
       const char *name = clss ? clss->GetName() : classname ? classname : 0;
 
@@ -2396,7 +2395,7 @@ void *TBufferFile::ReadObjectAny(const TClass *clCast)
    // (this can only happen when called via CheckObject())
    char *obj;
    if (fVersion > 0) {
-      obj = (char *) (Long_t)fMap->GetValue(startpos+kMapOffset);
+      obj = (char *) (Longptr_t)fMap->GetValue(startpos+kMapOffset);
       if (obj == (void*) -1) obj = nullptr;
       if (obj) {
          CheckByteCount(startpos, tag, (TClass *)nullptr);
@@ -2428,8 +2427,8 @@ void *TBufferFile::ReadObjectAny(const TClass *clCast)
             // exception
          }
       }
-      obj = (char *) (Long_t)fMap->GetValue(tag);
-      clRef = (TClass*) (Long_t)fClassMap->GetValue(tag);
+      obj = (char *) (Longptr_t)fMap->GetValue(tag);
+      clRef = (TClass*) (Longptr_t)fClassMap->GetValue(tag);
 
       if (clRef && (clRef!=(TClass*)(-1)) && clCast) {
          //baseOffset will be -1 if clRef does not inherit from clCast.
@@ -2500,11 +2499,11 @@ void TBufferFile::WriteObjectClass(const void *actualObjectStart, const TClass *
       // make sure fMap is initialized
       InitMap();
 
-      ULong_t idx;
+      ULongptr_t idx;
       UInt_t slot;
       ULong_t hash = Void_Hash(actualObjectStart);
 
-      if ((idx = (ULong_t)fMap->GetValue(hash, (Long_t)actualObjectStart, slot)) != 0) {
+      if ((idx = (ULongptr_t)fMap->GetValue(hash, (Longptr_t)actualObjectStart, slot)) != 0) {
 
          // truncation is OK the value we did put in the map is an 30-bit offset
          // and not a pointer
@@ -2539,10 +2538,10 @@ void TBufferFile::WriteObjectClass(const void *actualObjectStart, const TClass *
             //MapObject(actualObjectStart, actualClass, cntpos+kMapOffset);
             UInt_t offset = cntpos+kMapOffset;
             if (mapsize == fMap->Capacity()) {
-               fMap->AddAt(slot, hash, (Long_t)actualObjectStart, offset);
+               fMap->AddAt(slot, hash, (Longptr_t)actualObjectStart, offset);
             } else {
                // The slot depends on the capacity and WriteClass has induced an increase.
-               fMap->Add(hash, (Long_t)actualObjectStart, offset);
+               fMap->Add(hash, (Longptr_t)actualObjectStart, offset);
             }
             // No need to keep track of the class in write mode
             // fClassMap->Add(hash, (Long_t)obj, (Long_t)((TObject*)obj)->IsA());
@@ -2601,7 +2600,7 @@ TClass *TBufferFile::ReadClass(const TClass *clReq, UInt_t *objTag)
       // add class to fMap for later reference
       if (fVersion > 0) {
          // check if class was already read
-         TClass *cl1 = (TClass *)(Long_t)fMap->GetValue(startpos+kMapOffset);
+         TClass *cl1 = (TClass *)(Longptr_t)fMap->GetValue(startpos+kMapOffset);
          if (cl1 != cl)
             MapObject(cl ? cl : (TObject*) -1, startpos+kMapOffset);
       } else
@@ -2624,7 +2623,7 @@ TClass *TBufferFile::ReadClass(const TClass *clReq, UInt_t *objTag)
       }
 
       // class can be 0 if dictionary was not found
-      cl = (TClass *)(Long_t)fMap->GetValue(clTag);
+      cl = (TClass *)(Longptr_t)fMap->GetValue(clTag);
    }
 
    if (cl && clReq &&
@@ -2653,11 +2652,11 @@ void TBufferFile::WriteClass(const TClass *cl)
 {
    R__ASSERT(IsWriting());
 
-   ULong_t idx;
+   ULongptr_t idx;
    ULong_t hash = Void_Hash(cl);
    UInt_t slot;
 
-   if ((idx = (ULong_t)fMap->GetValue(hash, (Long_t)cl,slot)) != 0) {
+   if ((idx = (ULongptr_t)fMap->GetValue(hash, (Longptr_t)cl,slot)) != 0) {
 
       // truncation is OK the value we did put in the map is an 30-bit offset
       // and not a pointer
@@ -2679,7 +2678,7 @@ void TBufferFile::WriteClass(const TClass *cl)
 
       // store new class reference in fMap (+kMapOffset so it's != kNullTag)
       CheckCount(offset+kMapOffset);
-      fMap->AddAt(slot, hash, (Long_t)cl, offset+kMapOffset);
+      fMap->AddAt(slot, hash, (Longptr_t)cl, offset+kMapOffset);
       fMapCount++;
    }
 }
@@ -3093,7 +3092,7 @@ UInt_t TBufferFile::CheckObject(UInt_t offset, const TClass *cl, Bool_t readClas
    // in position 0 we always have the reference to the null object
    if (!offset) return offset;
 
-   Long_t cli;
+   Longptr_t cli;
 
    if (readClass) {
       if ((cli = fMap->GetValue(offset)) == 0) {
@@ -3269,9 +3268,12 @@ Int_t TBufferFile::ReadClassEmulated(const TClass *cl, void *object, const TClas
 /// This function assumes that the class version and the byte count
 /// information have been read.
 ///
+/// \param[in] cl pointer to the local TClass
+/// \param[out] pointer void pointer to object
 /// \param[in] version The version number of the class
 /// \param[in] start   The starting position in the buffer b
 /// \param[in] count   The number of bytes for this object in the buffer
+/// \param[in] onFileClass pointer to TClass object on file
 ///
 
 Int_t TBufferFile::ReadClassBuffer(const TClass *cl, void *pointer, Int_t version, UInt_t start, UInt_t count, const TClass *onFileClass)
@@ -3298,7 +3300,7 @@ Int_t TBufferFile::ReadClassBuffer(const TClass *cl, void *pointer, Int_t versio
    /// The StreamerInfo should exist at this point.
 
    else {
-      R__LOCKGUARD(gInterpreterMutex);
+      R__READ_LOCKGUARD(ROOT::gCoreMutex);
       auto infos = cl->GetStreamerInfos();
       auto ninfos = infos->GetSize();
       if (version < -1 || version >= ninfos) {
@@ -3314,31 +3316,40 @@ Int_t TBufferFile::ReadClassBuffer(const TClass *cl, void *pointer, Int_t versio
          // one for the current version, otherwise let's complain ...
          // We could also get here if there old class version was '1' and the new class version is higher than 1
          // AND the checksum is the same.
-         if ( version == cl->GetClassVersion() || version == 1 ) {
-            const_cast<TClass*>(cl)->BuildRealData(pointer);
-            // This creation is alright since we just checked within the
-            // current 'locked' section.
-            sinfo = new TStreamerInfo(const_cast<TClass*>(cl));
-            const_cast<TClass*>(cl)->RegisterStreamerInfo(sinfo);
-            if (gDebug > 0) Info("ReadClassBuffer", "Creating StreamerInfo for class: %s, version: %d", cl->GetName(), version);
-            sinfo->Build();
-         } else if (version==0) {
-            // When the object was written the class was version zero, so
-            // there is no StreamerInfo to be found.
-            // Check that the buffer position corresponds to the byte count.
-            CheckByteCount(start, count, cl);
-            return 0;
-         } else {
-            Error("ReadClassBuffer", "Could not find the StreamerInfo for version %d of the class %s, object skipped at offset %d",
-                  version, cl->GetName(), Length() );
-            CheckByteCount(start, count, cl);
-            return 0;
+         R__WRITE_LOCKGUARD(ROOT::gCoreMutex);
+         // check if another thread took care of this already
+         sinfo = (TStreamerInfo*)cl->GetStreamerInfos()->At(version);
+         if (sinfo == nullptr) {
+            if ( version == cl->GetClassVersion() || version == 1 ) {
+               const_cast<TClass*>(cl)->BuildRealData(pointer);
+               // This creation is alright since we just checked within the
+               // current 'locked' section.
+               sinfo = new TStreamerInfo(const_cast<TClass*>(cl));
+               const_cast<TClass*>(cl)->RegisterStreamerInfo(sinfo);
+               if (gDebug > 0) Info("ReadClassBuffer", "Creating StreamerInfo for class: %s, version: %d", cl->GetName(), version);
+               sinfo->Build();
+            } else if (version==0) {
+               // When the object was written the class was version zero, so
+               // there is no StreamerInfo to be found.
+               // Check that the buffer position corresponds to the byte count.
+               CheckByteCount(start, count, cl);
+               return 0;
+            } else {
+               Error("ReadClassBuffer", "Could not find the StreamerInfo for version %d of the class %s, object skipped at offset %d",
+                     version, cl->GetName(), Length() );
+               CheckByteCount(start, count, cl);
+               return 0;
+            }
          }
       } else if (!sinfo->IsCompiled()) {  // Note this read is protected by the above lock.
          // Streamer info has not been compiled, but exists.
          // Therefore it was read in from a file and we have to do schema evolution.
-         const_cast<TClass*>(cl)->BuildRealData(pointer);
-         sinfo->BuildOld();
+         R__WRITE_LOCKGUARD(ROOT::gCoreMutex);
+         // check if another thread took care of this already
+         if (!sinfo->IsCompiled()) {
+            const_cast<TClass*>(cl)->BuildRealData(pointer);
+            sinfo->BuildOld();
+         }
       }
    }
 

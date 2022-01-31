@@ -78,19 +78,8 @@ RooGenFitStudy::RooGenFitStudy(const RooGenFitStudy& other) :
   _params(0),
   _initParams(0)
 {  
-  TIterator* giter = other._genOpts.MakeIterator() ;
-  TObject* o ;
-  while((o=giter->Next())) {
-    _genOpts.Add(o->Clone()) ;
-  }
-  delete giter ;
-
-  TIterator* fiter = other._fitOpts.MakeIterator() ;
-  while((o=fiter->Next())) {
-    _fitOpts.Add(o->Clone()) ;
-  }
-  delete fiter ;
-
+  for(TObject * o : other._genOpts) _genOpts.Add(o->Clone());
+  for(TObject * o : other._fitOpts) _fitOpts.Add(o->Clone());
 }
 
 
@@ -119,7 +108,7 @@ Bool_t RooGenFitStudy::attach(RooWorkspace& w)
     ret = kTRUE ;
   }
 
-  _genObs.add(w.argSet(_genObsName.c_str())) ;
+  _genObs.add(w.argSet(_genObsName)) ;
   if (_genObs.getSize()==0) {
     coutE(InputArguments) << "RooGenFitStudy(" << GetName() << ") ERROR: no generator observables defined" << endl ;
     ret = kTRUE ;
@@ -133,7 +122,7 @@ Bool_t RooGenFitStudy::attach(RooWorkspace& w)
     ret = kTRUE ;
   }
 
-  _fitObs.add(w.argSet(_fitObsName.c_str())) ;
+  _fitObs.add(w.argSet(_fitObsName)) ;
   if (_fitObs.getSize()==0) {
     coutE(InputArguments) << "RooGenFitStudy(" << GetName() << ") ERROR: no fitting observables defined" << endl ;
     ret = kTRUE ;
@@ -197,7 +186,7 @@ Bool_t RooGenFitStudy::initialize()
 
 Bool_t RooGenFitStudy::execute() 
 { 
-  *_params = *_initParams ;
+  _params->assign(*_initParams) ;
   RooDataSet* data = _genPdf->generate(*_genSpec) ;
   RooFitResult* fr  = _fitPdf->fitTo(*data,RooFit::Save(kTRUE),(RooCmdArg&)*_fitOpts.At(0),(RooCmdArg&)*_fitOpts.At(1),(RooCmdArg&)*_fitOpts.At(2)) ;
 

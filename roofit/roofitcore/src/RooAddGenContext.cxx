@@ -31,10 +31,9 @@ with a probability proportional to its associated coefficient.
 #include "RooFit.h"
 
 #include "Riostream.h"
-
+#include "TClass.h"
 
 #include "RooMsgService.h"
-#include "RooAddGenContext.h"
 #include "RooAddGenContext.h"
 #include "RooAddPdf.h"
 #include "RooDataSet.h"
@@ -91,7 +90,7 @@ RooAddGenContext::RooAddGenContext(const RooAddPdf &model, const RooArgSet &vars
   }  
 
   ((RooAddPdf*)_pdf)->getProjCache(_vars) ;
-  _pdf->recursiveRedirectServers(*_theEvent) ;
+  _pdf->recursiveRedirectServers(_theEvent) ;
 
   _mcache = 0 ;
   _pcache = 0 ;
@@ -128,7 +127,7 @@ RooAddGenContext::RooAddGenContext(const RooAddModel &model, const RooArgSet &va
   }  
 
   ((RooAddModel*)_pdf)->getProjCache(_vars) ;
-  _pdf->recursiveRedirectServers(*_theEvent) ;
+  _pdf->recursiveRedirectServers(_theEvent) ;
 
   _mcache = 0 ;
   _pcache = 0 ;

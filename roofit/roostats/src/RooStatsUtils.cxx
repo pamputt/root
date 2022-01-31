@@ -16,16 +16,40 @@ NamespaceImp(RooStats)
 #endif
 
 #include "TTree.h"
+#include "TBranch.h"
 
+#include "RooArgSet.h"
+#include "RooWorkspace.h"
+#include "RooAbsPdf.h"
 #include "RooUniform.h"
 #include "RooProdPdf.h"
 #include "RooExtendPdf.h"
 #include "RooSimultaneous.h"
 #include "RooStats/ModelConfig.h"
 #include "RooStats/RooStatsUtils.h"
-#include <typeinfo>
 
 using namespace std;
+
+
+namespace {
+     template<class listT, class stringT> void getParameterNames(const listT* l,std::vector<stringT>& names){
+       // extract the parameter names from a list
+       if(!l) return;
+       RooAbsArg* obj;
+       RooFIter itr(l->fwdIterator());
+       while((obj = itr.next())){
+         names.push_back(obj->GetName());
+       }
+     }
+     void getArgs(RooWorkspace* ws, const std::vector<TString> names, RooArgSet& args){
+       for(const auto& p:names){
+         RooRealVar* v = ws->var(p.Data());
+         if(v){
+           args.add(*v);
+         }
+       }
+     }
+   }   
 
 namespace RooStats {
 
@@ -69,28 +93,24 @@ namespace RooStats {
    void FactorizePdf(const RooArgSet &observables, RooAbsPdf &pdf, RooArgList &obsTerms, RooArgList &constraints) {
    // utility function to factorize constraint terms from a pdf
    // (from G. Petrucciani)
-      const std::type_info & id = typeid(pdf);
-      if (id == typeid(RooProdPdf)) {
-         RooProdPdf *prod = dynamic_cast<RooProdPdf *>(&pdf);
+      if (auto prod = dynamic_cast<RooProdPdf *>(&pdf)) {
          RooArgList list(prod->pdfList());
          for (int i = 0, n = list.getSize(); i < n; ++i) {
             RooAbsPdf *pdfi = (RooAbsPdf *) list.at(i);
             FactorizePdf(observables, *pdfi, obsTerms, constraints);
          }
-      } else if (id == typeid(RooExtendPdf)) {
-         TIterator *iter = pdf.serverIterator();
+      } else if (dynamic_cast<RooExtendPdf *>(&pdf)) {
          // extract underlying pdf which is extended; first server is the pdf; second server is the number of events variable
-         RooAbsPdf *updf = dynamic_cast<RooAbsPdf *>(iter->Next());
-         assert(updf != 0);
-         delete iter;
-         FactorizePdf(observables, *updf, obsTerms, constraints);
-      } else if (id == typeid(RooSimultaneous)) {    //|| id == typeid(RooSimultaneousOpt)) {
-         RooSimultaneous *sim  = dynamic_cast<RooSimultaneous *>(&pdf);
+         auto iter = pdf.servers().begin();
+         assert(iter != pdf.servers().end());
+         assert(dynamic_cast<RooAbsPdf*>(*iter));
+         FactorizePdf(observables, static_cast<RooAbsPdf&>(**iter), obsTerms, constraints);
+      } else if (auto sim = dynamic_cast<RooSimultaneous *>(&pdf)) {  //|| dynamic_cast<RooSimultaneousOpt>(&pdf)) {
          assert(sim != 0);
          RooAbsCategoryLValue *cat = (RooAbsCategoryLValue *) sim->indexCat().clone(sim->indexCat().GetName());
          for (int ic = 0, nc = cat->numBins((const char *)0); ic < nc; ++ic) {
             cat->setBin(ic);
-            RooAbsPdf* catPdf = sim->getPdf(cat->getLabel());
+            RooAbsPdf* catPdf = sim->getPdf(cat->getCurrentLabel());
             // it is possible that a pdf is not defined for every category
             if (catPdf != 0) FactorizePdf(observables, *catPdf, obsTerms, constraints);
          }
@@ -121,9 +141,7 @@ namespace RooStats {
       if(constraints.getSize() == 0) {
          oocoutW((TObject *)0, Eval) << "RooStatsUtils::MakeNuisancePdf - no constraints found on nuisance parameters in the input model" << endl;
          return 0;
-      } else if(constraints.getSize() == 1) {
-         return dynamic_cast<RooAbsPdf *>(constraints.first()->clone(name));
-      }
+      } 
       return new RooProdPdf(name,"", constraints);
    }
 
@@ -137,11 +155,9 @@ namespace RooStats {
    }
 
    RooAbsPdf * StripConstraints(RooAbsPdf &pdf, const RooArgSet &observables) {
-      const std::type_info & id = typeid(pdf);
 
-      if (id == typeid(RooProdPdf)) {
+      if (auto prod = dynamic_cast<RooProdPdf *>(&pdf)) {
 
-         RooProdPdf *prod = dynamic_cast<RooProdPdf *>(&pdf);
          RooArgList list(prod->pdfList()); RooArgList newList;
 
          for (int i = 0, n = list.getSize(); i < n; ++i) {
@@ -157,29 +173,30 @@ namespace RooStats {
          else return new RooProdPdf(TString::Format("%s_unconstrained", prod->GetName()).Data(),
             TString::Format("%s without constraints", prod->GetTitle()).Data(), newList);
 
-      } else if (id == typeid(RooExtendPdf)) {
+      } else if (dynamic_cast<RooExtendPdf*>(&pdf)) {
 
-         TIterator *iter = pdf.serverIterator();
+         auto iter = pdf.servers().begin();
          // extract underlying pdf which is extended; first server is the pdf; second server is the number of events variable
-         RooAbsPdf *uPdf = dynamic_cast<RooAbsPdf *>(iter->Next());
-         RooAbsReal *extended_term = dynamic_cast<RooAbsReal *>(iter->Next());
-         assert(uPdf != NULL); assert(extended_term != NULL); assert(iter->Next() == NULL);
-         delete iter;
+         auto uPdf = dynamic_cast<RooAbsPdf *>(*(iter++));
+         auto extended_term = dynamic_cast<RooAbsReal *>(*(iter++));
+         assert(uPdf != nullptr);
+         assert(extended_term != nullptr);
+         assert(iter == pdf.servers().end());
 
          RooAbsPdf *newUPdf = StripConstraints(*uPdf, observables);
          if(newUPdf == NULL) return NULL; // only constraints in underlying pdf
          else return new RooExtendPdf(TString::Format("%s_unconstrained", pdf.GetName()).Data(),
             TString::Format("%s without constraints", pdf.GetTitle()).Data(), *newUPdf, *extended_term);
 
-      } else if (id == typeid(RooSimultaneous)) {    //|| id == typeid(RooSimultaneousOpt)) {
+      } else if (auto sim = dynamic_cast<RooSimultaneous *>(&pdf)) {  //|| dynamic_cast<RooSimultaneousOpt *>(&pdf)) {
 
-         RooSimultaneous *sim  = dynamic_cast<RooSimultaneous *>(&pdf); assert(sim != NULL);
+         assert(sim != nullptr);
          RooAbsCategoryLValue *cat = (RooAbsCategoryLValue *) sim->indexCat().Clone(); assert(cat != NULL);
          RooArgList pdfList;
 
          for (int ic = 0, nc = cat->numBins((const char *)NULL); ic < nc; ++ic) {
             cat->setBin(ic);
-            RooAbsPdf* catPdf = sim->getPdf(cat->getLabel());
+            RooAbsPdf* catPdf = sim->getPdf(cat->getCurrentLabel());
             RooAbsPdf* newPdf = NULL;
             // it is possible that a pdf is not defined for every category
             if (catPdf != NULL) newPdf = StripConstraints(*catPdf, observables);
@@ -330,4 +347,87 @@ namespace RooStats {
       }
       os << ")\n";
    }
+
+   // clone a workspace, copying all needed components and discarding all others
+   // start off with the old workspace
+   RooWorkspace* MakeCleanWorkspace(RooWorkspace *oldWS, const char *newName,
+                                   bool copySnapshots, const char *mcname,
+                                   const char *newmcname) {
+      auto objects = oldWS->allGenericObjects();
+      RooStats::ModelConfig *oldMC =
+          dynamic_cast<RooStats::ModelConfig *>(oldWS->obj(mcname));
+      auto data = oldWS->allData();
+      for (auto it : objects) {
+        if (!oldMC) {
+          oldMC = dynamic_cast<RooStats::ModelConfig *>(it);
+        }
+      }
+      if (!oldMC)
+        throw std::runtime_error("unable to retrieve ModelConfig");
+  
+      RooAbsPdf *origPdf = oldMC->GetPdf();
+  
+      // start off with the old modelconfig
+      std::vector<TString> poilist;
+      std::vector<TString> nplist;
+      std::vector<TString> obslist;
+      std::vector<TString> globobslist;
+      RooAbsPdf *pdf = NULL;
+      if (oldMC) {
+        pdf = oldMC->GetPdf();
+        ::getParameterNames(oldMC->GetParametersOfInterest(), poilist);
+        ::getParameterNames(oldMC->GetNuisanceParameters(), nplist);
+        ::getParameterNames(oldMC->GetObservables(), obslist);
+        ::getParameterNames(oldMC->GetGlobalObservables(), globobslist);
+      }
+      if (!pdf) {
+        if (origPdf)
+          pdf = origPdf;
+      }
+      if (!pdf) {
+        return NULL;
+      }
+  
+      // create them anew
+      RooWorkspace *newWS = new RooWorkspace(newName ? newName : oldWS->GetName());
+      newWS->autoImportClassCode(true);
+      RooStats::ModelConfig *newMC = new RooStats::ModelConfig(newmcname, newWS);
+  
+      // Copy snapshots
+      if (copySnapshots) {
+        RooFIter itr(oldWS->getSnapshots().fwdIterator());
+        RooArgSet *snap;
+        while ((snap = (RooArgSet *)itr.next())) {
+          RooArgSet *snapClone = (RooArgSet *)snap->snapshot();
+          snapClone->setName(snap->GetName());
+          newWS->getSnapshots().Add(snapClone);
+        }
+      }
+  
+      newWS->import(*pdf, RooFit::RecycleConflictNodes());
+      RooAbsPdf *newPdf = newWS->pdf(pdf->GetName());
+      newMC->SetPdf(*newPdf);
+  
+      for (auto d : data) {
+        newWS->import(*d);
+      }
+  
+      RooArgSet poiset;
+      ::getArgs(newWS, poilist, poiset);
+      RooArgSet npset;
+      ::getArgs(newWS, nplist, npset);
+      RooArgSet obsset;
+      ::getArgs(newWS, obslist, obsset);
+      RooArgSet globobsset;
+      ::getArgs(newWS, globobslist, globobsset);
+  
+      newMC->SetParametersOfInterest(poiset);
+      newMC->SetNuisanceParameters(npset);
+      newMC->SetObservables(obsset);
+      newMC->SetGlobalObservables(globobsset);
+      newWS->import(*newMC);
+  
+      return newWS;
+  }
+
 }

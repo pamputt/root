@@ -11,13 +11,30 @@
 
 #include "ROOT/RPadBase.hxx"
 #include "ROOT/RVirtualCanvasPainter.hxx"
+#include "ROOT/RDrawableRequest.hxx"
 
 #include <memory>
 #include <string>
 #include <vector>
+#include <list>
 
 namespace ROOT {
 namespace Experimental {
+
+class RChangeAttrRequest : public RDrawableRequest {
+   std::vector<std::string> ids;                           ///< array of ids
+   std::vector<std::string> names;                         ///< array of attribute names
+   std::vector<std::unique_ptr<RAttrMap::Value_t>> values; ///< array of values
+   bool update{true};                                      ///< update canvas at the end
+   bool fNeedUpdate{false};       ///<! is canvas update required
+   RChangeAttrRequest(const RChangeAttrRequest &) = delete;
+   RChangeAttrRequest& operator=(const RChangeAttrRequest &) = delete;
+public:
+   RChangeAttrRequest() = default; // for I/O
+   virtual ~RChangeAttrRequest() = default;
+   std::unique_ptr<RDrawableReply> Process() override;
+   bool NeedCanvasUpdate() const override { return fNeedUpdate; }
+};
 
 /** \class RCanvas
 \ingroup GpadROOT7
@@ -30,20 +47,27 @@ namespace Experimental {
 class RCanvas: public RPadBase {
 friend class RPadBase;  /// use for ID generation
 friend class RCanvasPainter; /// used for primitives drawing
+friend class RChangeAttrRequest; /// to apply attributes changes
 private:
    /// Title of the canvas.
    std::string fTitle;
 
-   /// Size of the canvas in pixels,
-   std::array<RPadLength::Pixel, 2> fSize;
+   /// Width of the canvas in pixels
+   int fWidth{0};
+
+   /// Height of the canvas in pixels
+   int fHeight{0};
 
    /// Modify counter, incremented every time canvas is changed
-   uint64_t fModified{0}; ///<!
+   Version_t fModified{1}; ///<!
 
    /// The painter of this canvas, bootstrapping the graphics connection.
    /// Unmapped canvases (those that never had `Draw()` invoked) might not have
    /// a painter.
    std::unique_ptr<Internal::RVirtualCanvasPainter> fPainter; ///<!
+
+   /// indicate if Show() method was called before
+   bool fShown{false}; ///<!
 
    /// Disable copy construction for now.
    RCanvas(const RCanvas &) = delete;
@@ -51,11 +75,14 @@ private:
    /// Disable assignment for now.
    RCanvas &operator=(const RCanvas &) = delete;
 
+   // Increment modify counter
+   uint64_t IncModified() { return ++fModified; }
+
 public:
    static std::shared_ptr<RCanvas> Create(const std::string &title);
 
    /// Create a temporary RCanvas; for long-lived ones please use Create().
-   RCanvas() = default;
+   RCanvas() : RPadBase("canvas") {}
 
    ~RCanvas() = default;
 
@@ -64,26 +91,30 @@ public:
    /// Access to the top-most canvas, if any (non-const version).
    RCanvas *GetCanvas() override { return this; }
 
-   /// Return canvas pixel size as array with two elements - width and height
-   const std::array<RPadLength::Pixel, 2> &GetSize() const { return fSize; }
-
-   /// Set canvas pixel size as array with two elements - width and height
-   RCanvas &SetSize(const std::array<RPadLength::Pixel, 2> &sz)
-   {
-      fSize = sz;
-      return *this;
-   }
-
    /// Set canvas pixel size - width and height
-   RCanvas &SetSize(const RPadLength::Pixel &width, const RPadLength::Pixel &height)
+   void SetSize(int width, int height)
    {
-      fSize[0] = width;
-      fSize[1] = height;
-      return *this;
+      fWidth = width;
+      fHeight = height;
    }
+
+   /// Set canvas width
+   void SetWidth(int width) { fWidth = width; }
+
+   /// Set canvas height
+   void SetHeight(int height) { fHeight = height; }
+
+   /// Get canvas width
+   int GetWidth() const { return fWidth; }
+
+   /// Get canvas height
+   int GetHeight() const { return fHeight; }
 
    /// Display the canvas.
    void Show(const std::string &where = "");
+
+   bool IsShown() const { return fShown; }
+   void ClearShown() { fShown = false; }
 
    /// Returns window name used to display canvas
    std::string GetWindowAddr() const;
@@ -102,8 +133,19 @@ public:
       return fPainter->AddPanel(panel->GetWindow());
    }
 
-   // Indicates that primitives list was changed or any primitive was modified
-   void Modified() { fModified++; }
+   /// Get modify counter
+   uint64_t GetModified() const { return fModified; }
+
+   // Set newest version to all primitives
+   void Modified() { SetDrawableVersion(IncModified()); }
+
+   /// Set newest version to specified drawable
+   void Modified(std::shared_ptr<RDrawable> drawable)
+   {
+      // TODO: may be check that drawable belong to the canvas
+      if (drawable)
+         drawable->SetDrawableVersion(IncModified());
+   }
 
    // Return if canvas was modified and not yet updated
    bool IsModified() const;
@@ -117,6 +159,9 @@ public:
    /// Save canvas in image file
    bool SaveAs(const std::string &filename);
 
+   /// Provide JSON which can be used for offline display
+   std::string CreateJSON();
+
    /// Get the canvas's title.
    const std::string &GetTitle() const { return fTitle; }
 
@@ -129,13 +174,9 @@ public:
 
    void ResolveSharedPtrs();
 
-   /// Convert a `Pixel` position to Canvas-normalized positions.
-   std::array<RPadLength::Normal, 2> PixelsToNormal(const std::array<RPadLength::Pixel, 2> &pos) const final
-   {
-      return {{pos[0] / fSize[0], pos[1] / fSize[1]}};
-   }
-
    static const std::vector<std::shared_ptr<RCanvas>> GetCanvases();
+
+   static void ReleaseHeldCanvases();
 };
 
 } // namespace Experimental

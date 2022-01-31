@@ -28,7 +28,6 @@ C++ interpreter and the Clang C++ compiler, not CINT.
 #include "TClingMethodInfo.h"
 #include "TInterpreterValue.h"
 #include "TClingUtils.h"
-#include "TSystem.h"
 
 #include "TError.h"
 #include "TCling.h"
@@ -66,7 +65,6 @@ C++ interpreter and the Clang C++ compiler, not CINT.
 
 #include "clang/Sema/SemaInternal.h"
 
-#include <iomanip>
 #include <map>
 #include <string>
 #include <sstream>
@@ -79,7 +77,7 @@ using namespace std;
 static unsigned long long gWrapperSerial = 0LL;
 static const string kIndentString("   ");
 
-static map<const FunctionDecl *, void *> gWrapperStore;
+static map<const Decl *, void *> gWrapperStore;
 static map<const Decl *, void *> gCtorWrapperStore;
 static map<const Decl *, void *> gDtorWrapperStore;
 
@@ -99,8 +97,9 @@ EvaluateExpr(cling::Interpreter &interp, const Expr *E, cling::Value &V)
 {
    // Evaluate an Expr* and return its cling::Value
    ASTContext &C = interp.getCI()->getASTContext();
-   APSInt res;
-   if (E->EvaluateAsInt(res, C, /*AllowSideEffects*/Expr::SE_NoSideEffects)) {
+   clang::Expr::EvalResult evalRes;
+   if (E->EvaluateAsInt(evalRes, C, /*AllowSideEffects*/Expr::SE_NoSideEffects)) {
+      APSInt res = evalRes.Val.getInt();
       // IntTy or maybe better E->getType()?
       V = cling::Value(C.IntTy, interp);
       // We must use the correct signedness otherwise the zero extension
@@ -224,7 +223,7 @@ namespace {
       }
       if (QT->isPointerType() || QT->isArrayType() || QT->isRecordType() ||
             QT->isReferenceType()) {
-         return (returnType)(long) val.getPtr();
+         return (returnType)(Longptr_t) val.getPtr();
       }
       if (const EnumType *ET = dyn_cast<EnumType>(&*QT)) {
          if (ET->getDecl()->getIntegerType()->hasSignedIntegerRepresentation())
@@ -234,10 +233,10 @@ namespace {
       }
       if (QT->isMemberPointerType()) {
          const MemberPointerType *MPT = QT->getAs<MemberPointerType>();
-         if (MPT->isMemberDataPointer()) {
+         if (MPT && MPT->isMemberDataPointer()) {
             return (returnType)(ptrdiff_t)val.getPtr();
          }
-         return (returnType)(long) val.getPtr();
+         return (returnType)(Longptr_t) val.getPtr();
       }
       ::Error("TClingCallFunc::sv_to", "Invalid Type!");
       QT->dump();
@@ -450,7 +449,7 @@ void TClingCallFunc::make_narg_call(const std::string &return_type, const unsign
       else
          callbuf << "((" << class_name << "*)obj)->";
    } else if (const NamedDecl *ND =
-                 dyn_cast<NamedDecl>(FD->getDeclContext())) {
+                 dyn_cast<NamedDecl>(GetDeclContext())) {
       // This is a namespace member.
       (void) ND;
       callbuf << class_name << "::";
@@ -579,6 +578,17 @@ void TClingCallFunc::make_narg_ctor_with_return(const unsigned N, const string &
    buf << "}\n";
 }
 
+///////////////////////////////////////////////////////////////////////////////
+// Returns the DeclContext corresponding to fMethod's Decl.
+// \Note that this might be a FunctionDecl or a UsingShadowDecl; we use the
+// DeclContext of the UsingShadowDecl e.g. for constructing a derived class
+// object, even if invoking a function made available by a using declaration
+// of a constructor of a base class (ROOT-11010).
+
+const clang::DeclContext *TClingCallFunc::GetDeclContext() const {
+   return fMethod->GetDecl()->getDeclContext();
+}
+
 int TClingCallFunc::get_wrapper_code(std::string &wrapper_name, std::string &wrapper)
 {
    const FunctionDecl *FD = GetDecl();
@@ -589,11 +599,12 @@ int TClingCallFunc::get_wrapper_code(std::string &wrapper_name, std::string &wra
    //  Get the class or namespace name.
    //
    string class_name;
-   if (const TypeDecl *TD = dyn_cast<TypeDecl>(FD->getDeclContext())) {
+   const clang::DeclContext *DC = GetDeclContext();
+   if (const TypeDecl *TD = dyn_cast<TypeDecl>(DC)) {
       // This is a class, struct, or union member.
       QualType QT(TD->getTypeForDecl(), 0);
       ROOT::TMetaUtils::GetNormalizedName(class_name, QT, *fInterp, fNormCtxt);
-   } else if (const NamedDecl *ND = dyn_cast<NamedDecl>(FD->getDeclContext())) {
+   } else if (const NamedDecl *ND = dyn_cast<NamedDecl>(DC)) {
       // This is a namespace member.
       raw_string_ostream stream(class_name);
       ND->getNameForDiagnostic(stream, Policy, /*Qualified=*/true);
@@ -930,6 +941,7 @@ int TClingCallFunc::get_wrapper_code(std::string &wrapper_name, std::string &wra
    buf << "#pragma clang diagnostic push\n"
           "#pragma clang diagnostic ignored \"-Wformat-security\"\n"
           "__attribute__((used)) "
+          "__attribute__((annotate(\"__cling__ptrcheck(off)\")))\n"
           "extern \"C\" void ";
    buf << wrapper_name;
    buf << "(void* obj, int nargs, void** args, void* ret)\n"
@@ -971,12 +983,23 @@ void TClingCallFunc::make_narg_call_with_return(const unsigned N, const string &
    //    new (ret) (return_type) ((class_name*)obj)->func(args...);
    // }
    // else {
-   //    ((class_name*)obj)->func(args...);
+   //    (void)(((class_name*)obj)->func(args...));
    // }
    //
    const FunctionDecl *FD = GetDecl();
    if (const CXXConstructorDecl *CD = dyn_cast<CXXConstructorDecl>(FD)) {
-      (void) CD;
+      if (N <= 1 && llvm::isa<UsingShadowDecl>(GetFunctionOrShadowDecl())) {
+         auto SpecMemKind = fInterp->getSema().getSpecialMember(CD);
+         if ((N == 0 && SpecMemKind == clang::Sema::CXXDefaultConstructor) ||
+             (N == 1 &&
+              (SpecMemKind == clang::Sema::CXXCopyConstructor || SpecMemKind == clang::Sema::CXXMoveConstructor))) {
+            // Using declarations cannot inject special members; do not call them
+            // as such. This might happen by using `Base(Base&, int = 12)`, which
+            // is fine to be called as `Derived d(someBase, 42)` but not as
+            // copy constructor of `Derived`.
+            return;
+         }
+      }
       make_narg_ctor_with_return(N, class_name, buf, indent_level);
       return;
    }
@@ -1063,8 +1086,9 @@ void TClingCallFunc::make_narg_call_with_return(const unsigned N, const string &
          for (int i = 0; i < indent_level; ++i) {
             callbuf << kIndentString;
          }
+         callbuf << "(void)(";
          make_narg_call(type_name, N, typedefbuf, callbuf, class_name, indent_level);
-         callbuf << ";\n";
+         callbuf << ");\n";
          for (int i = 0; i < indent_level; ++i) {
             callbuf << kIndentString;
          }
@@ -1083,7 +1107,7 @@ tcling_callfunc_Wrapper_t TClingCallFunc::make_wrapper()
 {
    R__LOCKGUARD_CLING(gInterpreterMutex);
 
-   const FunctionDecl *FD = GetDecl();
+   const Decl *D = GetFunctionOrShadowDecl();
    string wrapper_name;
    string wrapper;
 
@@ -1095,7 +1119,7 @@ tcling_callfunc_Wrapper_t TClingCallFunc::make_wrapper()
    //
    void *F = compile_wrapper(wrapper_name, wrapper);
    if (F) {
-      gWrapperStore.insert(make_pair(FD, F));
+      gWrapperStore.insert(make_pair(D, F));
    } else {
       ::Error("TClingCallFunc::make_wrapper",
             "Failed to compile\n  ==== SOURCE BEGIN ====\n%s\n  ==== SOURCE END ====",
@@ -1975,7 +1999,7 @@ TClingCallFunc::InitRetAndExecNoCtor(clang::QualType QT, cling::Value &ret) {
       return [this](void* address, cling::Value& ret) { exec(address, &ret.getPtr()); };
    } else if (QT->isMemberPointerType()) {
       const MemberPointerType *MPT = QT->getAs<MemberPointerType>();
-      if (MPT->isMemberDataPointer()) {
+      if (MPT && MPT->isMemberDataPointer()) {
          // A member data pointer is a actually a struct with one
          // member of ptrdiff_t, the offset from the base of the object
          // storage to the storage for the designated data member.
@@ -2011,9 +2035,9 @@ TClingCallFunc::InitRetAndExecNoCtor(clang::QualType QT, cling::Value &ret) {
 
 TClingCallFunc::ExecWithRetFunc_t
 TClingCallFunc::InitRetAndExec(const clang::FunctionDecl *FD, cling::Value &ret) {
-   if (const CXXConstructorDecl *CD = dyn_cast<CXXConstructorDecl>(FD)) {
+   if (llvm::isa<CXXConstructorDecl>(FD)) {
       ASTContext &Context = FD->getASTContext();
-      const TypeDecl *TD = dyn_cast<TypeDecl>(CD->getDeclContext());
+      const TypeDecl *TD = dyn_cast<TypeDecl>(GetDeclContext());
       QualType ClassTy(TD->getTypeForDecl(), 0);
       QualType QT = Context.getLValueReferenceType(ClassTy);
       ret = cling::Value(QT, *fInterp);
@@ -2105,9 +2129,9 @@ T TClingCallFunc::ExecT(void *address)
    return sv_to<T>(ret);
 }
 
-Long_t TClingCallFunc::ExecInt(void *address)
+Longptr_t TClingCallFunc::ExecInt(void *address)
 {
-   return ExecT<long>(address);
+   return ExecT<Longptr_t>(address);
 }
 
 long long TClingCallFunc::ExecInt64(void *address)
@@ -2241,10 +2265,10 @@ void *TClingCallFunc::InterfaceMethod()
       return 0;
    }
    if (!fWrapper) {
-      const FunctionDecl *decl = GetDecl();
+      const Decl *decl = GetFunctionOrShadowDecl();
 
       R__LOCKGUARD_CLING(gInterpreterMutex);
-      map<const FunctionDecl *, void *>::iterator I = gWrapperStore.find(decl);
+      map<const Decl *, void *>::iterator I = gWrapperStore.find(decl);
       if (I != gWrapperStore.end()) {
          fWrapper = (tcling_callfunc_Wrapper_t) I->second;
       } else {
@@ -2270,17 +2294,17 @@ TInterpreter::CallFuncIFacePtr_t TClingCallFunc::IFacePtr()
       return TInterpreter::CallFuncIFacePtr_t();
    }
    if (!fWrapper) {
-      const FunctionDecl *decl = GetDecl();
+      const Decl *decl = GetFunctionOrShadowDecl();
 
       R__LOCKGUARD_CLING(gInterpreterMutex);
-      map<const FunctionDecl *, void *>::iterator I = gWrapperStore.find(decl);
+      map<const Decl *, void *>::iterator I = gWrapperStore.find(decl);
       if (I != gWrapperStore.end()) {
          fWrapper = (tcling_callfunc_Wrapper_t) I->second;
       } else {
          fWrapper = make_wrapper();
       }
 
-      fReturnIsRecordType = decl->getReturnType().getCanonicalType()->isRecordType();
+      fReturnIsRecordType = GetDecl()->getReturnType().getCanonicalType()->isRecordType();
    }
    return TInterpreter::CallFuncIFacePtr_t(fWrapper);
 }
@@ -2333,7 +2357,7 @@ void TClingCallFunc::SetArg(unsigned long long param)
    fArgVals.back().getULL() = param;
 }
 
-void TClingCallFunc::SetArgArray(long *paramArr, int nparam)
+void TClingCallFunc::SetArgArray(Longptr_t *paramArr, int nparam)
 {
    ResetArg();
    for (int i = 0; i < nparam; ++i) {
@@ -2348,13 +2372,13 @@ void TClingCallFunc::SetArgs(const char *params)
 }
 
 void TClingCallFunc::SetFunc(const TClingClassInfo *info, const char *method, const char *arglist,
-                             long *poffset)
+                             Longptr_t *poffset)
 {
    SetFunc(info, method, arglist, false, poffset);
 }
 
 void TClingCallFunc::SetFunc(const TClingClassInfo *info, const char *method, const char *arglist,
-                             bool objectIsConst, long *poffset)
+                             bool objectIsConst, Longptr_t *poffset)
 {
    Init(std::unique_ptr<TClingMethodInfo>(new TClingMethodInfo(fInterp)));
    if (poffset) {
@@ -2391,14 +2415,14 @@ void TClingCallFunc::SetFunc(const TClingMethodInfo *info)
 }
 
 void TClingCallFunc::SetFuncProto(const TClingClassInfo *info, const char *method,
-                                  const char *proto, long *poffset,
+                                  const char *proto, Longptr_t *poffset,
                                   EFunctionMatchMode mode/*=kConversionMatch*/)
 {
    SetFuncProto(info, method, proto, false, poffset, mode);
 }
 
 void TClingCallFunc::SetFuncProto(const TClingClassInfo *info, const char *method,
-                                  const char *proto, bool objectIsConst, long *poffset,
+                                  const char *proto, bool objectIsConst, Longptr_t *poffset,
                                   EFunctionMatchMode mode/*=kConversionMatch*/)
 {
    Init(std::unique_ptr<TClingMethodInfo>(new TClingMethodInfo(fInterp)));
@@ -2419,7 +2443,7 @@ void TClingCallFunc::SetFuncProto(const TClingClassInfo *info, const char *metho
 }
 
 void TClingCallFunc::SetFuncProto(const TClingClassInfo *info, const char *method,
-                                  const llvm::SmallVectorImpl<clang::QualType> &proto, long *poffset,
+                                  const llvm::SmallVectorImpl<clang::QualType> &proto, Longptr_t *poffset,
                                   EFunctionMatchMode mode/*=kConversionMatch*/)
 {
    SetFuncProto(info, method, proto, false, poffset, mode);
@@ -2427,7 +2451,7 @@ void TClingCallFunc::SetFuncProto(const TClingClassInfo *info, const char *metho
 
 void TClingCallFunc::SetFuncProto(const TClingClassInfo *info, const char *method,
                                   const llvm::SmallVectorImpl<clang::QualType> &proto,
-                                  bool objectIsConst, long *poffset,
+                                  bool objectIsConst, Longptr_t *poffset,
                                   EFunctionMatchMode mode/*=kConversionMatch*/)
 {
    Init(std::unique_ptr<TClingMethodInfo>(new TClingMethodInfo(fInterp)));

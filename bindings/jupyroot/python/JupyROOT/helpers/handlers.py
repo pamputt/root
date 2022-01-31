@@ -1,13 +1,17 @@
 # -*- coding:utf-8 -*-
 #-----------------------------------------------------------------------------
-#  Copyright (c) 2015, ROOT Team.
 #  Authors: Danilo Piparo
 #           Omar Zapata <Omar.Zapata@cern.ch> http://oproject.org
-#  Distributed under the terms of the Modified LGPLv3 License.
-#
-#  The full license is in the file COPYING.rst, distributed with this software.
 #-----------------------------------------------------------------------------
-from ctypes import CDLL, c_char_p
+
+################################################################################
+# Copyright (C) 1995-2020, Rene Brun and Fons Rademakers.                      #
+# All rights reserved.                                                         #
+#                                                                              #
+# For the licensing terms see $ROOTSYS/LICENSE.                                #
+# For the list of contributors see $ROOTSYS/README/CREDITS.                    #
+################################################################################
+
 from threading import Thread
 from time import sleep as timeSleep
 from sys import platform
@@ -20,7 +24,12 @@ else:
 
 from JupyROOT import helpers
 
-_lib = CDLL(path.join(path.dirname(path.dirname(path.dirname(__file__))), 'libJupyROOT.so'))
+# import libJupyROOT with Python version number
+import importlib
+major, minor = sys.version_info[0:2]
+libjupyroot_mod_name = 'libJupyROOT{}_{}'.format(major, minor)
+_lib = importlib.import_module(libjupyroot_mod_name)
+
 
 class IOHandler(object):
     r'''Class used to capture output from C/C++ libraries.
@@ -35,9 +44,6 @@ class IOHandler(object):
     >>> del h
     '''
     def __init__(self):
-        for cfunc in [_lib.JupyROOTExecutorHandler_GetStdout,
-                      _lib.JupyROOTExecutorHandler_GetStderr]:
-           cfunc.restype = c_char_p
         _lib.JupyROOTExecutorHandler_Ctor()
 
     def __del__(self):
@@ -55,18 +61,11 @@ class IOHandler(object):
     def EndCapture(self):
         _lib.JupyROOTExecutorHandler_EndCapture()
 
-    def Decode(self, obj):
-        import sys
-        if sys.version_info >= (3, 0):
-            return obj.decode('utf-8')
-        else:
-            return obj
-
     def GetStdout(self):
-       return self.Decode(_lib.JupyROOTExecutorHandler_GetStdout())
+       return _lib.JupyROOTExecutorHandler_GetStdout()
 
     def GetStderr(self):
-       return self.Decode(_lib.JupyROOTExecutorHandler_GetStderr())
+       return _lib.JupyROOTExecutorHandler_GetStderr()
 
     def GetStreamsDicts(self):
        out = self.GetStdout()
@@ -78,6 +77,7 @@ class IOHandler(object):
 class Poller(Thread):
     def __init__(self):
         Thread.__init__(self, group=None, target=None, name="JupyROOT Poller Thread")
+        self.daemon = True
         self.poll = True
         self.is_running = False
         self.queue = queue.Queue()
@@ -147,7 +147,7 @@ class JupyROOTDeclarer(Runner):
     >>> import ROOT
     >>> p = Poller(); p.start()
     >>> d = JupyROOTDeclarer(p)
-    >>> d.Run("int f(){return 3;}".encode("utf-8"))
+    >>> d.Run("int f(){return 3;}")
     1
     >>> ROOT.f()
     3
@@ -161,7 +161,7 @@ class JupyROOTExecutor(Runner):
     >>> import ROOT
     >>> p = Poller(); p.start()
     >>> d = JupyROOTExecutor(p)
-    >>> d.Run('cout << "Here am I" << endl;'.encode("utf-8"))
+    >>> d.Run('cout << "Here am I" << endl;')
     1
     >>> p.Stop()
     '''

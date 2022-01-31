@@ -30,7 +30,6 @@
 //#define DEBUG
 #ifdef DEBUG
 #endif
-#include <iostream>
 
 namespace ROOT {
 
@@ -230,7 +229,9 @@ ROOT::Math::Minimizer * FitConfig::CreateMinimizer() {
    min->SetValidError( fParabErrors );
    min->SetStrategy( fMinimizerOpts.Strategy() );
    min->SetErrorDef( fMinimizerOpts.ErrorDef() );
-
+   // set extra options if existing
+   if (fMinimizerOpts.ExtraOptions())
+      min->SetExtraOptions(*fMinimizerOpts.ExtraOptions());
 
    return min;
 }

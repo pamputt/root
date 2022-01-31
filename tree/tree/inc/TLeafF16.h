@@ -20,8 +20,9 @@
 //                                                                      //
 //////////////////////////////////////////////////////////////////////////
 
-#include "TStreamerElement.h"
 #include "TLeaf.h"
+
+class TStreamerElement;
 
 class TLeafF16 : public TLeaf {
 
@@ -37,6 +38,7 @@ public:
    TLeafF16(TBranch *parent, const char *name, const char *type);
    virtual ~TLeafF16();
 
+   virtual DeserializeType GetDeserializeType() const { return DeserializeType::kExternal; }
    virtual void Export(TClonesArray *list, Int_t n);
    virtual void FillBasket(TBuffer &b);
    const char *GetTypeName() const { return "Float16_t"; }

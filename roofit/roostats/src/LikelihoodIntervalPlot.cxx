@@ -29,14 +29,15 @@
 #include <cmath>
 
 #include "TROOT.h"
-#include "TMath.h"
 #include "TLine.h"
 #include "TObjArray.h"
 #include "TList.h"
 #include "TGraph.h"
 #include "TPad.h"
 #include "TCanvas.h"
-#include "Math/DistFunc.h"
+// need chisquare_quantile function - can use mathcore implementation
+// for plotting not crucial that is less precise
+#include "Math/QuantFuncMathCore.h"
 
 
 #include "RooRealVar.h"
@@ -207,7 +208,7 @@ void LikelihoodIntervalPlot::Draw(const Option_t *options)
 
    // do a dummy evaluation around minimum to be sure profile has right minimum
    if (fInterval->GetBestFitParameters() ) {
-      *fParamsPlot = *fInterval->GetBestFitParameters();
+      fParamsPlot->assign(*fInterval->GetBestFitParameters());
       newProfile->getVal();
    }
 

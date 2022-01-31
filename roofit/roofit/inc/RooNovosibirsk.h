@@ -45,8 +45,8 @@ public:
 
 protected:
   Double_t evaluate() const;
-  RooSpan<double> evaluateBatch(std::size_t begin, std::size_t batchSize) const;
-
+  void computeBatch(cudaStream_t*, double* output, size_t nEvents, RooBatchCompute::DataMap&) const;
+  inline bool canComputeBatchWithCuda() const { return true; }
 
 private:
   RooRealProxy x;

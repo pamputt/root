@@ -30,6 +30,8 @@ an URL. The supported url format is:
 #include "TMap.h"
 #include "TROOT.h"
 
+#include <atomic>
+
 TObjArray *TUrl::fgSpecialProtocols = nullptr;
 THashList *TUrl::fgHostFQDNs = nullptr;
 
@@ -470,7 +472,7 @@ const char *TUrl::GetHostFQDN() const
 {
    if (fHostFQ == "") {
       // Check if we already resolved it
-      TNamed *fqdn = fgHostFQDNs ? (TNamed *) fgHostFQDNs->FindObject(fHost) : 0;
+      TNamed *fqdn = fgHostFQDNs ? (TNamed *) fgHostFQDNs->FindObject(fHost) : nullptr;
       if (!fqdn) {
          TInetAddress adr(gSystem->GetHostByName(fHost));
          if (adr.IsValid()) {
@@ -570,10 +572,10 @@ void TUrl::Print(Option_t *) const
 
 TObjArray *TUrl::GetSpecialProtocols()
 {
-   R__LOCKGUARD(gROOTMutex);
-   static Bool_t usedEnv = kFALSE;
+   static std::atomic_bool usedEnv = ATOMIC_VAR_INIT(false);
 
    if (!gEnv) {
+      R__LOCKGUARD(gROOTMutex);
       if (!fgSpecialProtocols)
          fgSpecialProtocols = new TObjArray;
       if (fgSpecialProtocols->GetEntriesFast() == 0)
@@ -584,6 +586,12 @@ TObjArray *TUrl::GetSpecialProtocols()
    if (usedEnv)
       return fgSpecialProtocols;
 
+   R__LOCKGUARD(gROOTMutex);
+
+   // Some other thread might have set it up in the meantime.
+   if (usedEnv)
+      return fgSpecialProtocols;
+
    if (fgSpecialProtocols)
       fgSpecialProtocols->Delete();
 
@@ -591,13 +599,12 @@ TObjArray *TUrl::GetSpecialProtocols()
       fgSpecialProtocols = new TObjArray;
 
    const char *protos = gEnv->GetValue("Url.Special", "file: hpss: dcache: dcap:");
-   usedEnv = kTRUE;
 
    if (protos) {
       Int_t cnt = 0;
       char *p = StrDup(protos);
       while (1) {
-         TObjString *proto = new TObjString(strtok(!cnt ? p : 0, " "));
+         TObjString *proto = new TObjString(strtok(!cnt ? p : nullptr, " "));
          if (proto->String().IsNull()) {
             delete proto;
             break;
@@ -607,6 +614,7 @@ TObjArray *TUrl::GetSpecialProtocols()
       }
       delete [] p;
    }
+   usedEnv = true;
    return fgSpecialProtocols;
 }
 
@@ -623,14 +631,14 @@ void TUrl::ParseOptions() const
       return;
 
    TObjArray *objOptions = urloptions.Tokenize("&");
-   for (Int_t n = 0; n < objOptions->GetEntries(); n++) {
+   for (Int_t n = 0; n < objOptions->GetEntriesFast(); n++) {
       TString loption = ((TObjString *) objOptions->At(n))->GetName();
       TObjArray *objTags = loption.Tokenize("=");
       if (!fOptionsMap) {
          fOptionsMap = new TMap;
          fOptionsMap->SetOwnerKeyValue();
       }
-      if (objTags->GetEntries() == 2) {
+      if (objTags->GetEntriesFast() == 2) {
          TString key = ((TObjString *) objTags->At(0))->GetName();
          TString value = ((TObjString *) objTags->At(1))->GetName();
          fOptionsMap->Add(new TObjString(key), new TObjString(value));

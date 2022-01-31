@@ -12,7 +12,7 @@ sap.ui.define(['rootui5/panel/Controller',
 
    /** FileDialog controller */
 
-   var FileDialog = GuiPanelController.extend("rootui5.browser.controller.FileDialog", {
+   let FileDialog = GuiPanelController.extend("rootui5.browser.controller.FileDialog", {
 
       //function called from GuiPanelController
       onPanelInit : function() {
@@ -37,6 +37,7 @@ sap.ui.define(['rootui5/panel/Controller',
 
          this.kind = "None"; // not yet known
          this.oModel = new JSONModel({ canEditName: (this.kind == "SaveAs") || (this.kind == "NewFile"),
+                                       canChangePath: true,
                                        dialogTitle: "Dialog Title",
                                        fileName: "",
                                        filesList: [{name:"first.txt", counter: 11}, {name:"second.txt", counter: 22}, {name:"third.xml", counter: 33}],
@@ -46,11 +47,13 @@ sap.ui.define(['rootui5/panel/Controller',
                                       // fileExtList: [{ id: "AllFiles", text: "All files (*.*)" }, { id: "png", text: "png files (*.png)"}, { id: "cxx", text: "CXX files (*.cxx)"}] });
          this.getView().setModel(this.oModel);
 
+         this.own_window = true;
+
          Fragment.load({
             name: "rootui5.browser.view.filedialog",
             controller: this,
             id: "FileDialogFragment"
-         }).then(function (oFragment) {
+         }).then(oFragment => {
             this.fragment = oFragment;
             this.getView().addDependent(this.fragment);
             this.getView().byId("dialogPage").addContent(this.fragment);
@@ -60,17 +63,15 @@ sap.ui.define(['rootui5/panel/Controller',
                this.processInitMsg(this._init_msg);
                delete this._init_msg;
             }
+         });
 
-         }.bind(this));
-
-         this.own_window = true;
       },
 
-      /** Set path to the Breadcrumb element */
+      /** @summary Set path to the Breadcrumb element */
       updateBReadcrumbs: function(split) {
          this._currentPath = split;
 
-         var oBreadcrumbs = sap.ui.core.Fragment.byId("FileDialogFragment", "breadcrumbs");
+         let oBreadcrumbs = sap.ui.core.Fragment.byId("FileDialogFragment", "breadcrumbs");
          if (!oBreadcrumbs)
             return;
 
@@ -88,13 +89,13 @@ sap.ui.define(['rootui5/panel/Controller',
          }
       },
 
-      /** Returns coded in Breadcrumb path
-       * If selectedId specified, return path up to that element id */
+      /** @summary Returns coded in Breadcrumb path
+       * @desc If selectedId specified, return path up to that element id */
       getBreadcrumbPath: function(selectedId) {
-         var oBreadcrumbs = sap.ui.core.Fragment.byId("FileDialogFragment", "breadcrumbs");
+         let oBreadcrumbs = sap.ui.core.Fragment.byId("FileDialogFragment", "breadcrumbs");
          if (selectedId && oBreadcrumbs) {
-            var oLinks = oBreadcrumbs.getLinks(), path = [];
-            for (var i = 0; i < oLinks.length; i++) {
+            let oLinks = oBreadcrumbs.getLinks(), path = [];
+            for (let i = 0; i < oLinks.length; i++) {
                if (i>0) path.push(oLinks[i].getText());
                if (oLinks[i].getId() === selectedId) return path;
             }
@@ -103,49 +104,69 @@ sap.ui.define(['rootui5/panel/Controller',
          return this._currentPath.slice(); // make copy of original array
       },
 
-      // returns full file name as array
+      /** @summary returns full file name as array */
       getFullFileName: function() {
-         var path = this.getBreadcrumbPath();
+         let path = this.getBreadcrumbPath();
          path.push(this.oModel.getProperty("/fileName"));
          return path;
       },
 
-      /** Handler for Breadcrumbs press event */
+      /** @summary Handler for Breadcrumbs press event */
       onBreadcrumbsPress: function(oEvent) {
-         var path = this.getBreadcrumbPath(oEvent.getSource().sId);
+         if (!this.oModel.getProperty("/canChangePath")) return;
+
+         let path = this.getBreadcrumbPath(oEvent.getSource().sId);
          if (this.kind == "OpenFile")
             this.oModel.setProperty("/fileName", "");
-         this.websocket.Send("CHPATH:" + JSON.stringify(path));
+         this.websocket.send("CHPATH:" + JSON.stringify(path));
       },
 
-      /** Handler for List item press event */
+      /** @summary Handler for List item press event */
       onItemPress: function(event) {
-         var item = event.getParameters().listItem;
+         let item = event.getParameters().listItem;
          if (!item) return;
 
-         var ctxt = item.getBindingContext(),
-             prop = ctxt ? ctxt.getProperty(ctxt.getPath()) : null;
+         let ctxt = item.getBindingContext(),
+             prop = ctxt ? ctxt.getProperty(ctxt.getPath()) : null,
+             is_folder = prop && (prop.icon == "sap-icon://folder-blank");
 
-         if (prop && (prop.icon == "sap-icon://folder-blank")) {
+         let tm = new Date().getTime();
+
+         if ((this._last_item === item) && ((tm - this._last_tm) < 300)) {
+            // handle double click
+            delete this._last_item;
+            if ((this.kind == "OpenFile") && !is_folder)
+               return this.onOkPress();
+            else
+               return;
+         }
+
+         this._last_item = item;
+         this._last_tm = tm;
+
+         if (is_folder) {
             if (this.kind == "OpenFile")
                this.oModel.setProperty("/fileName", "");
 
-            var path = this.getBreadcrumbPath();
+            let path = this.getBreadcrumbPath();
             path.push(item.getTitle());
-            return this.websocket.Send("CHPATH:" + JSON.stringify(path));
+            if (!this.oModel.getProperty("/canChangePath")) return;
+            return this.websocket.send("CHPATH:" + JSON.stringify(path));
          }
 
          this.oModel.setProperty("/fileName", item.getTitle());
       },
 
-      /** When selected file extenstion changed */
+      /** @summary When selected file extenstion changed */
       onFileExtChanged: function() {
-         var extName = this.oModel.getProperty("/fileExt");
-         this.websocket.Send("CHEXT:" + extName);
+         let extName = this.oModel.getProperty("/fileExt");
+         this.websocket.send("CHEXT:" + extName);
       },
 
+      /** @summary Process init dialog message
+        * @private */
       processInitMsg: function(msg) {
-         var cfg = JSON.parse(msg);
+         let cfg = JSON.parse(msg);
 
          if (!this.dialog) {
             // when not an embedded dialog, update configuration from server
@@ -154,15 +175,21 @@ sap.ui.define(['rootui5/panel/Controller',
             this.oModel.setProperty("/canEditName", (this.kind == "SaveAs") || (this.kind == "NewFile"));
          }
 
+         if (this.own_window && document)
+             document.title = cfg.title || this.kind + " dialog";
+
          this.updateBReadcrumbs(cfg.path);
 
          this.oModel.setProperty("/fileName", cfg.fname);
 
+         if (cfg.can_change_path !== undefined)
+            this.oModel.setProperty("/canChangePath", cfg.can_change_path);
+
          if (cfg.filters && cfg.filters.length) {
-            var arr = [];
-            for (var k=0;k<cfg.filters.length;++k) {
-               var fname = cfg.filters[k];
-               var p = fname.indexOf("(");
+            let arr = [];
+            for (let k = 0; k < cfg.filters.length; ++k) {
+               let fname = cfg.filters[k];
+               let p = fname.indexOf("(");
                if (p>0) fname = fname.substr(0,p);
                arr.push({id: fname.trim(), text: cfg.filters[k]});
             }
@@ -178,12 +205,12 @@ sap.ui.define(['rootui5/panel/Controller',
       },
 
       processChangePathMsg: function(msg) {
-         var cfg = JSON.parse(msg);
+         let cfg = JSON.parse(msg);
          this.updateBReadcrumbs(cfg.path);
          this.oModel.setProperty("/filesList", cfg.brepl.nodes);
       },
 
-      /** Close file dialog */
+      /** @summary Close file dialog */
       closeFileDialog: function(fname) {
          // add more logic when FileDialog embed into main window
          if (this.did_close) return;
@@ -194,7 +221,7 @@ sap.ui.define(['rootui5/panel/Controller',
             this._completeDialog(fname ? "onOk" : "onCancel", fname);
 
          if (this.websocket) {
-            this.websocket.Close();
+            this.websocket.close();
             delete this.websocket;
          }
 
@@ -208,25 +235,22 @@ sap.ui.define(['rootui5/panel/Controller',
             window.open('','_self').close();
       },
 
-      OnWebsocketOpened: function(handle) {
+      onWebsocketOpened: function(handle) {
          if (this.model)
             this.model.sendFirstRequest(this.websocket);
       },
 
-      OnWebsocketClosed: function() {
+      onWebsocketClosed: function() {
          // when connection closed, close panel as well
          this.closeFileDialog();
       },
 
-      /** Entry point for all data from server */
-      OnWebsocketMsg: function(handle, msg) {
-
+      /** @summary Entry point for all data from server */
+      onWebsocketMsg: function(handle, msg) {
          if (typeof msg != "string")
             return console.error("Browser do not uses binary messages len = " + mgs.byteLength);
 
-         console.log('GET DLG MGS: ', msg.substr(0,50));
-
-         var mhdr = msg.split(":")[0];
+         let mhdr = msg.split(":")[0];
          msg = msg.substr(mhdr.length+1);
 
          switch (mhdr) {
@@ -254,36 +278,32 @@ sap.ui.define(['rootui5/panel/Controller',
          }
       },
 
-      /** Shown when warning message about overwritten file should appear */
+      /** @summary Show warning message about overwritten file should appear */
       showWarningDialog: function() {
-         var oWarnDlg = new Dialog({
+         let oWarnDlg = new Dialog({
             title: "Warning",
             type: "Message",
             state: "Warning",
             content: new Text({ text: "File already exists. Overwrite? "}),
             beginButton: new Button({
                text: 'Cancel',
-               press: function() {
-                  oWarnDlg.close();
-               }
+               press: ()  => oWarnDlg.close()
             }),
             endButton: new Button({
                text: 'Ok',
                type: ButtonType.Emphasized,
-               press: function() {
+               press: () => {
                   oWarnDlg.close();
-                  this.websocket.Send("DLG_CONFIRM_SELECT");
-               }.bind(this)
+                  this.websocket.send("DLG_CONFIRM_SELECT");
+               }
             }),
-            afterClose: function() {
-               oWarnDlg.destroy();
-            }
+            afterClose: () => oWarnDlg.destroy()
          });
 
          oWarnDlg.open();
       },
 
-      /** method used to complete dialog */
+      /** @summary method used to complete dialog */
       _completeDialog: function(funcname, arg) {
          if (!this.dialog_args)
             return;
@@ -296,8 +316,8 @@ sap.ui.define(['rootui5/panel/Controller',
          delete this.dialog_args;
       },
 
-      /** @brief Start SaveAs dialog @private */
-
+      /** @summary Start SaveAs dialog
+        * @private */
       _initDialog: async function(kind, args) {
 
          if (!args || typeof args != "object")
@@ -307,12 +327,13 @@ sap.ui.define(['rootui5/panel/Controller',
          if (!args.websocket)
             return this._completeDialog("onFailure");
 
-         var fname = args.filename || "";
-         var p = Math.max(fname.lastIndexOf("/"), fname.lastIndexOf("\\"));
+         let fname = args.filename || "";
+         let p = Math.max(fname.lastIndexOf("/"), fname.lastIndexOf("\\"));
          if (p>0) fname = fname.substr(p+1);
 
          this.kind = kind;
          this.oModel = new JSONModel({ canEditName: (this.kind == "SaveAs") || (this.kind == "NewFile"),
+                                       canChangePath: args.can_change_path === undefined ? true : args.can_change_path,
                                        dialogTitle: args.title || "Title",
                                        fileName: fname, // will be returned from the server, just for initialization
                                        filesList: [{name:"first.txt", counter: 11}, {name:"second.txt", counter: 22}, {name:"third.xml", counter: 33}],
@@ -322,17 +343,15 @@ sap.ui.define(['rootui5/panel/Controller',
                                        // fileExtList: [{ id: "AllFiles", text: "All files (*.*)" }, { id: "png", text: "png files (*.png)"}, { id: "cxx", text: "CXX files (*.cxx)"}] });
 
          // create extra channel for the FileDialog
-         this.websocket = args.websocket.CreateChannel();
+         this.websocket = args.websocket.createChannel();
          // assign ourself as receiver of all
-         this.websocket.SetReceiver(this);
+         this.websocket.setReceiver(this);
 
-         await Fragment.load({
+         this.fragment = await Fragment.load({
             name: "rootui5.browser.view.filedialog",
             controller: this,
             id: "FileDialogFragment"
-         }).then(function (oFragment) {
-            this.fragment = oFragment;
-         }.bind(this));
+         });
 
          this.fragment.setModel(this.oModel);
 
@@ -345,12 +364,12 @@ sap.ui.define(['rootui5/panel/Controller',
             content: this.fragment,
             beginButton: new Button({
                text: 'Cancel',
-               press: this.onCancelPress.bind(this)
+               press: () => this.onCancelPress()
             }),
             endButton: new Button({
                text: 'Ok',
                enabled: "{= ${/fileName} !== '' }",
-               press: this.onOkPress.bind(this)
+               press: () => this.onOkPress()
             })
          });
 
@@ -366,7 +385,13 @@ sap.ui.define(['rootui5/panel/Controller',
             delete this._init_msg;
          }
 
-         var server_args = [ this.kind, args.filename || "", this.websocket.getChannelId().toString() ];
+         let server_args = [ this.kind, args.filename || "", this.websocket.getChannelId().toString() ];
+
+         if (args.can_change_path !== undefined)
+            server_args.push(args.can_change_path ? "__canChangePath__" : "__cannotChangePath__");
+
+         if (args.working_path && typeof args.working_path == "string")
+            server_args.push("__workingPath__", args.working_path);
 
          // add at the end filter and filter array
          if (args.filter || args.filters) {
@@ -374,17 +399,18 @@ sap.ui.define(['rootui5/panel/Controller',
             server_args = server_args.concat(args.filters || ["Any files (*)"]);
          }
 
-         args.websocket.Send("FILEDIALOG:" + JSON.stringify(server_args));
+         args.websocket.send("FILEDIALOG:" + JSON.stringify(server_args));
 
          return this;
       },
 
-      /** Press Ok button id Dialog, send selected file name and wait if confirmation required */
+      /** @summary Press Ok button id Dialog,
+        * @desc send selected file name and wait if confirmation required */
       onOkPress: function() {
-         var fullname = this.getFullFileName();
+         let fullname = this.getFullFileName();
 
          if (this.websocket)
-            this.websocket.Send("DLGSELECT:" + JSON.stringify(fullname));
+            this.websocket.send("DLGSELECT:" + JSON.stringify(fullname));
          else
             this.closeFileDialog();
       },
@@ -392,7 +418,7 @@ sap.ui.define(['rootui5/panel/Controller',
       /** Press Cancel button Dialog */
       onCancelPress: function() {
          if (this.websocket)
-            this.websocket.Send("DLGNOSELECT");
+            this.websocket.send("DLGNOSELECT");
          else
             this.closeFileDialog();
       },
@@ -406,33 +432,36 @@ sap.ui.define(['rootui5/panel/Controller',
       }
    });
 
-   /** Function to initiate SaveAs dialog from client side
-    * Following arguments has to be specified:
+   /** @summary Function to initiate SaveAs dialog from client side
+    * @desc Following arguments has to be specified:
     * args.websocket - current available connection, used to send "FILEDIALOG:" request
     * args.filename - initial file name in the dialog
     * args.title - title used for the dialog
+    * args.can_change_path - if it is allowed to change path
+    * args.working_path - initial working path in dialog like "/Home/storage"
+    * args.filters - array of supported extensions like ["C++ files (*.cxx *.cpp *.c)", "Text files (*.txt)", "Any files (*)" ]
+    * args.filter - selected extension like "Any files"
     * args.onOk - handler when file is selected and "Ok" button is pressed
     * args.onCancel - handler when "Cancel" button is pressed
-    * args.onFailure - handler when any failure appears, dialog will be closed afterwards
-    */
+    * args.onFailure - handler when any failure appears, dialog will be closed afterwards */
    FileDialog.SaveAs = function(args) {
-      var controller = new FileDialog();
-
+      let controller = new FileDialog();
       return controller._initDialog("SaveAs", args);
-   };
+   }
 
+   /** @summary Function to initiate NewFile dialog from client side,
+     * @desc See @ref FileDialog.SaveAs for supported parameters */
    FileDialog.NewFile = function(args) {
-      var controller = new FileDialog();
-
+      let controller = new FileDialog();
       return controller._initDialog("NewFile", args);
-   };
+   }
 
+   /** @summary Function to initiate OpenFile dialog from client side,
+     * @desc See @ref FileDialog.SaveAs for supported parameters */
    FileDialog.OpenFile = function(args) {
-      var controller = new FileDialog();
-
+      let controller = new FileDialog();
       return controller._initDialog("OpenFile", args);
-   };
-
+   }
 
    return FileDialog;
 

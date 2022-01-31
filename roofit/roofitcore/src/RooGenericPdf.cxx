@@ -42,16 +42,13 @@ The last two versions, while slightly less readable, are more versatile because
 the names of the arguments are not hard coded.
 **/
 
+#include "RooGenericPdf.h"
 #include "RooFit.h"
 #include "Riostream.h"
-
-#include "RooGenericPdf.h"
-#include "RooGenericPdf.h"
 #include "RooStreamParser.h"
 #include "RooMsgService.h"
 #include "RooArgList.h"
-
-
+#include "RunContext.h"
 
 using namespace std;
 
@@ -126,6 +123,27 @@ Double_t RooGenericPdf::evaluate() const
   return formula().eval(_normSet) ;
 }
 
+
+////////////////////////////////////////////////////////////////////////////////
+/// Evaluate this formula for values found in inputData.
+RooSpan<double> RooGenericPdf::evaluateSpan(RooBatchCompute::RunContext& inputData, const RooArgSet* normSet) const {
+  if (normSet != nullptr && normSet != _normSet)
+    throw std::logic_error("Got conflicting normSets");
+
+  auto results = formula().evaluateSpan(this, inputData, _normSet);
+  inputData.spans[this] = results;
+
+  return results;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+void RooGenericPdf::computeBatch(cudaStream_t* stream, double* output, size_t nEvents, RooBatchCompute::DataMap& dataMap) const
+{
+  formula().computeBatch(stream, output, nEvents, dataMap);
+  RooSpan<const double> normVal = dataMap.at(&*_norm);
+  // TODO: also deal with non-scalar integral batch
+  for (size_t i=0; i<nEvents; i++) output[i] = normalizeWithNaNPacking(output[i], normVal[0]);
+}
 
 
 ////////////////////////////////////////////////////////////////////////////////

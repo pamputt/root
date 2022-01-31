@@ -16,6 +16,7 @@
 #include "TXMLEngine.h"
 #include "TGeoMatrix.h"
 #include "TGeoVolume.h"
+#include "TGeoElement.h"
 
 #include <map>
 #include <iostream>
@@ -33,7 +34,7 @@ public:
 
       fNameS = "";
       fSolid = "";
-      fMatrix = 0;
+      fMatrix = nullptr;
    }
 
    virtual ~TGDMLRefl() {}

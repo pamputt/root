@@ -37,11 +37,10 @@
 ///
 
 #include "RooFit.h"
-#include "Riostream.h"
 
-#include <math.h>
+#include <cmath>
+
 #include "TClass.h"
-#include "TTree.h"
 #include "RooLinearVar.h"
 #include "RooStreamParser.h"
 #include "RooArgSet.h"
@@ -153,8 +152,8 @@ Bool_t RooLinearVar::isJacobianOK(const RooArgSet& depList) const
 
   // Check if jacobian has no real-valued dependents
   RooAbsArg* arg ;
-  TIterator* dIter = depList.createIterator() ;
-  while ((arg=(RooAbsArg*)dIter->Next())) {
+  TIter dIter = depList.createIterator() ;
+  while ((arg=(RooAbsArg*)dIter.Next())) {
     if (arg->IsA()->InheritsFrom(RooAbsReal::Class())) {
       if (_slope.arg().dependsOnValue(*arg)) {
 // 	cout << "RooLinearVar::isJacobianOK(" << GetName() << ") return kFALSE because slope depends on value of " << arg->GetName() << endl ;
@@ -162,8 +161,7 @@ Bool_t RooLinearVar::isJacobianOK(const RooArgSet& depList) const
       }
     }
   }
-  delete dIter ;
-//   cout << "RooLinearVar::isJacobianOK(" << GetName() << ") return kTRUE" << endl ;
+  //   cout << "RooLinearVar::isJacobianOK(" << GetName() << ") return kTRUE" << endl ;
   return kTRUE ;
 }
 

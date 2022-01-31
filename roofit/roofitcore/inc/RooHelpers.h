@@ -22,154 +22,107 @@
 #include "RooAbsReal.h"
 
 #include <sstream>
+#include <vector>
+#include <string>
+#include <utility>
+
+class RooAbsPdf;
+class RooAbsData;
+
 
 namespace RooHelpers {
 
-/// Switches the message service to verbose while the instance alive.
+/// Switches the message service to a different level while the instance is alive.
+/// Can also temporarily activate / deactivate message topics.
+/// Use as
+/// ~~~{.cpp}
+/// RooHelpers::LocalChangeMessageLevel changeMsgLvl(RooFit::WARNING);
+/// [ statements that normally generate a lot of output ]
+/// ~~~
 class LocalChangeMsgLevel {
   public:
     /// Change message level (and topics) while this object is alive, reset when it goes out of scope.
     /// \param[in] lvl The desired message level. Defaults to verbose.
-    /// \param[in] extraTopics Extra topics to be switched on.
+    /// \param[in] extraTopics Extra topics to be switched on. These will only switched on in the last stream to prevent all streams are printing.
+    /// \param[in] removeTopics Message topics to be switched off
+    /// \param[in] overrideExternalLevel Override the user message level.
     LocalChangeMsgLevel(RooFit::MsgLevel lvl = RooFit::DEBUG,
-        RooFit::MsgTopic extraTopics = static_cast<RooFit::MsgTopic>(0u)) {
-      auto& msg = RooMsgService::instance();
-      fOldKillBelow = msg.globalKillBelow();
-      msg.setGlobalKillBelow(lvl);
-      fOldConf = msg.getStream(0);
-      msg.getStream(0).minLevel = lvl;
-      msg.getStream(0).addTopic(extraTopics);
-      msg.setStreamStatus(0, true);
-    }
+        unsigned int extraTopics = 0u,
+        unsigned int removeTopics = 0u,
+        bool overrideExternalLevel = true);
 
-    ~LocalChangeMsgLevel() {
-      auto& msg = RooMsgService::instance();
-      msg.setGlobalKillBelow(fOldKillBelow);
-      msg.getStream(0) = fOldConf;
-    }
+    ~LocalChangeMsgLevel();
 
   private:
     RooFit::MsgLevel fOldKillBelow;
-    RooMsgService::StreamConfig fOldConf;
+    std::vector<RooMsgService::StreamConfig> fOldConf;
+    int fExtraStream{-1};
+};
+
+
+/// Wrap an object into a TObject. Sometimes needed to avoid reinterpret_cast or enable RTTI.
+template<typename T>
+struct WrapIntoTObject : public TObject {
+  WrapIntoTObject(T& obj) : _payload(&obj) { }
+  T* _payload;
 };
 
 
 /// Hijacks all messages with given level and topic (and optionally object name) while alive.
-/// Use this like an ostringstream afterwards. Useful for unit tests and debugging.
-class HijackMessageStream : public std::ostringstream {
+/// Use this like an ostringstream afterwards. The messages can e.g. be retrieved using `str()`.
+/// Useful for unit tests / debugging.
+class HijackMessageStream{
   public:
     HijackMessageStream(RooFit::MsgLevel level, RooFit::MsgTopic topics, const char* objectName = nullptr);
-
-    virtual ~HijackMessageStream();
+    template<typename T>
+    const HijackMessageStream& operator<<(const T& v) const {
+      _str << v;
+      return *this;
+    }
+    std::string str() { return _str.str(); }
+    std::ostringstream& stream() { return _str; };
+    ~HijackMessageStream();
 
   private:
+    std::ostringstream _str;
     RooFit::MsgLevel _oldKillBelow;
     std::vector<RooMsgService::StreamConfig> _oldConf;
     Int_t _thisStream;
 };
 
 
-std::vector<std::string> tokenise(const std::string &str, const std::string &delims);
-
-
-
-class CachingError : public std::exception {
-  public:
-    CachingError(const std::string& newMessage) :
-      std::exception(),
-      _messages()
-    {
-      _messages.push_back(newMessage);
-    }
-
-    CachingError(CachingError&& previous, const std::string& newMessage) :
-    std::exception(),
-    _messages{std::move(previous._messages)}
-    {
-      _messages.push_back(newMessage);
-    }
-
-    const char* what() const noexcept override {
-      std::stringstream out;
-      out << "**Caching Error** in\n";
-
-      std::string indent;
-      for (auto it = _messages.rbegin(); it != _messages.rend(); ++it) {
-        std::string message = *it;
-        auto pos = message.find('\n', 0);
-        while (pos != std::string::npos) {
-          message.insert(pos+1, indent);
-          pos = (message.find('\n', pos+1));
-        }
-
-        out << indent << message << "\n";
-        indent += " ";
-      }
-
-      out << std::endl;
-
-      std::string* ret = new std::string(out.str()); //Make it survive this method
-
-      return ret->c_str();
-    }
-
-
-  private:
-    std::vector<std::string> _messages;
-};
-
-
-class FormatPdfTree {
-  public:
-    template <class T,
-    typename std::enable_if<std::is_base_of<RooAbsArg, T>::value>::type* = nullptr >
-    FormatPdfTree& operator<<(const T& arg) {
-      _stream << arg.ClassName() << "::" << arg.GetName() << " " << &arg << " ";
-      arg.printArgs(_stream);
-      return *this;
-    }
-
-    template <class T,
-    typename std::enable_if< ! std::is_base_of<RooAbsArg, T>::value>::type* = nullptr >
-    FormatPdfTree& operator<<(const T& arg) {
-      _stream << arg;
-      return *this;
-    }
-
-    operator std::string() const {
-      return _stream.str();
-    }
-
-    std::ostream& stream() {
-      return _stream;
-    }
-
-  private:
-    std::ostringstream _stream;
-};
-
-
 /// Check if the parameters have a range, and warn if the range extends below / above the set limits.
 void checkRangeOfParameters(const RooAbsReal* callingClass, std::initializer_list<const RooAbsReal*> pars,
     double min = -std::numeric_limits<double>::max(), double max = std::numeric_limits<double>::max(),
-    bool limitsInAllowedRange = false, std::string extraMessage = "");
+    bool limitsInAllowedRange = false, std::string const& extraMessage = "");
 
 
-/// Helper class to access a batch-related part of RooAbsReal's interface, which should not leak to the outside world.
-class BatchInterfaceAccessor {
-  public:
-    static void clearBatchMemory(RooAbsReal& theReal) {
-      theReal.clearBatchMemory();
-    }
+/// Disable all caches for sub-branches in an expression tree.
+/// This is helpful when an expression with cached sub-branches needs to be integrated numerically.
+struct DisableCachingRAII {
+  /// Inhibit all dirty-state propagation, and assume every node as dirty.
+  /// \param[in] oldState Restore this state when going out of scope.
+  DisableCachingRAII(bool oldState):
+  _oldState(oldState) {
+    RooAbsArg::setDirtyInhibit(true);
+  }
 
-    static void checkBatchComputation(const RooAbsReal& theReal, std::size_t evtNo,
-        const RooArgSet* normSet = nullptr, double relAccuracy = 1.E-13) {
-      theReal.checkBatchComputation(evtNo, normSet, relAccuracy);
-    }
+  ~DisableCachingRAII() {
+    RooAbsArg::setDirtyInhibit(_oldState);
+  }
+  bool _oldState;
 };
 
 
+std::pair<double, double> getRangeOrBinningInterval(RooAbsArg const* arg, const char* rangeName);
+
+bool checkIfRangesOverlap(RooAbsPdf const& pdf, RooAbsData const& data, std::vector<std::string> const& rangeNames);
+
+std::string getColonSeparatedNameString(RooArgSet const& argSet);
+RooArgSet selectFromArgSet(RooArgSet const&, std::string const& names);
+
 }
+
 
 
 #endif /* ROOFIT_ROOFITCORE_INC_ROOHELPERS_H_ */

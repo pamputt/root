@@ -70,7 +70,7 @@ namespace {
         return true;
 
       // Address of page containing P, assuming page_size is a power of 2
-      void *base = (void *)(((const size_t)P) & page_mask);
+      void *base = (void *)(((size_t)P) & page_mask);
 
       // P is invalid only when msync returns -1 and sets errno to ENOMEM
       if (::msync(base, page_size, MS_ASYNC) != 0) {
@@ -89,7 +89,7 @@ namespace {
        return n == 1;
     }
   };
-  thread_local std::array<const void*, 8> PointerCheck::lines = {};
+  thread_local std::array<const void*, 8> PointerCheck::lines = {{}};
   thread_local unsigned PointerCheck::mostRecent = 0;
 }
 
@@ -190,10 +190,12 @@ bool GetSystemLibraryPaths(llvm::SmallVectorImpl<std::string>& Paths) {
   const std::size_t LD = Result.find("(LD_LIBRARY_PATH)");
   std::size_t From = Result.find("search path=", LD == NPos ? 0 : LD);
   if (From != NPos) {
-    const std::size_t To = Result.find("(system search path)", From);
+    std::size_t To = Result.find("(system search path)", From);
     if (To != NPos) {
       From += 12;
-      std::string SysPath = Result.substr(From, To-From);
+      while (To > From && isspace(Result[To - 1]))
+        --To;
+      std::string SysPath = Result.substr(From, To - From);
       SysPath.erase(std::remove_if(SysPath.begin(), SysPath.end(), isspace),
                     SysPath.end());
 

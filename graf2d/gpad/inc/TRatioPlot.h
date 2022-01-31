@@ -2,7 +2,7 @@
 // Author: Paul Gessinger   25/08/2016
 
 /*************************************************************************
- * Copyright (C) 1995-2016, Rene Brun and Fons Rademakers.               *
+ * Copyright (C) 1995-2021, Rene Brun and Fons Rademakers.               *
  * All rights reserved.                                                  *
  *                                                                       *
  * For the licensing terms see $ROOTSYS/LICENSE.                         *
@@ -43,8 +43,8 @@ class TBrowser;
 class TRatioPlot : public TObject {
 
 private:
-   TRatioPlot& operator=(const TRatioPlot&) = delete; // Not implemented
-   TRatioPlot(const TRatioPlot &hrp) = delete;
+   TRatioPlot& operator=(const TRatioPlot&) = delete;
+   TRatioPlot(const TRatioPlot &) = delete;
 
    enum CalculationMode {
       kDivideHist = 1, ///< Use `TH1::Divide` to create the ratio.
@@ -93,8 +93,8 @@ protected:
    TGraph *fRatioGraph = 0; ///< Stores the lower plot's graph
    TGraphErrors *fConfidenceInterval1 = 0; ///< Stores the graph for the 1 sigma band
    TGraphErrors *fConfidenceInterval2 = 0; ///< Stores the graph for the 2 sigma band
-   Color_t fCi1Color = kGreen; ///< Stores the color for the 1 sigma band
-   Color_t fCi2Color = kYellow; ///< Stores the color for the 2 sigma band
+   Color_t fCi1Color = kYellow; ///< Stores the color for the 1 sigma band
+   Color_t fCi2Color = kGreen; ///< Stores the color for the 2 sigma band
 
    Bool_t fShowConfidenceIntervals = kTRUE; ///< Stores whether to show the confidence interval bands. From Draw option
 
@@ -256,7 +256,7 @@ public:
    virtual void SetGridlines(Double_t *gridlines, Int_t numGridlines);
    virtual void SetGridlines(std::vector<double> gridlines);
 
-   void SetConfidenceIntervalColors(Color_t ci1 = kGreen, Color_t ci2 = kYellow);
+   void SetConfidenceIntervalColors(Color_t ci1 = kYellow, Color_t ci2 = kGreen);
 
    void SetC1(Double_t c1) { fC1 = c1; }
    void SetC2(Double_t c2) { fC2 = c2; }

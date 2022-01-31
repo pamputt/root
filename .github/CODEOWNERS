@@ -4,14 +4,13 @@
 # This should also help provide suggested reviewers for PRs.
 
 # For more information, see:
-# 
+#
 #   - https://github.com/blog/2392-introducing-code-owners
 
 # Coarse-grained ownership
 * @Axel-Naumann
 /bindings/ @etejedor
-/core/ @Axel-Naumann
-/core/ @pcanal
+/core/ @Axel-Naumann @pcanal
 /documentation/ @couet
 /fonts/ @bellenot
 /geom/ @agheata
@@ -27,27 +26,24 @@
 /io/xml/ @pcanal @linev
 /main/ @pcanal
 /math/ @lmoneta
+/math/vecops @eguiraud
 /misc/ @Axel-Naumann
 /montecarlo/ @Axel-Naumann
 /net/ @gganis
 /proof/ @gganis
-/roofit/ @lmoneta @hageboeck
+/roofit/ @lmoneta @guitargeek @hageboeck
 /rootx/ @Axel-Naumann
 /sql/ @pcanal @linev
-/tmva/ @lmoneta @ashlaban @stwunsch
+/tmva/ @lmoneta @ashlaban @stwunsch @sitongan
 /tree/ @pcanal
 /tutorials/ @couet
-/tree/dataframe @dpiparo @bluehood
+/tree/dataframe @eguiraud
+/tree/ntuple/v7/ @jblomer
 
 # Projects that span over several code modules:
 /bindings/r/ @omazapa
-/core/base/ @pcanal
-/core/cont/ @pcanal
-/core/imt/ @dpiparo
-/core/lz4/ @pcanal
-/core/lzma/ @pcanal
-/core/multiproc/ @gganis
-/core/thread/ @pcanal
+/core/imt/ @eguiraud
+/core/multiproc/ @eguiraud
 /graf2d/cocoa/ @TimurP
 /graf3d/eve/ @osschar
 /graf3d/eve7/ @osschar @linev
@@ -66,7 +62,7 @@
 /gui/canvaspainter/ @Axel-Naumann @linev
 /ui5/ @linev
 
-/cmake/ @oshadura
-*.cmake @oshadura
-*/CMakeLists.txt @oshadura
-CMakeLists.txt @oshadura
+/cmake/ @bellenot
+*.cmake @bellenot
+*/CMakeLists.txt @bellenot
+CMakeLists.txt @bellenot

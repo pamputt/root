@@ -34,14 +34,10 @@ Class that contains all the data information.
 #include <vector>
 
 #include "TEventList.h"
-#include "TFile.h"
-#include "TH1.h"
 #include "TH2.h"
-#include "TProfile.h"
 #include "TRandom3.h"
 #include "TMatrixF.h"
 #include "TVectorF.h"
-#include "TMath.h"
 #include "TROOT.h"
 
 #include "TMVA/MsgLogger.h"
@@ -79,7 +75,6 @@ TMVA::DataSetInfo::DataSetInfo(const TString& name)
      fTargetsForMulticlass(0),
      fLogger( new MsgLogger("DataSetInfo", kINFO) )
 {
-   std::cout << "create data set info " << name << std::endl;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -485,7 +480,9 @@ TH2* TMVA::DataSetInfo::CreateCorrelationMatrixHist( const TMatrixD* m,
 TMVA::DataSet* TMVA::DataSetInfo::GetDataSet() const
 {
    if (fDataSet==0 || fNeedsRebuilding) {
-      if(fDataSet!=0) ClearDataSet();
+      if (fNeedsRebuilding) Log() << kINFO << "Rebuilding Dataset " << fName << Endl;
+      if (fDataSet != 0)
+         ClearDataSet();
       //      fDataSet = DataSetManager::Instance().CreateDataSet(GetName()); //DSMTEST replaced by following lines
       if( !fDataSetManager )
          Log() << kFATAL << Form("Dataset[%s] : ",fName.Data()) << "DataSetManager has not been set in DataSetInfo (GetDataSet() )." << Endl;

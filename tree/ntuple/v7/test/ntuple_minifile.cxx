@@ -1,38 +1,4 @@
-#include "gtest/gtest.h"
-
-#include <ROOT/RMiniFile.hxx>
-#include <ROOT/RRawFile.hxx>
-
-#include <TFile.h>
-
-#include <iostream>
-#include <memory>
-
-using ENTupleContainerFormat = ROOT::Experimental::ENTupleContainerFormat;
-using RMiniFileReader = ROOT::Experimental::Internal::RMiniFileReader;
-using RNTupleFileWriter = ROOT::Experimental::Internal::RNTupleFileWriter;
-using RNTuple = ROOT::Experimental::RNTuple;
-using RRawFile = ROOT::Internal::RRawFile;
-
-namespace {
-
-/**
- * An RAII wrapper around an open temporary file on disk. It cleans up the guarded file when the wrapper object
- * goes out of scope.
- */
-class FileRaii {
-private:
-   std::string fPath;
-public:
-   explicit FileRaii(const std::string &path) : fPath(path) { }
-   FileRaii(const FileRaii&) = delete;
-   FileRaii& operator=(const FileRaii&) = delete;
-   ~FileRaii() { std::remove(fPath.c_str()); }
-   std::string GetPath() const { return fPath; }
-};
-
-} // anonymous namespace
-
+#include "ntuple_test.hxx"
 
 TEST(MiniFile, Raw)
 {
@@ -50,7 +16,7 @@ TEST(MiniFile, Raw)
 
    auto rawFile = RRawFile::Create(fileGuard.GetPath());
    RMiniFileReader reader(rawFile.get());
-   auto ntuple = reader.GetNTuple("MyNTuple");
+   auto ntuple = reader.GetNTuple("MyNTuple").Inspect();
    EXPECT_EQ(offHeader, ntuple.fSeekHeader);
    EXPECT_EQ(offFooter, ntuple.fSeekFooter);
 
@@ -80,7 +46,7 @@ TEST(MiniFile, Stream)
 
    auto rawFile = RRawFile::Create(fileGuard.GetPath());
    RMiniFileReader reader(rawFile.get());
-   auto ntuple = reader.GetNTuple("MyNTuple");
+   auto ntuple = reader.GetNTuple("MyNTuple").Inspect();
    EXPECT_EQ(offHeader, ntuple.fSeekHeader);
    EXPECT_EQ(offFooter, ntuple.fSeekFooter);
 
@@ -116,7 +82,7 @@ TEST(MiniFile, Proper)
 
    auto rawFile = RRawFile::Create(fileGuard.GetPath());
    RMiniFileReader reader(rawFile.get());
-   auto ntuple = reader.GetNTuple("MyNTuple");
+   auto ntuple = reader.GetNTuple("MyNTuple").Inspect();
    EXPECT_EQ(offHeader, ntuple.fSeekHeader);
    EXPECT_EQ(offFooter, ntuple.fSeekFooter);
 
@@ -156,10 +122,10 @@ TEST(MiniFile, Multi)
 
    auto rawFile = RRawFile::Create(fileGuard.GetPath());
    RMiniFileReader reader(rawFile.get());
-   auto ntuple1 = reader.GetNTuple("FirstNTuple");
+   auto ntuple1 = reader.GetNTuple("FirstNTuple").Inspect();
    EXPECT_EQ(offHeader1, ntuple1.fSeekHeader);
    EXPECT_EQ(offFooter1, ntuple1.fSeekFooter);
-   auto ntuple2 = reader.GetNTuple("SecondNTuple");
+   auto ntuple2 = reader.GetNTuple("SecondNTuple").Inspect();
    EXPECT_EQ(offHeader2, ntuple2.fSeekHeader);
    EXPECT_EQ(offFooter2, ntuple2.fSeekFooter);
 
@@ -198,5 +164,94 @@ TEST(MiniFile, Failures)
 
    auto rawFile = RRawFile::Create(fileGuard.GetPath());
    RMiniFileReader reader(rawFile.get());
-   EXPECT_DEATH(reader.GetNTuple("No such NTiple"), ".*");
+   RNTuple ntuple;
+   try {
+      ntuple = reader.GetNTuple("No such RNTuple").Inspect();
+      FAIL() << "bad RNTuple names should throw";
+   } catch (const RException& err) {
+      EXPECT_THAT(err.what(), testing::HasSubstr("no RNTuple named 'No such RNTuple' in file '" + fileGuard.GetPath()));
+   }
+}
+
+TEST(MiniFile, KeyClassName)
+{
+   FileRaii fileGuard("test_ntuple_minifile_key_class_name.root");
+   auto file = std::make_unique<TFile>(fileGuard.GetPath().c_str(), "RECREATE", "", 209);
+   {
+      auto tree = std::make_unique<TTree>("Events", "");
+      file->Write();
+   }
+   file->Close();
+
+   try {
+      auto readerFail = RNTupleReader::Open("Events", fileGuard.GetPath());
+      FAIL() << "RNTuple should only open Events key of type `RNTuple`";
+   } catch (const RException &err) {
+      EXPECT_THAT(err.what(), testing::HasSubstr("no RNTuple named 'Events' in file"));
+   }
+}
+
+TEST(MiniFile, DifferentTKeys)
+{
+   FileRaii fileGuard("test_ntuple_minifile_different_tkeys.root");
+   auto file = std::make_unique<TFile>(fileGuard.GetPath().c_str(), "RECREATE", "", 209);
+   {
+      auto tree = std::make_unique<TTree>("SomeTTree", "");
+      tree->Fill();
+      auto ntuple = RNTupleWriter::Append(RNTupleModel::Create(), "Events", *file);
+      ntuple->Fill();
+      file->Write();
+   }
+
+   file->Close();
+   auto ntuple = RNTupleReader::Open("Events", fileGuard.GetPath());
+   EXPECT_EQ(1, ntuple->GetNEntries());
+}
+
+TEST(MiniFile, FailOnForwardIncompatibility)
+{
+   FileRaii fileGuard("test_ntuple_minifile_forward_incompat.root");
+
+   // First create a regular RNTuple
+   auto model = RNTupleModel::Create();
+   auto fldPt = model->MakeField<float>("pt", 42.0);
+   {
+      RNTupleWriteOptions options;
+      options.SetCompression(0);
+      auto writer = RNTupleWriter::Recreate(std::move(model), "ntuple", fileGuard.GetPath(), options);
+      writer->Fill();
+   }
+   {
+      auto reader = RNTupleReader::Open("ntuple", fileGuard.GetPath());
+      ASSERT_EQ(1U, reader->GetNEntries());
+      reader->LoadEntry(0);
+      EXPECT_EQ(42.0, *(reader->GetModel()->GetDefaultEntry()->Get<float>("pt")));
+   }
+
+   // Fix the version numbers in the header
+
+   // Figure out the header offset
+   auto rawFile = RRawFile::Create(fileGuard.GetPath());
+   RMiniFileReader reader(rawFile.get());
+   auto ntuple = reader.GetNTuple("ntuple").Inspect();
+   // Construct incompatible version numbers in little-endian binary format
+   std::uint16_t futureVersion = RNTupleSerializer::kEnvelopeCurrentVersion + 1;
+   unsigned char futureVersionLE[2];
+   futureVersionLE[0] = (futureVersion & 0x00FF);
+   futureVersionLE[1] = (futureVersion & 0xFF00) >> 8;
+   // Write out twice (min version and writer version)
+   FILE *f = fopen(fileGuard.GetPath().c_str(), "rb+");
+   ASSERT_TRUE(f != nullptr);
+   int posHeader = ntuple.fSeekHeader;
+   EXPECT_EQ(0, fseek(f, posHeader, SEEK_SET));
+   EXPECT_EQ(2u, fwrite(futureVersionLE, 1, 2, f));
+   EXPECT_EQ(2u, fwrite(futureVersionLE, 1, 2, f));
+   fclose(f);
+
+   try {
+      auto readerFail = RNTupleReader::Open("ntuple", fileGuard.GetPath());
+      FAIL() << "unsupported minimum version number should throw";
+   } catch (const RException& err) {
+      EXPECT_THAT(err.what(), testing::HasSubstr("RNTuple format is too new"));
+   }
 }

@@ -22,7 +22,7 @@
 //////////////////////////////////////////////////////////////////////////
 
 #include "TSystem.h"
-
+#include <string>
 
 #if !defined(__CINT__)
  #include "Windows4Root.h"
@@ -263,6 +263,6 @@ public:
    ClassDefOverride(TWinNTSystem, 0)
 };
 
-R__EXTERN ULong_t gConsoleWindow;   // console window handle
+R__EXTERN ULongptr_t gConsoleWindow;   // console window handle
 
 #endif

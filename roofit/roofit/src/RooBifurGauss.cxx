@@ -26,8 +26,7 @@ side of maximum value
 
 #include "RooAbsReal.h"
 #include "RooMath.h"
-#include "BatchHelpers.h"
-#include "RooVDTHeaders.h"
+#include "RooBatchCompute.h"
 
 #include "TMath.h"
 
@@ -80,57 +79,12 @@ Double_t RooBifurGauss::evaluate() const {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-
-namespace {
-//Author: Emmanouil Michalainas, CERN 20 AUGUST 2019  
-
-template<class Tx, class Tm, class Tsl, class Tsr>
-void compute(  size_t batchSize,
-               double * __restrict output,
-               Tx X, Tm M, Tsl SL, Tsr SR)
+/// Compute multiple values of BifurGauss distribution.  
+void RooBifurGauss::computeBatch(cudaStream_t* stream, double* output, size_t nEvents, RooBatchCompute::DataMap& dataMap) const
 {
-  for (size_t i=0; i<batchSize; i++) {
-    const double arg = X[i]-M[i];
-    output[i] = arg / ((arg < 0.0)*SL[i] + (arg >= 0.0)*SR[i]);
-  }
-  
-  for (size_t i=0; i<batchSize; i++) {
-    if (X[i]-M[i]>1e-30 || X[i]-M[i]<-1e-30) {
-      output[i] = _rf_fast_exp(-0.5*output[i]*output[i]);
-    }
-    else {
-      output[i] = 1.0;
-    }
-  }
+  auto dispatch = stream ? RooBatchCompute::dispatchCUDA : RooBatchCompute::dispatchCPU;
+  dispatch->compute(stream, RooBatchCompute::BifurGauss, output, nEvents, dataMap, {&*x,&*mean,&*sigmaL,&*sigmaR,&*_norm});
 }
-};
-
-RooSpan<double> RooBifurGauss::evaluateBatch(std::size_t begin, std::size_t batchSize) const {
-  using namespace BatchHelpers;
-
-  EvaluateInfo info = getInfo( {&x, &mean, &sigmaL, &sigmaR}, begin, batchSize );
-  if (info.nBatches == 0) {
-    return {};
-  }
-  auto output = _batchData.makeWritableBatchUnInit(begin, batchSize);
-  auto xData = x.getValBatch(begin, info.size);
-
-  if (info.nBatches==1 && !xData.empty()) {
-    compute(info.size, output.data(), xData.data(),
-    BracketAdapter<double> (mean),
-    BracketAdapter<double> (sigmaL),
-    BracketAdapter<double> (sigmaR));
-  }
-  else {
-    compute(info.size, output.data(),
-    BracketAdapterWithMask (x,x.getValBatch(begin,info.size)),
-    BracketAdapterWithMask (mean,mean.getValBatch(begin,info.size)),
-    BracketAdapterWithMask (sigmaL,sigmaL.getValBatch(begin,info.size)),
-    BracketAdapterWithMask (sigmaR,sigmaR.getValBatch(begin,info.size)));
-  }
-  return output;
-}
-
 
 ////////////////////////////////////////////////////////////////////////////////
 

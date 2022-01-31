@@ -21,23 +21,71 @@
 //                                                                      //
 //////////////////////////////////////////////////////////////////////////
 
-#include "TBuffer.h"
 #include "TNamed.h"
-#include "TList.h"
-#include "TDatime.h"
+#include "TClass.h"
 #include "TUUID.h"
+#include <atomic>
+
+#ifdef R__LESS_INCLUDES
+class TList;
+#else
+#include "TList.h"
+#include "TBuffer.h"
+// #include "TDatime.h"
+#endif
 
 class TBrowser;
 class TKey;
 class TFile;
+namespace ROOT {
+namespace Internal {
+   struct TDirectoryAtomicAdapter;
+}}
 
 class TDirectory : public TNamed {
 public:
-   /** @class TContext
-     *
-     *  Small helper to keep current directory context.
-     *  Automatically reverts to "old" directory
-     */
+
+/** \class TContext
+\ingroup Base
+
+TDirectory::TContext keeps track and restore the current directory.
+With this tool C++ exceptions will be guaranteed to properly restore the
+current directory pointer.
+
+For example code like:
+
+~~~ {.cpp}
+   TDirectory *sav = gDirectory;
+   mydirectory->cd();
+   if (...) {
+      ....
+      sav->cd();
+      return;
+   } else if (...) {
+      ....
+      sav->cd();
+      return;
+   }
+   sav->cd;
+   return;
+~~~
+
+can be replaced with the simpler and exception safe:
+
+~~~ {.cpp}
+   TDirectory::TContext context(gDirectory, mydirectory);
+   if (...) {
+      ....
+      return;
+   } else if (...) {
+      ....
+      return;
+   }
+   return;
+~~~
+
+*/
+
    class TContext  {
    private:
       std::atomic<TDirectory*> fDirectory{nullptr}; //! Pointer to the previous current directory.
@@ -63,14 +111,14 @@ public:
          else
             CdNull();
       }
-      TContext() : fDirectory(TDirectory::CurrentDirectory())
+      TContext() : fDirectory(TDirectory::CurrentDirectory().load())
       {
          // Store the current directory so we can restore it
          // later and cd to the new directory.
          if (fDirectory)
             (*fDirectory).RegisterContext(this);
       }
-      TContext(TDirectory *newCurrent) : fDirectory(TDirectory::CurrentDirectory())
+      TContext(TDirectory *newCurrent) : fDirectory(TDirectory::CurrentDirectory().load())
       {
          // Store the current directory so we can restore it
          // later and cd to the new directory.
@@ -92,6 +140,8 @@ protected:
    mutable TString  fPathBuffer;        //! Buffer for GetPath() function
    TContext        *fContext{nullptr};  //! Pointer to a list of TContext object pointing to this TDirectory
 
+   std::vector<std::atomic<TDirectory*>*> fGDirectories; //! thread local gDirectory pointing to this object.
+
    std::atomic<size_t> fContextPeg;     //!Counter delaying the TDirectory destructor from finishing.
    mutable std::atomic_flag fSpinLock;  //! MSVC doesn't support = ATOMIC_FLAG_INIT;
 
@@ -104,9 +154,11 @@ protected:
            void   FillFullPath(TString& buf) const;
            void   RegisterContext(TContext *ctxt);
            void   UnregisterContext(TContext *ctxt);
+           void   RegisterGDirectory(std::atomic<TDirectory*>*);
            void   BuildDirectory(TFile* motherFile, TDirectory* motherDir);
 
    friend class TContext;
+   friend struct ROOT::Internal::TDirectoryAtomicAdapter;
 
 protected:
    TDirectory(const TDirectory &directory) = delete;  //Directories cannot be copied
@@ -127,7 +179,7 @@ public:
            void        Clear(Option_t *option="") override;
    virtual TObject    *CloneObject(const TObject *obj, Bool_t autoadd = kTRUE);
    virtual void        Close(Option_t *option="");
-   static TDirectory *&CurrentDirectory();  // Return the current directory for this thread.
+   static std::atomic<TDirectory*> &CurrentDirectory();  // Return the current directory for this thread.
            void        Copy(TObject &) const override { MayNotUse("Copy(TObject &)"); }
    virtual Bool_t      cd(const char *path = nullptr);
    virtual void        DeleteAll(Option_t *option="");
@@ -146,10 +198,12 @@ public:
       return static_cast<T*>(GetObjectChecked(namecycle, TClass::GetClass<T>()));
    }
    virtual TDirectory *GetDirectory(const char *namecycle, Bool_t printError = false, const char *funcname = "GetDirectory");
-   template <class T> inline void GetObject(const char* namecycle, T*& ptr) // See TDirectory::Get for information
-      {
-         ptr = (T *)GetObjectChecked(namecycle, TClass::GetClass<T>());
-      }
+   /// Get an object with proper type checking. If the object doesn't exist in the file or if the type doesn't match,
+   /// a `nullptr` is returned. Also see TDirectory::Get().
+   template <class T> inline void GetObject(const char* namecycle, T*& ptr)
+   {
+      ptr = (T *)GetObjectChecked(namecycle, TClass::GetClass<T>());
+   }
    virtual void       *GetObjectChecked(const char *namecycle, const char* classname);
    virtual void       *GetObjectChecked(const char *namecycle, const TClass* cl);
    virtual void       *GetObjectUnchecked(const char *namecycle);
@@ -201,12 +255,38 @@ public:
    virtual Int_t       Write(const char * /*name*/=nullptr, Int_t /*opt*/=0, Int_t /*bufsize*/=0) const override {return 0;}
    virtual Int_t       WriteTObject(const TObject *obj, const char *name =nullptr, Option_t * /*option*/="", Int_t /*bufsize*/ =0);
 private:
+/// \cond HIDDEN_SYMBOLS
            Int_t       WriteObject(void *obj, const char* name, Option_t *option="", Int_t bufsize=0); // Intentionally not implemented.
+/// \endcond
 public:
-   template <class T> inline Int_t WriteObject(const T* obj, const char* name, Option_t *option="", Int_t bufsize=0) // see TDirectory::WriteTObject or TDirectoryWriteObjectAny for explanation
-      {
-         return WriteObjectAny(obj, TClass::GetClass<T>(), name, option, bufsize);
-      }
+   /// \brief Write an object with proper type checking.
+   /// \param[in] obj Pointer to an object to be written.
+   /// \param[in] name Name of the object in the file.
+   /// \param[in] option Options. See TDirectory::WriteTObject.
+   /// \param[in] bufsize Buffer size. See TDirectory::WriteTObject.
+   ///
+   /// This overload takes care of instances of classes that are not derived
+   /// from TObject. The method redirects to TDirectory::WriteObjectAny.
+   template <typename T>
+   inline std::enable_if_t<!std::is_base_of<TObject, T>::value, Int_t>
+   WriteObject(const T *obj, const char *name, Option_t *option = "", Int_t bufsize = 0)
+   {
+      return WriteObjectAny(obj, TClass::GetClass<T>(), name, option, bufsize);
+   }
+   /// \brief Write an object with proper type checking.
+   /// \param[in] obj Pointer to an object to be written.
+   /// \param[in] name Name of the object in the file.
+   /// \param[in] option Options. See TDirectory::WriteTObject.
+   /// \param[in] bufsize Buffer size. See TDirectory::WriteTObject.
+   ///
+   /// This overload takes care of instances of classes that are derived from
+   /// TObject. The method redirects to TDirectory::WriteTObject.
+   template <typename T>
+   inline std::enable_if_t<std::is_base_of<TObject, T>::value, Int_t>
+   WriteObject(const T *obj, const char *name, Option_t *option = "", Int_t bufsize = 0)
+   {
+      return WriteTObject(obj, name, option, bufsize);
+   }
    virtual Int_t       WriteObjectAny(const void *, const char * /*classname*/, const char * /*name*/, Option_t * /*option*/="", Int_t /*bufsize*/ =0) {return 0;}
    virtual Int_t       WriteObjectAny(const void *, const TClass * /*cl*/, const char * /*name*/, Option_t * /*option*/="", Int_t /*bufsize*/ =0) {return 0;}
    virtual void        WriteDirHeader() {}
@@ -220,7 +300,52 @@ public:
 };
 
 #ifndef __CINT__
-#define gDirectory (TDirectory::CurrentDirectory())
+namespace ROOT {
+namespace Internal {
+   struct TDirectoryAtomicAdapter {
+      std::atomic<TDirectory*> &fValue;
+      TDirectoryAtomicAdapter(std::atomic<TDirectory*> &value) : fValue(value) {}
+
+      template <typename T>
+      explicit operator T*() const {
+         return (T*)fValue.load();
+      }
+
+      operator TDirectory*() const {
+         return fValue.load();
+      }
+
+      operator bool() const { return fValue.load() != nullptr; }
+
+      bool operator==(const TDirectory *other) const {
+         return fValue.load() == other;
+      }
+
+      bool operator!=(const TDirectory *other) const {
+         return fValue.load() != other;
+      }
+
+      bool operator==(TDirectory *other) const {
+         return fValue.load() == other;
+      }
+
+      bool operator!=(TDirectory *other) const {
+         return fValue.load() != other;
+      }
+
+      TDirectory *operator=(TDirectory *newvalue) {
+         if (newvalue) {
+            newvalue->RegisterGDirectory(&fValue);
+         }
+         fValue = newvalue;
+         return newvalue;
+      }
+
+      TDirectory *operator->() const { return fValue.load(); }
+   };
+} // Internal
+} // ROOT
+#define gDirectory (ROOT::Internal::TDirectoryAtomicAdapter(TDirectory::CurrentDirectory()))
 
 #elif defined(__MAKECINT__)
 // To properly handle the use of gDirectory in header files (in static declarations)

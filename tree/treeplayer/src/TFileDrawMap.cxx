@@ -66,12 +66,12 @@ then all keys with names = "uv*" in a second pass, etc.
 #include "TMath.h"
 #include "TVirtualPad.h"
 #include "TVirtualX.h"
-#include "TStyle.h"
 #include "TH1.h"
 #include "TBox.h"
 #include "TKey.h"
 #include "TRegexp.h"
 #include "TSystem.h"
+#include "strlcpy.h"
 
 ClassImp(TFileDrawMap);
 
@@ -371,7 +371,7 @@ TObject *TFileDrawMap::GetObject()
 char *TFileDrawMap::GetObjectInfo(Int_t px, Int_t py) const
 {
    // Thread safety: this solution is not elegant, but given the action performed
-   // by the method, this construct can be considered nonproblematic.
+   // by the method, this construct can be considered non-problematic.
    static TString info;
    GetObjectInfoDir(fFile, px, py, info);
    return (char*)info.Data();

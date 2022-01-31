@@ -11,19 +11,20 @@
 
 #include "TText.h"
 
-#include "Riostream.h"
 #include "TROOT.h"
+#include "TBuffer.h"
 #include "TVirtualPad.h"
-#  include <ft2build.h>
-#  include FT_FREETYPE_H
-#  include FT_GLYPH_H
+#include <ft2build.h>
+#include FT_FREETYPE_H
+#include FT_GLYPH_H
 #include "TTF.h"
 #include "TVirtualX.h"
 #include "TMath.h"
 #include "TPoint.h"
-#include "TClass.h"
-#include <wchar.h>
+
+#include <cwchar>
 #include <cstdlib>
+#include <iostream>
 
 ClassImp(TText);
 
@@ -109,15 +110,15 @@ void TText::Copy(TObject &obj) const
    ((TText&)obj).fY = fY;
    TNamed::Copy(obj);
    TAttText::Copy(((TText&)obj));
-   if (((TText&)obj).fWcsTitle != NULL) {
-      if (fWcsTitle != NULL) {
-         *reinterpret_cast<std::wstring*>(&((TText&)obj).fWcsTitle) = *reinterpret_cast<const std::wstring*>(&fWcsTitle);
+   if (((TText&)obj).fWcsTitle) {
+      if (fWcsTitle) {
+         *reinterpret_cast<std::wstring*>(((TText&)obj).fWcsTitle) = *reinterpret_cast<const std::wstring*>(fWcsTitle);
       } else {
-        delete reinterpret_cast<std::wstring*>(&((TText&)obj).fWcsTitle);
-        ((TText&)obj).fWcsTitle = NULL;
+        delete reinterpret_cast<std::wstring*>(((TText&)obj).fWcsTitle);
+        ((TText&)obj).fWcsTitle = nullptr;
       }
    } else {
-      if (fWcsTitle != NULL) {
+      if (fWcsTitle) {
          ((TText&)(obj)).fWcsTitle = new std::wstring(*reinterpret_cast<const std::wstring*>(fWcsTitle));
       }
    }
@@ -128,10 +129,10 @@ void TText::Copy(TObject &obj) const
 
 const void *TText::GetWcsTitle(void) const
 {
-   if (fWcsTitle != NULL) {
+   if (fWcsTitle) {
       return reinterpret_cast<std::wstring *>(fWcsTitle)->c_str();
    } else {
-      return NULL;
+      return nullptr;
    }
 }
 
@@ -743,7 +744,7 @@ void TText::PaintControlBox(Int_t x, Int_t y, Double_t theta)
 void TText::PaintText(Double_t x, Double_t y, const char *text)
 {
    TAttText::Modify();  //Change text attributes only if necessary
-   gPad->PaintText(x,y,text);
+   if (gPad) gPad->PaintText(x,y,text);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -752,7 +753,7 @@ void TText::PaintText(Double_t x, Double_t y, const char *text)
 void TText::PaintText(Double_t x, Double_t y, const wchar_t *text)
 {
    TAttText::Modify();  //Change text attributes only if necessary
-   gPad->PaintText(x,y,text);
+   if (gPad) gPad->PaintText(x,y,text);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -761,7 +762,7 @@ void TText::PaintText(Double_t x, Double_t y, const wchar_t *text)
 void TText::PaintTextNDC(Double_t u, Double_t v, const char *text)
 {
    TAttText::Modify();  //Change text attributes only if necessary
-   gPad->PaintTextNDC(u,v,text);
+   if (gPad) gPad->PaintTextNDC(u,v,text);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -770,7 +771,7 @@ void TText::PaintTextNDC(Double_t u, Double_t v, const char *text)
 void TText::PaintTextNDC(Double_t u, Double_t v, const wchar_t *text)
 {
    TAttText::Modify();  //Change text attributes only if necessary
-   gPad->PaintTextNDC(u,v,text);
+   if (gPad) gPad->PaintTextNDC(u,v,text);
 }
 
 ////////////////////////////////////////////////////////////////////////////////

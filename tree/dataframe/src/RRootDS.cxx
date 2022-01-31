@@ -1,3 +1,11 @@
+/*************************************************************************
+ * Copyright (C) 1995-2021, Rene Brun and Fons Rademakers.               *
+ * All rights reserved.                                                  *
+ *                                                                       *
+ * For the licensing terms see $ROOTSYS/LICENSE.                         *
+ * For the list of contributors see $ROOTSYS/README/CREDITS.             *
+ *************************************************************************/
+
 #include <ROOT/RDF/Utils.hxx>
 #include <ROOT/RRootDS.hxx>
 #include <ROOT/TSeq.hxx>
@@ -5,12 +13,13 @@
 #include <TError.h>
 #include <TROOT.h>         // For the gROOTMutex
 #include <TVirtualMutex.h> // For the R__LOCKGUARD
-#include <ROOT/RMakeUnique.hxx>
 
 #include <algorithm>
 #include <vector>
 
 namespace ROOT {
+
+namespace Internal {
 
 namespace RDF {
 
@@ -42,7 +51,7 @@ RRootDS::RRootDS(std::string_view treeName, std::string_view fileNameGlob)
    fModelChain.Add(fFileNameGlob.c_str());
 
    const TObjArray &lob = *fModelChain.GetListOfBranches();
-   fListOfBranches.resize(lob.GetEntries());
+   fListOfBranches.resize(lob.GetEntriesUnsafe());
 
    TIterCategory<TObjArray> iter(&lob);
    std::transform(iter.Begin(), iter.End(), fListOfBranches.begin(), [](TObject *o) { return o->GetName(); });
@@ -64,9 +73,8 @@ std::string RRootDS::GetTypeName(std::string_view colName) const
    }
    // TODO: we need to factor out the routine for the branch alone...
    // Maybe a cache for the names?
-   auto typeName =
-      ROOT::Internal::RDF::ColumnName2ColumnTypeName(std::string(colName), /*nsID=*/0, &fModelChain, /*ds=*/nullptr,
-                                                     /*isCustomCol=*/false);
+   auto typeName = ROOT::Internal::RDF::ColumnName2ColumnTypeName(std::string(colName), &fModelChain, /*ds=*/nullptr,
+                                                                  /*define=*/nullptr);
    // We may not have yet loaded the library where the dictionary of this type is
    TClass::GetClass(typeName.c_str());
    return typeName;
@@ -109,7 +117,7 @@ void RRootDS::InitSlot(unsigned int slot, ULong64_t firstEntry)
    fChains[slot].reset(chain);
 }
 
-void RRootDS::FinaliseSlot(unsigned int slot)
+void RRootDS::FinalizeSlot(unsigned int slot)
 {
    fChains[slot].reset(nullptr);
 }
@@ -128,18 +136,18 @@ bool RRootDS::SetEntry(unsigned int slot, ULong64_t entry)
 
 void RRootDS::SetNSlots(unsigned int nSlots)
 {
-   R__ASSERT(0U == fNSlots && "Setting the number of slots even if the number of slots is different from zero.");
+   assert(0U == fNSlots && "Setting the number of slots even if the number of slots is different from zero.");
 
    fNSlots = nSlots;
 
    const auto nColumns = fListOfBranches.size();
-   // Initialise the entire set of addresses
+   // Initialize the entire set of addresses
    fBranchAddresses.resize(nColumns, std::vector<void *>(fNSlots, nullptr));
 
    fChains.resize(fNSlots);
 }
 
-void RRootDS::Initialise()
+void RRootDS::Initialize()
 {
    const auto nentries = fModelChain.GetEntries();
    const auto chunkSize = nentries / fNSlots;
@@ -162,10 +170,11 @@ std::string RRootDS::GetLabel()
 
 RDataFrame MakeRootDataFrame(std::string_view treeName, std::string_view fileNameGlob)
 {
-   ROOT::RDataFrame tdf(std::make_unique<RRootDS>(treeName, fileNameGlob));
-   return tdf;
+   return ROOT::RDataFrame(treeName, fileNameGlob);
 }
 
 } // ns RDF
+
+} // ns Internal
 
 } // ns ROOT

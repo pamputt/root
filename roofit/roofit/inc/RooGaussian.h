@@ -18,9 +18,8 @@
 
 #include "RooAbsPdf.h"
 #include "RooRealProxy.h"
-#include "RooTrace.h"
 
-class RooRealVar;
+class RooAbsReal;
 
 class RooGaussian : public RooAbsPdf {
 public:
@@ -39,6 +38,15 @@ public:
   Int_t getGenerator(const RooArgSet& directVars, RooArgSet &generateVars, Bool_t staticInitOK=kTRUE) const override;
   void generateEvent(Int_t code) override;
 
+  /// Get the x variable.
+  RooAbsReal const& getX() const { return x.arg(); }
+
+  /// Get the mean parameter.
+  RooAbsReal const& getMean() const { return mean.arg(); }
+
+  /// Get the sigma parameter.
+  RooAbsReal const& getSigma() const { return sigma.arg(); }  
+  
 protected:
 
   RooRealProxy x ;
@@ -46,7 +54,8 @@ protected:
   RooRealProxy sigma ;
 
   Double_t evaluate() const override;
-  RooSpan<double> evaluateBatch(std::size_t begin, std::size_t batchSize) const override;
+  void computeBatch(cudaStream_t*, double* output, size_t size, RooBatchCompute::DataMap&) const override;
+  inline bool canComputeBatchWithCuda() const override { return true; }
 
 private:
 

@@ -47,6 +47,8 @@ namespace ROOT {
      like global or local coordinate systems.
 
      @ingroup GenVector
+
+     @sa Overview of the @ref GenVector "physics vector library"
     */
 
     template <class CoordSystem, class Tag = DefaultCoordinateSystemTag >
@@ -185,12 +187,9 @@ namespace ROOT {
          Set internal data based on 3 Scalars at *begin to *end
        */
       template <class IT>
-#ifndef NDEBUG
       PositionVector3D<CoordSystem, Tag>& SetCoordinates( IT begin, IT end )
-#else
-      PositionVector3D<CoordSystem, Tag>& SetCoordinates( IT begin, IT /* end */ )
-#endif
       { IT a = begin; IT b = ++begin; IT c = ++begin;
+        (void)end;
         assert (++begin==end);
         SetCoordinates (*a,*b,*c);
         return *this;
@@ -212,12 +211,9 @@ namespace ROOT {
          get internal data into 3 Scalars at *begin to *end (3 past begin)
        */
       template <class IT>
-#ifndef NDEBUG
       void GetCoordinates( IT begin, IT end ) const
-#else
-      void GetCoordinates( IT begin, IT /* end */ ) const
-#endif
       { IT a = begin; IT b = ++begin; IT c = ++begin;
+        (void)end;
         assert (++begin==end);
         GetCoordinates (*a,*b,*c);
       }

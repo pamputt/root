@@ -1,9 +1,9 @@
 // @(#)root/r:$Id$
-// Author: Omar Zapata   29/05/2013
+// Author: Omar Zapata  Omar.Zapata@cern.ch   29/05/2013
 
 
 /*************************************************************************
- * Copyright (C) 2013-2014, Omar Andres Zapata Mesa                      *
+ * Copyright (C) 1995-2021, Rene Brun and Fons Rademakers.               *
  * All rights reserved.                                                  *
  *                                                                       *
  * For the licensing terms see $ROOTSYS/LICENSE.                         *
@@ -30,9 +30,7 @@
 #include<string>
 #include<vector>
 //support for std c++11 classes
-// #if __cplusplus > 199711L
 #include<array>
-// #endif
 
 //pragma to disable warnings on Rcpp which have
 //so many noise compiling
@@ -49,7 +47,6 @@
 
 //Some useful typedefs
 typedef std::vector<TString> TVectorString;
-
 
 #include<RcppCommon.h>
 namespace ROOT {
@@ -123,10 +120,12 @@ namespace Rcpp {
       } ;
    }
 }
+
 //added to fix bug in last version of Rcpp on mac
 #if !defined(R_Version)
 #define R_Version(v,p,s) ((v * 65536) + (p * 256) + (s))
 #endif
+
 #include<Rcpp.h>//this headers should be called after templates definitions
 #include<Rcpp/Named.h>
 #undef HAVE_UINTPTR_T

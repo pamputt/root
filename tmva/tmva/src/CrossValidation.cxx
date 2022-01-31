@@ -23,16 +23,14 @@
 #include "TMVA/ResultsClassification.h"
 #include "TMVA/ResultsMulticlass.h"
 #include "TMVA/ROCCurve.h"
-#include "TMVA/tmvaglob.h"
 #include "TMVA/Types.h"
 
 #include "TSystem.h"
 #include "TAxis.h"
 #include "TCanvas.h"
 #include "TGraph.h"
+#include "TLegend.h"
 #include "TMath.h"
-
-#include "ROOT/RMakeUnique.hxx"
 
 #include <iostream>
 #include <memory>
@@ -99,7 +97,7 @@ TMultiGraph *TMVA::CrossValidationResult::GetROCCurves(Bool_t /*fLegend*/)
 ///
 /// \note You own the returned pointer.
 ///
-/// \param numSamples[in] Number of samples used for generating the average ROC
+/// \param[in] numSamples Number of samples used for generating the average ROC
 ///                       Curve. Avg. curve will be evaluated only at these
 ///                       points (using interpolation if necessary).
 ///
@@ -502,6 +500,7 @@ void TMVA::CrossValidation::SetSplitExpr(TString splitExpr)
 ///   - Stores the evaluation internally
 ///
 /// @param iFold fold to evaluate
+/// @param methodInfo method metadata
 ///
 
 TMVA::CrossValidationFoldResult TMVA::CrossValidation::ProcessFold(UInt_t iFold, const OptionMap & methodInfo)

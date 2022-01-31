@@ -1,10 +1,16 @@
-# Copyright (C) 1995-2019, Rene Brun and Fons Rademakers.
+# Copyright (C) 1995-2021, Rene Brun and Fons Rademakers.
 # All rights reserved.
 #
 # For the licensing terms see $ROOTSYS/LICENSE.
 # For the list of contributors see $ROOTSYS/README/CREDITS.
 
-cmake_minimum_required(VERSION 3.9 FATAL_ERROR)
+cmake_minimum_required(VERSION 3.16 FATAL_ERROR)
+
+if(WIN32)
+  # Set CMP0091 (MSVC runtime library flags are selected by an abstraction) to OLD
+  # to keep the old way of selecting the runtime library with the -MD/-MDd compiler flag
+  cmake_policy(SET CMP0091 OLD)
+endif()
 
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_BINARY_DIR)
   message(FATAL_ERROR
@@ -47,7 +53,7 @@ if(NOT $ENV{ROOTSYS} STREQUAL "")
   set(ENV{LD_LIBRARY_PATH} "${ENV_LD_LIBRARY_PATH}")
   set(ENV{PYTHONPATH} "${ENV_PYTHONPATH}")
   set(ENV{CMAKE_PREFIX_PATH} "${ENV_CMAKE_PREFIX_PATH}")
-  set(ENV{"ROOTSYS"} ${CMAKE_BINARY_DIR})
+  set(ENV{ROOTSYS} ${CMAKE_BINARY_DIR})
 endif()
 
 set(ROOTSYS ${CMAKE_BINARY_DIR})
@@ -91,9 +97,9 @@ else()
     # GIT_DESCRIBE_ALWAYS: v6-16-00-rc1
     # GIT_DESCRIBE_ALL: tags/v6-16-00-rc1
     # tag might end on "-rc1" or similar; parse version number in front.
-    string(REGEX REPLACE "v([0-9]+)-.*" "\\1" ROOT_MAJOR_VERSION ${GIT_DESCRIBE_ALWAYS})
-    string(REGEX REPLACE "v[0-9]+-([0-9]+).*" "\\1" ROOT_MINOR_VERSION ${GIT_DESCRIBE_ALWAYS})
-    string(REGEX REPLACE "v[0-9]+-[0-9]+-([0-9]+).*" "\\1" ROOT_PATCH_VERSION ${GIT_DESCRIBE_ALWAYS})
+    string(REGEX REPLACE "^tags/v([0-9]+)-.*" "\\1" ROOT_MAJOR_VERSION ${GIT_DESCRIBE_ALL})
+    string(REGEX REPLACE "^tags/v[0-9]+-([0-9]+).*" "\\1" ROOT_MINOR_VERSION ${GIT_DESCRIBE_ALL})
+    string(REGEX REPLACE "^tags/v[0-9]+-[0-9]+-([0-9]+).*" "\\1" ROOT_PATCH_VERSION ${GIT_DESCRIBE_ALL})
   elseif("${GIT_DESCRIBE_ALL}" MATCHES "/v[0-9]+-[0-9]+.*-patches$")
     # GIT_DESCRIBE_ALWAYS: v6-16-00-rc1-47-g9ba56ef4a3
     # GIT_DESCRIBE_ALL: heads/v6-16-00-patches
@@ -107,8 +113,37 @@ else()
     set(ROOT_FULL_VERSION "${ROOT_MAJOR_VERSION}.${ROOT_MINOR_VERSION}.${ROOT_PATCH_VERSION}")
   endif()
   set(ROOT_VERSION "${ROOT_MAJOR_VERSION}.${ROOT_MINOR_VERSION}.${ROOT_PATCH_VERSION}")
+  message(STATUS "Detected ROOT_VERSION ${ROOT_VERSION}")
 endif()
 
+#---Try to download a file to check internet connection-----------------------------------------
+message(STATUS "Checking internet connectivity...")
+file(DOWNLOAD https://root.cern/files/cmake_connectivity_test.txt ${CMAKE_CURRENT_BINARY_DIR}/cmake_connectivity_test.txt
+  TIMEOUT 10 STATUS DOWNLOAD_STATUS
+)
+# Get the status code from the download status
+list(GET DOWNLOAD_STATUS 0 STATUS_CODE)
+# Check if download was successful.
+if(${STATUS_CODE} EQUAL 0)
+  # Succcess
+  message(STATUS "Yes")
+  # Now let's delete the file
+  file(REMOVE ${CMAKE_CURRENT_BINARY_DIR}/cmake_connectivity_test.txt)
+  set(NO_CONNECTION FALSE)
+else()
+  # Error
+  message(STATUS "No: will not automatically download external dependencies")
+  set(NO_CONNECTION TRUE)
+endif()
+
+if(NO_CONNECTION)
+  if(clad AND fail-on-missing)
+    message(FATAL_ERROR "No internet connection. Please check your connection, or either disable the 'clad' option or the 'fail-on-missing' to automatically disable options requiring internet access")
+  elseif(clad)
+    message(STATUS "No internet connection, disabling the 'clad' option")
+  endif()
+  set(clad OFF CACHE BOOL "Disabled because there is no internet connection" FORCE)
+endif()
 
 #---Where to look first for cmake modules, before ${CMAKE_ROOT}/Modules/ is checked-------------
 set(CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake/modules)
@@ -118,11 +153,17 @@ set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
 #---Load some basic macros which are needed later for the confiuration and build----------------
 include(SearchRootCoreDeps)
+include(CheckCompiler)
 include(RootBuildOptions)
 include(RootMacros)
-include(CheckCompiler)
 include(CheckAssembler)
 include(CheckIntrinsics)
+
+#---Enable asserts------------------------------------------------------------------------------
+if(asserts)
+  string(REGEX REPLACE "-[UD]NDEBUG(=.*)?" "" "CMAKE_CXX_FLAGS_${_BUILD_TYPE_UPPER}" "${CMAKE_CXX_FLAGS_${_BUILD_TYPE_UPPER}}")
+  string(REGEX REPLACE "-[UD]NDEBUG(=.*)?" "" "CMAKE_C_FLAGS_${_BUILD_TYPE_UPPER}" "${CMAKE_C_FLAGS_${_BUILD_TYPE_UPPER}}")
+endif()
 
 #---Enable CCache ------------------------------------------------------------------------------
 if(ccache)
@@ -137,6 +178,27 @@ if(ccache)
   else()
     message(STATUS "Could NOT find ccache")
     set(ccache OFF CACHE BOOL "Use ccache (disabled since ccache was not found)" FORCE)
+  endif()
+endif()
+
+#---Enable distcc ------------------------------------------------------------------------------
+if(distcc)
+  find_program(DISTCC_COMMAND NAMES distcc)
+  mark_as_advanced(DISTCC_COMMAND ${DISTCC_COMMAND})
+  if(EXISTS ${DISTCC_COMMAND})
+    message(STATUS "Found distcc: ${DISTCC_COMMAND}")
+    if (ccache)
+        # If ccache is enabled, use distcc as CCACHE_PREFIX
+        message(STATUS "Because ccache is enabled, CCACHE_PREFIX is set to ${DISTCC_COMMAND}")
+        set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE "CCACHE_PREFIX=${DISTCC_COMMAND} ${CCACHE_COMMAND}")
+    else()
+        set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE ${DISTCC_COMMAND})
+    endif()
+    execute_process(COMMAND ${DISTCC_COMMAND} "--version" OUTPUT_VARIABLE DISTCC_VERSION)
+    string(REGEX REPLACE "distcc ([0-9\\.]+).*" "\\1" DISTCC_VERSION ${DISTCC_VERSION})
+  else()
+    message(STATUS "Could NOT find distcc")
+    set(distcc OFF CACHE BOOL "Use distcc (disabled since distcc was not found)" FORCE)
   endif()
 endif()
 
@@ -156,6 +218,21 @@ if (build_timing)
   set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE "${CMAKE_COMMAND} -E time")
   set_property(GLOBAL PROPERTY RULE_LAUNCH_LINK "${CMAKE_COMMAND} -E time")
   #set_property(GLOBAL PROPERTY RULE_LAUNCH_CUSTOM "${CMAKE_COMMAND} -E time")
+endif()
+
+#--- Set up address sanitizer builds ----------------------------------------------------------
+if(asan)
+  if(NOT CMAKE_COMPILER_IS_GNUCXX AND NOT CMAKE_CXX_COMPILER_ID MATCHES Clang)
+    message(WARNING "Address sanitizer builds only tested with gcc and Clang")
+  endif()
+
+  set(ASAN_EXTRA_LD_PRELOAD "${CMAKE_BINARY_DIR}/lib/${CMAKE_SHARED_LIBRARY_PREFIX}ROOTSanitizerConfig${CMAKE_SHARED_LIBRARY_SUFFIX}:${ASAN_RUNTIME_LIBRARY}")
+
+  foreach(item IN LISTS ASAN_EXTRA_CXX_FLAGS)
+    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:${item}>)
+  endforeach()
+  #add_link_options() not available in our CMake version:
+  set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} ${ASAN_EXTRA_SHARED_LINKER_FLAGS}")
 endif()
 
 #---Enable CTest package -----------------------------------------------------------------------
@@ -230,8 +307,6 @@ endforeach()
 add_custom_target(move_artifacts DEPENDS ${stamp_file} ${artifact_files_builddir})
 
 add_subdirectory (interpreter)
-# Add the compilation flags from LLVM to the flags we use to compile cling-based tools.
-set(CLING_CXXFLAGS "${CLING_CXXFLAGS} ${ROOT_LLVM_FLAGS}")
 
 #---CXX MODULES-----------------------------------------------------------------------------------
 if(cxxmodules)
@@ -371,7 +446,6 @@ if(runtime_cxxmodules)
     add_dependencies(onepcm ${target_dependency})
   endforeach()
   unset(ROOT_LIBRARY_TARGETS CACHE)
-  set(FIXME_TEMPORARILY_EXCLUDED_FOR_RUNTIME_CXXMODULES On)
 else()
   get_property(incdirs DIRECTORY PROPERTY INCLUDE_DIRECTORIES)
 
@@ -400,11 +474,11 @@ else()
       etc/dictpch/allLinkDefs.h
     COMMAND
       ${PYTHON_EXECUTABLE} ${CMAKE_SOURCE_DIR}/build/unix/makepchinput.py
-      ${CMAKE_SOURCE_DIR} . ${pyroot_experimental} ${__cling_pch}
+      ${CMAKE_SOURCE_DIR} . ${pyroot_legacy} ${__cling_pch}
     COMMAND
       ${CMAKE_COMMAND} -E env ROOTIGNOREPREFIX=1 ${PYTHON_EXECUTABLE}
       ${CMAKE_SOURCE_DIR}/etc/dictpch/makepch.py etc/allDict.cxx.pch
-      ${__allIncludes} -I${CMAKE_BINARY_DIR}/include
+      ${__allIncludes} -I${CMAKE_BINARY_DIR}/include -I${CMAKE_SOURCE_DIR}/core
     DEPENDS
       rootcling ${__pch_dependencies} ${__pch_dictionaries}
       ${CMAKE_SOURCE_DIR}/build/unix/makepchinput.py
@@ -420,13 +494,29 @@ endif()
 install(
    DIRECTORY ${CMAKE_BINARY_DIR}/lib/
    DESTINATION ${CMAKE_INSTALL_LIBDIR}
-   FILES_MATCHING PATTERN "*.pcm"
+   FILES_MATCHING
+   PATTERN "*.pcm"
+   PATTERN "modules.idx"
    PATTERN "JupyROOT" EXCLUDE
    PATTERN "JsMVA" EXCLUDE
    PATTERN "python*" EXCLUDE
    PATTERN "cmake" EXCLUDE
    PATTERN "pkgconfig" EXCLUDE
 )
+
+# modules.idx
+if(runtime_cxxmodules)
+  add_custom_command(OUTPUT ${CMAKE_INSTALL_LIBDIR}/modules.idx
+                     COMMAND ${CMAKE_COMMAND} -E remove -f modules.idx modules.timestamp
+                     COMMAND ${ld_library_path}=${CMAKE_LIBRARY_OUTPUT_DIRECTORY}:$ENV{${ld_library_path}}
+                             ROOTIGNOREPREFIX=1 ROOT_HIST=0
+                             $<TARGET_FILE:root.exe> -l -q -b
+                     WORKING_DIRECTORY ${CMAKE_INSTALL_LIBDIR}
+                     DEPENDS $<TARGET_FILE:root.exe> Cling Hist Tree Gpad Graf HistPainter move_artifacts ${modules_idx_deps})
+  add_custom_target(modules_idx ALL DEPENDS ${CMAKE_INSTALL_LIBDIR}/modules.idx)
+  add_dependencies(modules_idx ${modules_idx_deps})
+  set_directory_properties(PROPERTIES ADDITIONAL_CLEAN_FILES "${CMAKE_INSTALL_LIBDIR}/modules.timestamp")
+endif()
 
 #---hsimple.root---------(use the executable for clearer dependencies and proper return code)---
 add_custom_target(hsimple ALL DEPENDS tutorials/hsimple.root)
@@ -447,6 +537,10 @@ else()
                      DEPENDS $<TARGET_FILE:root.exe> Cling Hist Tree Gpad Graf HistPainter move_artifacts)
 endif()
 install(FILES ${CMAKE_BINARY_DIR}/tutorials/hsimple.root DESTINATION ${CMAKE_INSTALL_TUTDIR} COMPONENT tests)
+
+if(runtime_cxxmodules)
+  add_dependencies(hsimple modules_idx)
+endif()
 
 #---version--------------------------------------------------------------------------------------
 if(NOT WIN32)
@@ -484,7 +578,12 @@ if(NOT CMAKE_SOURCE_DIR STREQUAL CMAKE_INSTALL_PREFIX)
   if(webgui)
      install(DIRECTORY ui5/    DESTINATION ${CMAKE_INSTALL_OPENUI5DIR})
   endif()
-  install(DIRECTORY man/    DESTINATION ${CMAKE_INSTALL_MANDIR})
+  if(xproofd AND xrootd AND ssl)
+     set(MAN_PATT_EXCL)
+  else()
+     set(MAN_PATT_EXCL PATTERN xproofd.1 EXCLUDE)
+  endif()
+  install(DIRECTORY man/    DESTINATION ${CMAKE_INSTALL_MANDIR} ${MAN_PATT_EXCL})
   install(DIRECTORY tutorials/ DESTINATION ${CMAKE_INSTALL_TUTDIR} COMPONENT tests)
   install(FILES
     cmake/modules/RootMacros.cmake
@@ -492,8 +591,14 @@ if(NOT CMAKE_SOURCE_DIR STREQUAL CMAKE_INSTALL_PREFIX)
     DESTINATION ${CMAKE_INSTALL_CMAKEDIR})
 endif()
 
-#---Make sure the Jupyter ROOT C++ kernel runs with the same Python version as ROOT-----
-set(root_kernel_dir  notebook/kernels/root)
+#---Add configuration files for kernel and jupyter----------------------------------------------
+# Make sure the Jupyter ROOT C++ kernel runs with the same Python version as ROOT
+set(root_jupyter_dir notebook)
+set(root_jupyter_config jupyter_notebook_config.py)
+configure_file(etc/${root_jupyter_dir}/${root_jupyter_config}.in etc/${root_jupyter_dir}/${root_jupyter_config})
+install(FILES ${CMAKE_BINARY_DIR}/etc/${root_jupyter_dir}/${root_jupyter_config} DESTINATION ${CMAKE_INSTALL_SYSCONFDIR}/${root_jupyter_dir})
+
+set(root_kernel_dir  ${root_jupyter_dir}/kernels/root)
 set(root_kernel_file kernel.json)
 configure_file(etc/${root_kernel_dir}/${root_kernel_file}.in etc/${root_kernel_dir}/${root_kernel_file})
 install(FILES ${CMAKE_BINARY_DIR}/etc/${root_kernel_dir}/${root_kernel_file} DESTINATION ${CMAKE_INSTALL_SYSCONFDIR}/${root_kernel_dir})
@@ -504,8 +609,8 @@ if(clad)
       DESTINATION ${CMAKE_INSTALL_SYSCONFDIR}/cling/plugins)
 endif()
 
-#---Set flag for PyROOT tests that are expected to fail in experimental
-if(pyroot_experimental)
+#---Set flag for PyROOT tests that are expected to fail
+if(pyroot)
   set(PYTESTS_WILLFAIL WILLFAIL)
 endif()
 
@@ -513,6 +618,7 @@ endif()
 configure_file(${CMAKE_SOURCE_DIR}/cmake/modules/CTestCustom.cmake ${CMAKE_BINARY_DIR} COPYONLY)
 if(testing)
   include(RootCTest)
+
   if(roottest)
     #---Is the roottest source directory around?
     if(IS_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/roottest)
@@ -532,15 +638,22 @@ if(testing)
       find_package(Git REQUIRED)
 
       if(IS_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/.git)
-        execute_process(COMMAND ${GIT_EXECUTABLE} rev-parse --abbrev-ref HEAD
+        execute_process(COMMAND ${GIT_EXECUTABLE} for-each-ref --points-at=HEAD --count=1 --format=%\(refname:short\)
                         WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
                         OUTPUT_VARIABLE GIT_BRANCH OUTPUT_STRIP_TRAILING_WHITESPACE)
       else()
         set(GIT_BRANCH v${ROOT_MAJOR_VERSION}-${ROOT_MINOR_VERSION}-${ROOT_PATCH_VERSION})
       endif()
 
+      # Resolve the `latest-stable` branch to the latest merged head/tag
+      if("${GIT_BRANCH}" STREQUAL "latest-stable")
+        execute_process(COMMAND ${GIT_EXECUTABLE} for-each-ref --points-at=latest-stable^2 --format=%\(refname:short\)
+                        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+                        OUTPUT_VARIABLE GIT_BRANCH OUTPUT_STRIP_TRAILING_WHITESPACE)
+      endif()
+
       execute_process(COMMAND
-        ${GIT_EXECUTABLE} ls-remote --heads
+        ${GIT_EXECUTABLE} ls-remote --heads --tags
         https://github.com/root-project/roottest.git ${GIT_BRANCH}
         OUTPUT_VARIABLE ROOTTEST_GIT_BRANCH)
 
@@ -587,6 +700,22 @@ if(testing)
     endif()
   endif()
 endif()
+
+cmake_host_system_information(RESULT PROCESSOR QUERY PROCESSOR_DESCRIPTION)
+
+message(STATUS "ROOT Configuration \n
+System          ${CMAKE_SYSTEM}
+Processor       ${PROCESSOR} (${CMAKE_SYSTEM_PROCESSOR})
+Build type      ${CMAKE_BUILD_TYPE}
+Install path    ${CMAKE_INSTALL_PREFIX}
+Compiler        ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}
+Compiler flags:
+C               ${CMAKE_C_FLAGS} ${CMAKE_C_FLAGS_${_BUILD_TYPE_UPPER}}
+C++             ${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_${_BUILD_TYPE_UPPER}}
+Linker flags:
+Executable      ${CMAKE_EXE_LINKER_FLAGS}
+Module          ${CMAKE_MODULE_LINKER_FLAGS}
+Shared          ${CMAKE_SHARED_LINKER_FLAGS}\n")
 
 ROOT_SHOW_ENABLED_OPTIONS()
 

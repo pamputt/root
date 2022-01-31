@@ -22,10 +22,7 @@
 #include "Math/Error.h"
 
 
-
-#include <vector>
 #include <string>
-
 #include <limits>
 #include <cmath>
 
@@ -64,13 +61,13 @@ namespace ROOT {
    used by the Minimizer.
 
    It Defines also interface for setting the initial values for the function variables (which are the parameters in
-   of the model function in case of solving for fitting) and especifying their limits.
+   of the model function in case of solving for fitting) and specifying their limits.
 
    It defines the interface to set and retrieve basic minimization parameters
    (for specific Minimizer parameters one must use the derived classes).
 
    Then it defines the interface to retrieve the result of minimization ( minimum X values, function value,
-   gradient, error on the mimnimum, etc...)
+   gradient, error on the minimum, etc...)
 
    @ingroup MultiMin
 */
@@ -113,7 +110,7 @@ private:
 
 public:
 
-   /// reset for consecutive minimizations - implement if needed
+   /// reset for consecutive minimization - implement if needed
    virtual void Clear() {}
 
    /// set the function to minimize
@@ -224,13 +221,13 @@ public:
    /// query if an existing variable is fixed (i.e. considered constant in the minimization)
    /// note that by default all variables are not fixed
    virtual bool IsFixedVariable(unsigned int ivar) const {
-      MATH_ERROR_MSG("Minimizer::IsFixedVariable","Quering an existing variable not implemented");
+      MATH_ERROR_MSG("Minimizer::IsFixedVariable","Querying an existing variable not implemented");
       MATH_UNUSED(ivar);
       return false;
    }
    /// get variable settings in a variable object (like ROOT::Fit::ParamsSettings)
    virtual bool GetVariableSettings(unsigned int ivar, ROOT::Fit::ParameterSettings & pars) const {
-      MATH_ERROR_MSG("Minimizer::GetVariableSettings","Quering an existing variable not implemented");
+      MATH_ERROR_MSG("Minimizer::GetVariableSettings","Querying an existing variable not implemented");
       MATH_UNUSED(ivar); MATH_UNUSED(pars);
       return false;
    }
@@ -344,7 +341,6 @@ public:
       minos error for variable i, return false if Minos failed or not supported
       and the lower and upper errors are returned in errLow and errUp
       An extra flag  specifies if only the lower (option=-1) or the upper (option=+1) error calculation is run
-      (This feature is not yet implemented)
    */
    virtual bool GetMinosError(unsigned int ivar , double & errLow, double & errUp, int option = 0) {
       MATH_ERROR_MSG("Minimizer::GetMinosError","Minos Error not implemented");
@@ -387,7 +383,7 @@ public:
    /// return reference to the objective function
    ///virtual const ROOT::Math::IGenFunction & Function() const = 0;
 
-   /// print the result according to set level (implemented for TMinuit for mantaining Minuit-style printing)
+   /// print the result according to set level (implemented for TMinuit for maintaining Minuit-style printing)
    virtual void PrintResults() {}
 
    /// get name of variables (override if minimizer support storing of variable names)
@@ -428,6 +424,9 @@ public:
 
    /// status code of minimizer
    int Status() const { return fStatus; }
+
+   /// status code of Minos (to be re-implemented by the minimizers supporting Minos)
+   virtual int MinosStatus() const { return -1; }
 
    /// return the statistical scale used for calculate the error
    /// is typically 1 for Chi2 and 0.5 for likelihood minimization
@@ -471,7 +470,10 @@ public:
       fOptions = opt;
    }
 
-   /// reset the defaut options (defined in MinimizerOptions)
+   /// set only the extra options
+   void SetExtraOptions(const IOptions & extraOptions) { fOptions.SetExtraOptions(extraOptions); }
+
+   /// reset the default options (defined in MinimizerOptions)
    void SetDefaultOptions() {
       fOptions.ResetToDefaultOptions();
    }
@@ -485,9 +487,9 @@ protected:
    // keep protected to be accessible by the derived classes
 
 
-   bool fValidError;            // flag to control if errors have been validated (Hesse has been run in case of Minuit)
-   MinimizerOptions fOptions;   // minimizer options
-   int fStatus;                 // status of minimizer
+   bool fValidError;            ///< flag to control if errors have been validated (Hesse has been run in case of Minuit)
+   MinimizerOptions fOptions;   ///< minimizer options
+   int fStatus;                 ///< status of minimizer
 };
 
    } // end namespace Math

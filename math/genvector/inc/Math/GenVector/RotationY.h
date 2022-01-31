@@ -38,6 +38,8 @@ namespace Math {
       For efficiency reason, in addition to the the angle, the sine and cosine of the angle are held
 
       @ingroup GenVector
+
+      @sa Overview of the @ref GenVector "physics vector library"
    */
 
 class RotationY {
@@ -94,13 +96,13 @@ public:
    /**
       Get the angle
    */
-   void GetAngle(Scalar &angle) const { angle = atan2(fSin, fCos); }
+   void GetAngle(Scalar &angle) const { using std::atan2; angle = atan2(fSin, fCos); }
    void GetComponents ( Scalar & angle ) const { GetAngle(angle); }
 
    /**
       Angle of rotation
    */
-   Scalar Angle() const { return atan2(fSin, fCos); }
+   Scalar Angle() const { using std::atan2; return atan2(fSin, fCos); }
 
    /**
       Sine or Cosine of the rotation angle

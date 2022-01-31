@@ -37,7 +37,6 @@
 #include "TGWindow.h"
 #include "TSystem.h"
 #include "TGFrame.h"
-#include "TGLIncludes.h"
 #include "TError.h"
 #include "TColor.h"
 #include "TROOT.h"
@@ -54,7 +53,7 @@
 #include <cstring>
 #include <cstddef>
 #include <limits>
-
+#include <memory>
 
 //Style notes: I'm using a lot of asserts to check pre-conditions - mainly function parameters.
 //In asserts, expression always looks like 'p != 0' for "C++ pointer" (either object of built-in type
@@ -193,12 +192,36 @@ void SetFilledAreaColorFromX11Context(CGContextRef ctx, const GCValues_t &gcVals
 }
 
 struct PatternContext {
-   Mask_t                 fMask;
-   Int_t                  fFillStyle;
-   ULong_t                fForeground;
-   ULong_t                fBackground;
-   NSObject<X11Drawable> *fImage;//Either stipple or tile image.
-   CGSize                 fPhase;
+   PatternContext(Mask_t mask = {}, Int_t fillStyle = {}, Int_t foreground = 0, Int_t background = 0,
+                  NSObject<X11Drawable> *image = nil, CGSize phase = {})
+      : fMask(mask), fFillStyle(fillStyle), fForeground(foreground), fBackground(background), fPhase(phase)
+   {
+      fImage = [image retain];
+   }
+   ~PatternContext()
+   {
+       [fImage release];
+   }
+
+   PatternContext(const PatternContext &) = delete;
+   PatternContext(PatternContext &&) = delete;
+   PatternContext &operator = (const PatternContext &) = delete;
+   PatternContext &operator = (PatternContext &&) = delete;
+
+   void SetImage(NSObject<X11Drawable> *image)
+   {
+       if (image != fImage) {
+           [fImage release];
+           fImage = [image retain];
+       }
+   }
+
+   Mask_t                 fMask = {};
+   Int_t                  fFillStyle = 0;
+   ULong_t                fForeground = 0;
+   ULong_t                fBackground = 0;
+   NSObject<X11Drawable> *fImage = nil;//Either stipple or tile image.
+   CGSize                 fPhase = {};
 };
 
 
@@ -305,6 +328,12 @@ void DrawPattern(void *info, CGContextRef ctx)
 }
 
 //______________________________________________________________________________
+void PatternRelease(void *info)
+{
+    delete static_cast<PatternContext *>(info);
+}
+
+//______________________________________________________________________________
 void SetFillPattern(CGContextRef ctx, const PatternContext *patternContext)
 {
    //Create CGPatternRef to fill GUI elements with pattern.
@@ -320,6 +349,7 @@ void SetFillPattern(CGContextRef ctx, const PatternContext *patternContext)
 
    CGPatternCallbacks callbacks = {};
    callbacks.drawPattern = DrawPattern;
+   callbacks.releaseInfo = PatternRelease;
    const CGRect patternRect = CGRectMake(0, 0, patternContext->fImage.fWidth, patternContext->fImage.fHeight);
    const Util::CFScopeGuard<CGPatternRef> pattern(CGPatternCreate((void *)patternContext, patternRect, CGAffineTransformIdentity,
                                                                   patternContext->fImage.fWidth, patternContext->fImage.fHeight,
@@ -477,7 +507,10 @@ Bool_t TGCocoa::Init(void * /*display*/)
 //______________________________________________________________________________
 Int_t TGCocoa::OpenDisplay(const char * /*dpyName*/)
 {
-   //Noop.
+   // return <0 in case of "error". The only error we have is: no interactive
+   // session, i.e no windows message handler etc.
+   if (CGMainDisplayID() == kCGNullDirectDisplay)
+      return -1;
    return 0;
 }
 
@@ -1895,26 +1928,27 @@ void TGCocoa::FillRectangleAux(Drawable_t wid, const GCValues_t &gcVals, Int_t x
    const Quartz::CGStateGuard ctxGuard(ctx);//Will restore context state.
 
    if (HasFillStippledStyle(gcVals) || HasFillOpaqueStippledStyle(gcVals) ||  HasFillTiledStyle(gcVals)) {
-      PatternContext patternContext = {gcVals.fMask, gcVals.fFillStyle, 0, 0, nil, patternPhase};
-
+      std::unique_ptr<PatternContext> patternContext(new PatternContext(gcVals.fMask, gcVals.fFillStyle,
+                                                                        0, 0, nil, patternPhase));
       if (HasFillStippledStyle(gcVals) || HasFillOpaqueStippledStyle(gcVals)) {
          assert(gcVals.fStipple != kNone &&
                 "FillRectangleAux, fill_style is FillStippled/FillOpaqueStippled,"
                 " but no stipple is set in a context");
 
-         patternContext.fForeground = gcVals.fForeground;
-         patternContext.fImage = fPimpl->GetDrawable(gcVals.fStipple);
+         patternContext->fForeground = gcVals.fForeground;
+         patternContext->SetImage(fPimpl->GetDrawable(gcVals.fStipple));
 
          if (HasFillOpaqueStippledStyle(gcVals))
-            patternContext.fBackground = gcVals.fBackground;
+            patternContext->fBackground = gcVals.fBackground;
       } else {
          assert(gcVals.fTile != kNone &&
                 "FillRectangleAux, fill_style is FillTiled, but not tile is set in a context");
 
-         patternContext.fImage = fPimpl->GetDrawable(gcVals.fTile);
+         patternContext->SetImage(fPimpl->GetDrawable(gcVals.fTile));
       }
 
-      SetFillPattern(ctx, &patternContext);
+      SetFillPattern(ctx, patternContext.get());
+      patternContext.release();
       CGContextFillRect(ctx, fillRect);
 
       return;
@@ -1984,26 +2018,27 @@ void TGCocoa::FillPolygonAux(Window_t wid, const GCValues_t &gcVals, const Point
    CGContextSetAllowsAntialiasing(ctx, false);
 
    if (HasFillStippledStyle(gcVals) || HasFillOpaqueStippledStyle(gcVals) ||  HasFillTiledStyle(gcVals)) {
-      PatternContext patternContext = {gcVals.fMask, gcVals.fFillStyle, 0, 0, nil, patternPhase};
+      std::unique_ptr<PatternContext> patternContext(new PatternContext(gcVals.fMask, gcVals.fFillStyle, 0, 0, nil, patternPhase));
 
       if (HasFillStippledStyle(gcVals) || HasFillOpaqueStippledStyle(gcVals)) {
          assert(gcVals.fStipple != kNone &&
                 "FillRectangleAux, fill style is FillStippled/FillOpaqueStippled,"
                 " but no stipple is set in a context");
 
-         patternContext.fForeground = gcVals.fForeground;
-         patternContext.fImage = fPimpl->GetDrawable(gcVals.fStipple);
+         patternContext->fForeground = gcVals.fForeground;
+         patternContext->SetImage(fPimpl->GetDrawable(gcVals.fStipple));
 
          if (HasFillOpaqueStippledStyle(gcVals))
-            patternContext.fBackground = gcVals.fBackground;
+            patternContext->fBackground = gcVals.fBackground;
       } else {
          assert(gcVals.fTile != kNone &&
                 "FillRectangleAux, fill_style is FillTiled, but not tile is set in a context");
 
-         patternContext.fImage = fPimpl->GetDrawable(gcVals.fTile);
+         patternContext->SetImage(fPimpl->GetDrawable(gcVals.fTile));
       }
 
-      SetFillPattern(ctx, &patternContext);
+      SetFillPattern(ctx, patternContext.get());
+      patternContext.release();
    } else
       SetFilledAreaColorFromX11Context(ctx, gcVals);
 
@@ -2254,8 +2289,9 @@ void TGCocoa::ClearAreaAux(Window_t windowID, Int_t x, Int_t y, UInt_t w, UInt_t
       }
       const Quartz::CGStateGuard ctxGuard(view.fContext);//Will restore context state.
 
-      PatternContext patternContext = {Mask_t(), 0, 0, 0, view.fBackgroundPixmap, patternPhase};
-      SetFillPattern(view.fContext, &patternContext);
+      std::unique_ptr<PatternContext> patternContext(new PatternContext({}, 0, 0, 0, view.fBackgroundPixmap, patternPhase));
+      SetFillPattern(view.fContext, patternContext.get());
+      patternContext.release();
       CGContextFillRect(view.fContext, fillRect);
    }
 }
@@ -3441,6 +3477,8 @@ void TGCocoa::SetDoubleBufferON()
 
    NSObject<X11Window> * const window = fPimpl->GetWindow(fSelectedDrawable);
 
+   if (!window) return;
+
    assert(window.fIsPixmap == NO &&
           "SetDoubleBufferON, selected drawable is a pixmap, can not attach pixmap to pixmap");
 
@@ -3466,7 +3504,17 @@ void TGCocoa::SetDrawMode(EDrawMode mode)
 {
    // Sets the drawing mode.
    //
-   //EDrawMode{kCopy, kXor};
+   //EDrawMode{kCopy, kXor, kInvert};
+   if (fDrawMode == kInvert && mode != kInvert) {
+       // Remove previously added CrosshairWindow.
+       auto windows = NSApplication.sharedApplication.windows;
+       for (NSWindow *candidate : windows) {
+           if ([candidate isKindOfClass:QuartzWindow.class])
+               [(QuartzWindow *)candidate removeXorWindow];
+       }
+       fPimpl->fX11CommandBuffer.ClearXOROperations();
+   }
+
    fDrawMode = mode;
 }
 

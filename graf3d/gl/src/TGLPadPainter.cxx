@@ -26,7 +26,6 @@
 #include "TGLPadPainter.h"
 #include "TGLIncludes.h"
 #include "TGLUtil.h"
-#include "TError.h"
 #include "TMath.h"
 
 namespace {
@@ -979,7 +978,7 @@ void TGLPadPainter::SaveImage(TVirtualPad *pad, const char *fileName, Int_t type
    if (!canvas)
       return;
 
-   gROOT->ProcessLine(Form("((TCanvas *)0x%lx)->Flush();", (ULong_t)canvas));
+   gROOT->ProcessLine(Form("((TCanvas *)0x%zx)->Flush();", (size_t)canvas));
 
    std::vector<unsigned> buff(canvas->GetWw() * canvas->GetWh());
    glPixelStorei(GL_PACK_ALIGNMENT, 1);

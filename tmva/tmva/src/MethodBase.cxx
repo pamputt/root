@@ -80,7 +80,6 @@
 #include "TMVA/MsgLogger.h"
 #include "TMVA/PDF.h"
 #include "TMVA/Ranking.h"
-#include "TMVA/Factory.h"
 #include "TMVA/DataLoader.h"
 #include "TMVA/Tools.h"
 #include "TMVA/Results.h"
@@ -89,7 +88,6 @@
 #include "TMVA/ResultsMulticlass.h"
 #include "TMVA/RootFinder.h"
 #include "TMVA/Timer.h"
-#include "TMVA/Tools.h"
 #include "TMVA/TSpline1.h"
 #include "TMVA/Types.h"
 #include "TMVA/VariableDecorrTransform.h"
@@ -111,9 +109,7 @@
 #include "TH1F.h"
 #include "TH2F.h"
 #include "TFile.h"
-#include "TKey.h"
 #include "TGraph.h"
-#include "Riostream.h"
 #include "TXMLEngine.h"
 
 #include <iomanip>
@@ -142,7 +138,6 @@ const Int_t    NBIN_HIST_HIGH = 10000;
 #endif
 
 
-#include "TGraph.h"
 #include "TMultiGraph.h"
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -888,9 +883,12 @@ void TMVA::MethodBase::AddClassifierOutput( Types::ETreeType type )
    if (type==Types::kTesting)
       SetTestTime(timer.ElapsedSeconds());
 
-   // load mva values to results object
-   for (Int_t ievt=0; ievt<nEvents; ievt++) {
-      clRes->SetValue( mvaValues[ievt], ievt );
+   // load mva values and type to results object
+   for (Int_t ievt = 0; ievt < nEvents; ievt++) {
+      // note we do not need the trasformed event to get the signal/background information
+      // by calling Data()->GetEvent instead of this->GetEvent we access the untransformed one
+      auto ev = Data()->GetEvent(ievt);
+      clRes->SetValue(mvaValues[ievt], ievt, DataInfo().IsSignal(ev));
    }
 }
 
@@ -936,6 +934,17 @@ std::vector<Double_t> TMVA::MethodBase::GetMvaValues(Long64_t firstEvt, Long64_t
 }
 
 ////////////////////////////////////////////////////////////////////////////////
+/// get all the MVA values for the events of the given Data type
+// (this is used by Method Category and it does not need to be re-implmented by derived classes )
+std::vector<Double_t> TMVA::MethodBase::GetDataMvaValues(DataSet * data, Long64_t firstEvt, Long64_t lastEvt, Bool_t logProgress)
+{
+   fTmpData = data;
+   auto result = GetMvaValues(firstEvt, lastEvt, logProgress);
+   fTmpData = nullptr;
+   return result;
+}
+
+////////////////////////////////////////////////////////////////////////////////
 /// prepare tree branch with the method's discriminating variable
 
 void TMVA::MethodBase::AddClassifierOutputProb( Types::ETreeType type )
@@ -959,7 +968,7 @@ void TMVA::MethodBase::AddClassifierOutputProb( Types::ETreeType type )
       Data()->SetCurrentEvent(ievt);
       Float_t proba = ((Float_t)GetProba( GetMvaValue(), 0.5 ));
       if (proba < 0) break;
-      mvaProb->SetValue( proba, ievt );
+      mvaProb->SetValue( proba, ievt, DataInfo().IsSignal( Data()->GetEvent()) );
 
       // print progress
       Int_t modulo = Int_t(nEvents/100);
@@ -1026,7 +1035,10 @@ void TMVA::MethodBase::TestRegression( Double_t& bias, Double_t& biasT,
       m1  += t*w; s1 += t*t*w;
       m2  += r*w; s2 += r*r*w;
       s12 += t*r;
-      if ((ievt & 0xFF) == 0) timer.DrawProgressBar(ievt);
+      // print progress
+      Long64_t modulo = Long64_t(nevt / 100);
+      if (ievt % modulo == 0)
+         timer.DrawProgressBar(ievt);
    }
    timer.DrawProgressBar(nevt - 1);
    Log() << kINFO << "Elapsed time for evaluation of " << nevt <<  " events: "
@@ -1199,7 +1211,7 @@ void TMVA::MethodBase::TestClassification()
 
    Log() << kHEADER <<Form("[%s] : ",DataInfo().GetName())<< "Loop over test events and fill histograms with classifier response..." << Endl << Endl;
    if (mvaProb) Log() << kINFO << "Also filling probability and rarity histograms (on request)..." << Endl;
-   std::vector<Bool_t>* mvaResTypes = mvaRes->GetValueVectorTypes();
+   //std::vector<Bool_t>* mvaResTypes = mvaRes->GetValueVectorTypes();
 
    //LM: this is needed to avoid crashes in ROOCCURVE
    if ( mvaRes->GetSize() != GetNEvents() ) {
@@ -1214,7 +1226,7 @@ void TMVA::MethodBase::TestClassification()
       Float_t w = ev->GetWeight();
 
       if (DataInfo().IsSignal(ev)) {
-         mvaResTypes->push_back(kTRUE);
+         //mvaResTypes->push_back(kTRUE);
          mva_s ->Fill( v, w );
          if (mvaProb) {
             proba_s->Fill( (*mvaProb)[ievt][0], w );
@@ -1224,7 +1236,7 @@ void TMVA::MethodBase::TestClassification()
          mva_eff_s ->Fill( v, w );
       }
       else {
-         mvaResTypes->push_back(kFALSE);
+         //mvaResTypes->push_back(kFALSE);
          mva_b ->Fill( v, w );
          if (mvaProb) {
             proba_b->Fill( (*mvaProb)[ievt][0], w );

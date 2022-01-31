@@ -16,50 +16,25 @@
 #include <ROOT/REveVector.hxx>
 #include <ROOT/REveProjectionBases.hxx>
 
+#include <map>
 #include <memory>
 
 class TGeoMatrix;
 
-/// use temporary solution for forwarding of nlohmann::json
-/// after version of 3.1.0 it is included in official releases
-/// see https://github.com/nlohmann/json/issues/314
-
-#ifndef INCLUDE_NLOHMANN_JSON_FWD_HPP_
-#define INCLUDE_NLOHMANN_JSON_FWD_HPP_
-
-#include <cstdint> // int64_t, uint64_t
-#include <map> // map
-#include <memory> // allocator
-#include <string> // string
-#include <vector> // vector
-
-namespace nlohmann
-{
-
-// see json_fwd.hpp
-template<typename T = void, typename SFINAE = void>
+namespace nlohmann {
+template<typename T, typename SFINAE>
 struct adl_serializer;
 
-template<template<typename U, typename V, typename... Args> class ObjectType =
-         std::map,
-         template<typename U, typename... Args> class ArrayType = std::vector,
-         class StringType = std::string, class BooleanType = bool,
-         class NumberIntegerType = std::int64_t,
-         class NumberUnsignedType = std::uint64_t,
-         class NumberFloatType = double,
-         template<typename U> class AllocatorType = std::allocator,
-         template<typename T, typename SFINAE = void> class JSONSerializer =
-         adl_serializer>
+template <template <typename U, typename V, typename... Args> class ObjectType,
+          template <typename U, typename... Args> class ArrayType, class StringType, class BooleanType,
+          class NumberIntegerType, class NumberUnsignedType, class NumberFloatType,
+          template <typename U> class AllocatorType, template <typename T, typename SFINAE = void> class JSONSerializer,
+          class BinaryType>
 class basic_json;
 
-template<typename BasicJsonType>
-class json_pointer;
-
-using json = basic_json<>;
-}  // namespace nlohmann
-
-#endif
-
+using json = basic_json<std::map, std::vector, std::string, bool, std::int64_t, std::uint64_t, double, std::allocator,
+                        adl_serializer, std::vector<std::uint8_t>>;
+} // namespace nlohmann
 
 namespace ROOT {
 namespace Experimental {
@@ -154,7 +129,7 @@ public:
    const std::string &GetTitle()  const { return fTitle; }
    const char* GetCTitle() const { return fTitle.c_str();  }
 
-   virtual std::string GetHighlightTooltip() const { return fTitle; }
+   virtual std::string GetHighlightTooltip(const std::set<int>&) const;
 
    void SetName (const std::string &name);
    void SetTitle(const std::string &title);
@@ -329,7 +304,7 @@ public:
    void   SetPickable(Bool_t p) { fPickable = p; }
    void   SetPickableRecursively(Bool_t p);
 
-   REveElement* GetSelectionMaster();
+   virtual REveElement* GetSelectionMaster();
    void         SetSelectionMaster(REveElement *el) { fSelectionMaster = el; }
 
    virtual void FillImpliedSelectedSet(Set_t& impSelSet);
@@ -352,6 +327,8 @@ public:
    void   CSCApplyMainTransparencyToAllChildren()      { fCSCBits |= kCSCBApplyMainTransparencyToAllChildren; }
    void   CSCApplyMainTransparencyToMatchingChildren() { fCSCBits |= kCSCBApplyMainTransparencyToMatchingChildren; }
 
+   virtual bool RequiresExtraSelectionData() const { return false; }
+   virtual void FillExtraSelectionData(nlohmann::json&, const std::set<int>&) const {}
 
    // Change-stamping and change bits
    //---------------------------------

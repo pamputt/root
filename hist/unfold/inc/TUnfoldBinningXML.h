@@ -41,10 +41,8 @@
 
 #include "TUnfoldBinning.h"
 #include <iostream>
-#include <TNamed.h>
 #include <TXMLNode.h>
 #include <TXMLDocument.h>
-#include <iostream>
 
 class TXMLNode;
 class TXMLDocument;

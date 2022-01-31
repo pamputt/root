@@ -1122,6 +1122,70 @@ void print_mask_info(ULong_t mask)
 }
 #endif
 
+@implementation XorDrawingView
+{
+    std::vector<ROOT::MacOSX::X11::Command *> xorOps;
+}
+
+- (void) setXorOperations : (const std::vector<ROOT::MacOSX::X11::Command *> &) primitives
+{
+    xorOps = primitives;
+}
+
+- (void) drawRect : (NSRect) dirtyRect
+{
+    [super drawRect:dirtyRect];
+    NSGraphicsContext *nsContext = [NSGraphicsContext currentContext];
+    if (!nsContext)
+        return;
+
+    CGContextRef cgContext = nsContext.CGContext;
+    if (!cgContext)
+        return;
+
+    const Quartz::CGStateGuard ctxGuard(cgContext);
+
+    CGContextSetRGBStrokeColor(cgContext, 0., 0., 0., 1.);
+    CGContextSetLineWidth(cgContext, 1.);
+
+    for (auto *command : xorOps) {
+        command->Execute(cgContext);
+        delete command;
+    }
+
+    xorOps.clear();
+}
+
+@end
+
+@implementation XorDrawingWindow
+
+- (instancetype) init
+{
+    if (self = [super init])
+    {
+        self.styleMask = NSWindowStyleMaskBorderless; // No titlebar, buttons, etc.
+        self.opaque = NO;
+        self.hasShadow = NO;
+        self.backgroundColor = NSColor.clearColor; // No background.
+        self.ignoresMouseEvents = YES; // Lets mouse events pass through.
+        self.contentView = [[XorDrawingView alloc] init];
+    }
+    return self;
+}
+
+#pragma mark - suppress the normal window behavior.
+- (BOOL)canBecomeKeyWindow
+{
+    return NO;
+}
+- (BOOL)canBecomeMainWindow
+{
+    return NO;
+}
+
+@end
+
 
 @implementation QuartzWindow
 
@@ -1379,6 +1443,12 @@ void print_mask_info(ULong_t mask)
    assert(!(newSize.height < 0) && "-setDrawableSize:, height is negative");
 
    NSRect frame = self.frame;
+   // Some sanity check (rather random and inconsistent, based on the recent M1 crash/assert):
+   if (frame.origin.x < -100000. || frame.origin.x > 100000.) {
+      // Hope nobody has screens like this!
+      NSLog(@"Attempting to set a frame with X: %g", frame.origin.x);
+      frame.origin.x = 0.; // Otherwise, AppKit seems to use uint(-1) to initialise frames ... sometimes?
+   }
    //dY is potentially a titlebar height.
    const CGFloat dY = fContentView ? frame.size.height - fContentView.frame.size.height : 0.;
    //Adjust the frame.
@@ -1432,6 +1502,59 @@ void print_mask_info(ULong_t mask)
 
    return [fContentView readColorBits : area];
 }
+
+#pragma mark - XorDrawinWindow/View
+
+//______________________________________________________________________________
+- (void) addXorWindow
+{
+    if ([self findXorWindow])
+        return;
+
+    XorDrawingWindow *special = [[XorDrawingWindow alloc] init];
+    [self adjustXorWindowGeometry:special];
+    [self addChildWindow : special ordered : NSWindowAbove];
+    [special release];
+}
+
+//______________________________________________________________________________
+- (void) adjustXorWindowGeometry
+{
+    if (auto win = [self findXorWindow])
+        [self adjustXorWindowGeometry:win];
+}
+
+//______________________________________________________________________________
+- (void) adjustXorWindowGeometry : (XorDrawingWindow *) win
+{
+    assert(win && "invalid (nil) parameter 'win'");
+    auto frame = self.contentView.frame;
+    frame = [self convertRectToScreen:frame];
+    [win setFrame:frame display:NO];
+}
+
+//______________________________________________________________________________
+- (void) removeXorWindow
+{
+    if (auto win = [self findXorWindow]) {
+        // For some reason, without ordeing out, the crosshair window's content stays
+        // in the parent's window. Thus we first have to order out the crosshair window.
+        [win orderOut:nil];
+        [self removeChildWindow : win];
+    }
+}
+
+//______________________________________________________________________________
+- (XorDrawingWindow *) findXorWindow
+{
+    auto children = [self childWindows];
+    for (NSWindow *child in children) {
+        if ([child isKindOfClass : XorDrawingWindow.class])
+            return (XorDrawingWindow *)child;
+    }
+    return nil;
+}
+
 
 #pragma mark - X11Window protocol's implementation.
 

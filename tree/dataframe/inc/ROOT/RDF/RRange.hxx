@@ -23,7 +23,8 @@ namespace ROOT {
 namespace Internal {
 namespace RDF {
 namespace GraphDrawing {
-std::shared_ptr<GraphNode> CreateRangeNode(const ROOT::Detail::RDF::RRangeBase *rangePtr);
+std::shared_ptr<GraphNode> CreateRangeNode(const ROOT::Detail::RDF::RRangeBase *rangePtr,
+                                           std::unordered_map<void *, std::shared_ptr<GraphNode>> &visitedMap);
 } // ns GraphDrawing
 } // ns RDF
 } // ns Internal
@@ -32,20 +33,22 @@ namespace Detail {
 namespace RDF {
 namespace RDFGraphDrawing = ROOT::Internal::RDF::GraphDrawing;
 
-template <typename PrevData>
+template <typename PrevNode>
 class RRange final : public RRangeBase {
-   const std::shared_ptr<PrevData> fPrevDataPtr;
-   PrevData &fPrevData;
+   const std::shared_ptr<PrevNode> fPrevNodePtr;
+   PrevNode &fPrevNode;
 
 public:
-   RRange(unsigned int start, unsigned int stop, unsigned int stride, std::shared_ptr<PrevData> pd)
+   RRange(unsigned int start, unsigned int stop, unsigned int stride, std::shared_ptr<PrevNode> pd)
       : RRangeBase(pd->GetLoopManagerUnchecked(), start, stop, stride, pd->GetLoopManagerUnchecked()->GetNSlots()),
-        fPrevDataPtr(std::move(pd)), fPrevData(*fPrevDataPtr) {}
+        fPrevNodePtr(std::move(pd)), fPrevNode(*fPrevNodePtr)
+   {
+   }
 
    RRange(const RRange &) = delete;
    RRange &operator=(const RRange &) = delete;
-   // must call Deregister here, before fPrevDataFrame is destroyed,
-   // otherwise if fPrevDataFrame is fLoopManager we get a use after delete
+   // must call Deregister here, before fPrevNode is destroyed,
+   // otherwise if fPrevNode is fLoopManager we get a use after delete
    ~RRange() { fLoopManager->Deregister(this); }
 
    /// Ranges act as filters when it comes to selecting entries that downstream nodes should process
@@ -54,7 +57,7 @@ public:
       if (entry != fLastCheckedEntry) {
          if (fHasStopped)
             return false;
-         if (!fPrevData.CheckFilters(slot, entry)) {
+         if (!fPrevNode.CheckFilters(slot, entry)) {
             // a filter upstream returned false, cache the result
             fLastResult = false;
          } else {
@@ -67,7 +70,7 @@ public:
                fLastResult = true;
             if (fNProcessedEntries == fStop) {
                fHasStopped = true;
-               fPrevData.StopProcessing();
+               fPrevNode.StopProcessing();
             }
          }
          fLastCheckedEntry = entry;
@@ -77,15 +80,15 @@ public:
 
    // recursive chain of `Report`s
    // RRange simply forwards these calls to the previous node
-   void Report(ROOT::RDF::RCutFlowReport &rep) const final { fPrevData.PartialReport(rep); }
+   void Report(ROOT::RDF::RCutFlowReport &rep) const final { fPrevNode.PartialReport(rep); }
 
-   void PartialReport(ROOT::RDF::RCutFlowReport &rep) const final { fPrevData.PartialReport(rep); }
+   void PartialReport(ROOT::RDF::RCutFlowReport &rep) const final { fPrevNode.PartialReport(rep); }
 
    void StopProcessing() final
    {
       ++fNStopsReceived;
       if (fNStopsReceived == fNChildren && !fHasStopped)
-         fPrevData.StopProcessing();
+         fPrevNode.StopProcessing();
    }
 
    void IncrChildrenCount() final
@@ -93,19 +96,20 @@ public:
       ++fNChildren;
       // propagate "children activation" upstream
       if (fNChildren == 1)
-         fPrevData.IncrChildrenCount();
+         fPrevNode.IncrChildrenCount();
    }
 
    /// This function must be defined by all nodes, but only the filters will add their name
-   void AddFilterName(std::vector<std::string> &filters) { fPrevData.AddFilterName(filters); }
-   std::shared_ptr<RDFGraphDrawing::GraphNode> GetGraph()
+   void AddFilterName(std::vector<std::string> &filters) { fPrevNode.AddFilterName(filters); }
+   std::shared_ptr<RDFGraphDrawing::GraphNode>
+   GetGraph(std::unordered_map<void *, std::shared_ptr<RDFGraphDrawing::GraphNode>> &visitedMap)
    {
       // TODO: Ranges node have no information about custom columns, hence it is not possible now
       // if defines have been used before.
-      auto prevNode = fPrevData.GetGraph();
+      auto prevNode = fPrevNode.GetGraph(visitedMap);
       auto prevColumns = prevNode->GetDefinedColumns();
 
-      auto thisNode = RDFGraphDrawing::CreateRangeNode(this);
+      auto thisNode = RDFGraphDrawing::CreateRangeNode(this, visitedMap);
 
       /* If the returned node is not new, there is no need to perform any other operation.
        * This is a likely scenario when building the entire graph in which branches share
@@ -115,7 +119,10 @@ public:
       }
       thisNode->SetPrevNode(prevNode);
 
-      // If there have been some defines before it, this node won't detect them.
+      // If there have been some defines between the last Filter and this Range node we won't detect them:
+      // Ranges don't keep track of Defines (they have no RColumnRegister data member).
+      // Let's pretend that the Defines of this node are the same as the node above, so that in the graph
+      // the Defines will just appear below the Range instead (no functional change).
       thisNode->AddDefinedColumns(prevColumns);
 
       return thisNode;

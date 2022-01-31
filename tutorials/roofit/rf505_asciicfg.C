@@ -5,12 +5,13 @@
 ///
 /// \macro_output
 /// \macro_code
-/// \author 07/2008 - Wouter Verkerke
+///
+/// \date July 2008
+/// \author Wouter Verkerke
 
 #include "RooRealVar.h"
 #include "RooDataSet.h"
 #include "RooGaussian.h"
-#include "RooConstVar.h"
 #include "RooPolynomial.h"
 #include "RooAddPdf.h"
 #include "TCanvas.h"
@@ -56,7 +57,7 @@ void rf505_asciicfg()
    dir1.Append("/roofit/rf505_asciicfg.txt") ;
    TString dir2 = "rf505_asciicfg_example.txt";
 
-   // R e a d    p a r a m e t e r s   f r o m    a s c i i   f i l e 
+   // R e a d    p a r a m e t e r s   f r o m    a s c i i   f i l e
    // ----------------------------------------------------------------
 
    // Read parameters from file

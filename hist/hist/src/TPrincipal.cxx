@@ -420,17 +420,23 @@ void TPrincipal::AddRow(const Double_t *p)
    }
    else {
 
-      Double_t cor = 1 - 1./Double_t(fNumberOfDataPoints);
+      const Double_t invnp = 1. / Double_t(fNumberOfDataPoints);
+      const Double_t invnpM1 = 1. /(Double_t(fNumberOfDataPoints - 1));
+      const Double_t cor = 1. - invnp;
+      // use directly vector array for faster element access
+      Double_t * meanValues = fMeanValues.GetMatrixArray();
+      Double_t * covMatrix =  fCovarianceMatrix.GetMatrixArray();
       for (i = 0; i < fNumberOfVariables; i++) {
 
-         fMeanValues(i) *= cor;
-         fMeanValues(i) += p[i] / Double_t(fNumberOfDataPoints);
-         Double_t t1 = (p[i] - fMeanValues(i)) / (fNumberOfDataPoints - 1);
+         meanValues[i] *= cor;
+         meanValues[i] += p[i] * invnp;
+         const Double_t t1 = (p[i] - meanValues[i]) * invnpM1;
 
          // Setting Matrix (lower triangle) elements
          for (j = 0; j < i + 1; j++) {
-            fCovarianceMatrix(i,j) *= cor;
-            fCovarianceMatrix(i,j) += t1 * (p[j] - fMeanValues(j));
+            const Int_t index = i * fNumberOfVariables + j;
+            covMatrix[index] *= cor;
+            covMatrix[index] += t1 * (p[j] - meanValues[j]);
          }
       }
    }
@@ -446,7 +452,7 @@ void TPrincipal::AddRow(const Double_t *p)
 
    for (i = 0; i < fNumberOfVariables; i++) {
       j = (fNumberOfDataPoints-1) * fNumberOfVariables + i;
-      fUserData(j) = p[i];
+      fUserData.GetMatrixArray()[j] = p[i];
    }
 
 }
@@ -813,7 +819,7 @@ void TPrincipal::MakeNormalised()
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-/// Generate the file <classname>PCA.cxx which contains the
+/// Generate the file `<classname>PCA.cxx` which contains the
 /// implementation of two methods:
 /// ~~~ {.cpp}
 ///    void <classname>::X2P(Double_t *x, Double *p)
@@ -831,7 +837,7 @@ void TPrincipal::MakeNormalised()
 ///    Double_t <classname>::fgSigmaValues[]
 /// ~~~
 /// are initialized, and assumed to exist. The class declaration is
-/// assumed to be in <classname>.h and assumed to be provided by the
+/// assumed to be in `<classname>.h` and assumed to be provided by the
 /// user.
 ///
 /// See TPrincipal::MakeRealCode for a list of options
@@ -850,7 +856,7 @@ void TPrincipal::MakeNormalised()
 ///     void P2X(Double_t *p, Double_t *x, Int_t nTest);
 ///   };
 /// ~~~
-/// Whether the methods <classname>::X2P and <classname>::P2X should
+/// Whether the methods `<classname>::%X2P` and `<classname>::%P2X` should
 /// be static or not, is up to the user.
 
 void TPrincipal::MakeMethods(const char *classname, Option_t *opt)

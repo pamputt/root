@@ -11,6 +11,7 @@
 
 #include <ROOT/REveGeomViewer.hxx>
 
+#include <ROOT/REveUtil.hxx> // REveLog()
 #include <ROOT/RLogger.hxx>
 #include <ROOT/RWebWindow.hxx>
 
@@ -35,9 +36,9 @@ ROOT::Experimental::REveGeomViewer::REveGeomViewer(TGeoManager *mgr, const std::
    fWebWindow->SetDefaultPage("file:rootui5sys/eve7/geom.html");
 
    // this is call-back, invoked when message received via websocket
-   fWebWindow->SetDataCallBack([this](unsigned connid, const std::string &arg) { this->WebWindowCallback(connid, arg); });
+   fWebWindow->SetDataCallBack([this](unsigned connid, const std::string &arg) { WebWindowCallback(connid, arg); });
    fWebWindow->SetGeometry(900, 700); // configure predefined window geometry
-   fWebWindow->SetConnLimit(1); // the only connection is allowed
+   fWebWindow->SetConnLimit(0); // allow any connections numbers at the same time
    fWebWindow->SetMaxQueueLength(30); // number of allowed entries in the window queue
 
    fDesc.SetPreferredOffline(gEnv->GetValue("WebGui.PreferredOffline",0) != 0);
@@ -82,6 +83,7 @@ void ROOT::Experimental::REveGeomViewer::SelectVolume(const std::string &volname
 /// Show or update geometry in web window
 /// If web browser already started - just refresh drawing like "reload" button does
 /// If no web window exists or \param always_start_new_browser configured, starts new window
+/// \param args arguments to display
 
 void ROOT::Experimental::REveGeomViewer::Show(const RWebDisplayArgs &args, bool always_start_new_browser)
 {
@@ -89,10 +91,22 @@ void ROOT::Experimental::REveGeomViewer::Show(const RWebDisplayArgs &args, bool 
    if (!GetShowHierarchy()) user_args = "{ nobrowser: true }";
    fWebWindow->SetUserArgs(user_args);
 
+   if (args.GetWidgetKind().empty())
+      const_cast<RWebDisplayArgs *>(&args)->SetWidgetKind("REveGeomViewer");
+
    if ((fWebWindow->NumConnections(true) == 0) || always_start_new_browser)
       fWebWindow->Show(args);
    else
       Update();
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////
+/// Return URL address of web window used for geometry viewer
+
+std::string ROOT::Experimental::REveGeomViewer::GetWindowAddr() const
+{
+   if (!fWebWindow) return "";
+   return fWebWindow->GetAddr();
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////
@@ -115,7 +129,7 @@ std::vector<int> ROOT::Experimental::REveGeomViewer::GetStackFromJson(const std:
                else res = *stack;
       delete stack;
    } else {
-      R__ERROR_HERE("webeve") << "Fail convert " << json << " into vector<int>";
+      R__LOG_ERROR(REveLog()) << "Fail convert " << json << " into vector<int>";
    }
 
    return res;
@@ -131,7 +145,7 @@ void ROOT::Experimental::REveGeomViewer::SendGeometry(unsigned connid)
 
    auto &json = fDesc.GetDrawJson();
 
-   R__DEBUG_HERE("webeve") << "Produce geometry JSON len: " << json.length();
+   R__LOG_DEBUG(0, REveLog()) << "Produce geometry JSON len: " << json.length();
 
    fWebWindow->Send(connid, json);
 }
@@ -212,7 +226,7 @@ void ROOT::Experimental::REveGeomViewer::WebWindowCallback(unsigned connid, cons
       auto req = TBufferJSON::FromJSON<REveGeomRequest>(arg.substr(6));
 
       if (req && (req->oper == "HOVER")) {
-         if (req->path != "OFF")
+         if ((req->path.size() > 0 ) && (req->path[0] != "OFF"))
             req->stack = fDesc.MakeStackByPath(req->path);
          req->path.clear();
       } else if (req && (req->oper == "HIGHL")) {

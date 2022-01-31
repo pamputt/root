@@ -11,19 +11,20 @@
 #ifndef ROOT_RFILTER
 #define ROOT_RFILTER
 
+#include "ROOT/RDF/ColumnReaderUtils.hxx"
+#include "ROOT/RDF/RColumnReaderBase.hxx"
 #include "ROOT/RDF/RCutFlowReport.hxx"
-#include "ROOT/RDF/RColumnValue.hxx"
-#include "ROOT/RDF/NodesUtils.hxx"
 #include "ROOT/RDF/Utils.hxx"
 #include "ROOT/RDF/RFilterBase.hxx"
 #include "ROOT/RDF/RLoopManager.hxx"
-#include "ROOT/RIntegerSequence.hxx"
 #include "ROOT/TypeTraits.hxx"
 #include "RtypesCore.h"
 
 #include <algorithm>
+#include <cassert>
 #include <memory>
 #include <string>
+#include <utility> // std::index_sequence
 #include <vector>
 
 namespace ROOT {
@@ -34,12 +35,13 @@ using namespace ROOT::Detail::RDF;
 
 // fwd decl for RFilter
 namespace GraphDrawing {
-std::shared_ptr<GraphNode> CreateFilterNode(const RFilterBase *filterPtr);
-
-bool CheckIfDefaultOrDSColumn(const std::string &name, const std::shared_ptr<RCustomColumnBase> &column);
-
 std::shared_ptr<GraphNode>
-CreateDefineNode(const std::string &columnName, const RDFDetail::RCustomColumnBase *columnPtr);
+CreateFilterNode(const RFilterBase *filterPtr, std::unordered_map<void *, std::shared_ptr<GraphNode>> &visitedMap);
+
+std::shared_ptr<GraphNode> AddDefinesToGraph(std::shared_ptr<GraphNode> node,
+                                             const RDFInternal::RColumnRegister &colRegister,
+                                             const std::vector<std::string> &prevNodeDefines,
+                                             std::unordered_map<void *, std::shared_ptr<GraphNode>> &visitedMap);
 } // ns GraphDrawing
 
 } // ns RDF
@@ -50,68 +52,69 @@ namespace RDF {
 using namespace ROOT::TypeTraits;
 namespace RDFGraphDrawing = ROOT::Internal::RDF::GraphDrawing;
 
-template <typename FilterF, typename PrevDataFrame>
-class RFilter final : public RFilterBase {
+template <typename FilterF, typename PrevNode>
+class R__CLING_PTRCHECK(off) RFilter final : public RFilterBase {
    using ColumnTypes_t = typename CallableTraits<FilterF>::arg_types;
    using TypeInd_t = std::make_index_sequence<ColumnTypes_t::list_size>;
 
    FilterF fFilter;
-   const ColumnNames_t fColumnNames;
-   const std::shared_ptr<PrevDataFrame> fPrevDataPtr;
-   PrevDataFrame &fPrevData;
-   std::vector<RDFInternal::RDFValueTuple_t<ColumnTypes_t>> fValues;
-   /// The nth flag signals whether the nth input column is a custom column or not.
-   std::array<bool, ColumnTypes_t::list_size> fIsCustomColumn;
+   /// Column readers per slot and per input column
+   std::vector<std::array<std::unique_ptr<RColumnReaderBase>, ColumnTypes_t::list_size>> fValues;
+   const std::shared_ptr<PrevNode> fPrevNodePtr;
+   PrevNode &fPrevNode;
 
 public:
-   RFilter(FilterF &&f, const ColumnNames_t &columns, std::shared_ptr<PrevDataFrame> pd,
-           const RDFInternal::RBookedCustomColumns &customColumns, std::string_view name = "")
-      : RFilterBase(pd->GetLoopManagerUnchecked(), name, pd->GetLoopManagerUnchecked()->GetNSlots(), customColumns),
-        fFilter(std::forward<FilterF>(f)), fColumnNames(columns), fPrevDataPtr(std::move(pd)), fPrevData(*fPrevDataPtr),
-        fValues(fNSlots), fIsCustomColumn()
+   RFilter(FilterF f, const ROOT::RDF::ColumnNames_t &columns, std::shared_ptr<PrevNode> pd,
+           const RDFInternal::RColumnRegister &colRegister, std::string_view name = "")
+      : RFilterBase(pd->GetLoopManagerUnchecked(), name, pd->GetLoopManagerUnchecked()->GetNSlots(), colRegister,
+                    columns),
+        fFilter(std::move(f)), fValues(pd->GetLoopManagerUnchecked()->GetNSlots()), fPrevNodePtr(std::move(pd)),
+        fPrevNode(*fPrevNodePtr)
    {
-      const auto nColumns = fColumnNames.size();
-      for (auto i = 0u; i < nColumns; ++i)
-         fIsCustomColumn[i] = fCustomColumns.HasName(fColumnNames[i]);
    }
 
    RFilter(const RFilter &) = delete;
    RFilter &operator=(const RFilter &) = delete;
-   // must call Deregister here, before fPrevDataFrame is destroyed,
-   // otherwise if fPrevDataFrame is fLoopManager we get a use after delete
-   ~RFilter() { fLoopManager->Deregister(this); }
+   ~RFilter() {
+      // must Deregister objects from the RLoopManager here, before the fPrevNode data member is destroyed:
+      // otherwise if fPrevNode is the RLoopManager, it will be destroyed before the calls to Deregister happen.
+      fColRegister.Clear(); // triggers RDefine deregistration
+      fLoopManager->Deregister(this);
+   }
 
    bool CheckFilters(unsigned int slot, Long64_t entry) final
    {
-      if (entry != fLastCheckedEntry[slot]) {
-         if (!fPrevData.CheckFilters(slot, entry)) {
+      if (entry != fLastCheckedEntry[slot * RDFInternal::CacheLineStep<Long64_t>()]) {
+         if (!fPrevNode.CheckFilters(slot, entry)) {
             // a filter upstream returned false, cache the result
-            fLastResult[slot] = false;
+            fLastResult[slot * RDFInternal::CacheLineStep<int>()] = false;
          } else {
             // evaluate this filter, cache the result
-            auto passed = CheckFilterHelper(slot, entry, TypeInd_t());
-            passed ? ++fAccepted[slot] : ++fRejected[slot];
-            fLastResult[slot] = passed;
+            auto passed = CheckFilterHelper(slot, entry, ColumnTypes_t{}, TypeInd_t{});
+            passed ? ++fAccepted[slot * RDFInternal::CacheLineStep<ULong64_t>()]
+                   : ++fRejected[slot * RDFInternal::CacheLineStep<ULong64_t>()];
+            fLastResult[slot * RDFInternal::CacheLineStep<int>()] = passed;
          }
-         fLastCheckedEntry[slot] = entry;
+         fLastCheckedEntry[slot * RDFInternal::CacheLineStep<Long64_t>()] = entry;
       }
-      return fLastResult[slot];
+      return fLastResult[slot * RDFInternal::CacheLineStep<int>()];
    }
 
-   template <std::size_t... S>
-   bool CheckFilterHelper(unsigned int slot, Long64_t entry, std::index_sequence<S...>)
+   template <typename... ColTypes, std::size_t... S>
+   bool CheckFilterHelper(unsigned int slot, Long64_t entry, TypeList<ColTypes...>, std::index_sequence<S...>)
    {
       // silence "unused parameter" warnings in gcc
       (void)slot;
       (void)entry;
-      return fFilter(std::get<S>(fValues[slot]).Get(entry)...);
+      return fFilter(fValues[slot][S]->template Get<ColTypes>(entry)...);
    }
 
    void InitSlot(TTreeReader *r, unsigned int slot) final
    {
-      for (auto &bookedBranch : fCustomColumns.GetColumns())
-         bookedBranch.second->InitSlot(r, slot);
-      RDFInternal::InitRDFValues(slot, fValues[slot], r, fColumnNames, fCustomColumns, TypeInd_t(), fIsCustomColumn);
+      RDFInternal::RColumnReadersInfo info{fColumnNames, fColRegister, fIsDefine.data(), fLoopManager->GetDSValuePtrs(),
+                                           fLoopManager->GetDataSource()};
+      fValues[slot] = RDFInternal::MakeColumnReaders(slot, r, ColumnTypes_t{}, info);
+      fLastCheckedEntry[slot * RDFInternal::CacheLineStep<Long64_t>()] = -1;
    }
 
    // recursive chain of `Report`s
@@ -119,7 +122,7 @@ public:
 
    void PartialReport(ROOT::RDF::RCutFlowReport &rep) const final
    {
-      fPrevData.PartialReport(rep);
+      fPrevNode.PartialReport(rep);
       FillReport(rep);
    }
 
@@ -127,7 +130,7 @@ public:
    {
       ++fNStopsReceived;
       if (fNStopsReceived == fNChildren)
-         fPrevData.StopProcessing();
+         fPrevNode.StopProcessing();
    }
 
    void IncrChildrenCount() final
@@ -135,43 +138,37 @@ public:
       ++fNChildren;
       // propagate "children activation" upstream. named filters do the propagation via `TriggerChildrenCount`.
       if (fNChildren == 1 && fName.empty())
-         fPrevData.IncrChildrenCount();
+         fPrevNode.IncrChildrenCount();
    }
 
    void TriggerChildrenCount() final
    {
-      R__ASSERT(!fName.empty()); // this method is to only be called on named filters
-      fPrevData.IncrChildrenCount();
-   }
-
-   virtual void ClearValueReaders(unsigned int slot) final
-   {
-      RDFInternal::ResetRDFValueTuple(fValues[slot], TypeInd_t());
+      assert(!fName.empty()); // this method is to only be called on named filters
+      fPrevNode.IncrChildrenCount();
    }
 
    void AddFilterName(std::vector<std::string> &filters)
    {
-      fPrevData.AddFilterName(filters);
+      fPrevNode.AddFilterName(filters);
       auto name = (HasName() ? fName : "Unnamed Filter");
       filters.push_back(name);
    }
 
-   virtual void ClearTask(unsigned int slot) final
+   /// Clean-up operations to be performed at the end of a task.
+   void FinalizeSlot(unsigned int slot) final
    {
-      for (auto &column : fCustomColumns.GetColumns()) {
-         column.second->ClearValueReaders(slot);
-      }
-
-      ClearValueReaders(slot);
+      for (auto &v : fValues[slot])
+         v.reset();
    }
 
-   std::shared_ptr<RDFGraphDrawing::GraphNode> GetGraph()
+   std::shared_ptr<RDFGraphDrawing::GraphNode>
+   GetGraph(std::unordered_map<void *, std::shared_ptr<RDFGraphDrawing::GraphNode>> &visitedMap)
    {
       // Recursively call for the previous node.
-      auto prevNode = fPrevData.GetGraph();
+      auto prevNode = fPrevNode.GetGraph(visitedMap);
       auto prevColumns = prevNode->GetDefinedColumns();
 
-      auto thisNode = RDFGraphDrawing::CreateFilterNode(this);
+      auto thisNode = RDFGraphDrawing::CreateFilterNode(this, visitedMap);
 
       /* If the returned node is not new, there is no need to perform any other operation.
        * This is a likely scenario when building the entire graph in which branches share
@@ -180,25 +177,12 @@ public:
          return thisNode;
       }
 
-      auto evaluatedNode = thisNode;
-      /* Each column that this node has but the previous hadn't has been defined in between,
-       * so it has to be built and appended. */
-
-      for (auto &column : fCustomColumns.GetColumns()) {
-         // Even if treated as custom columns by the Dataframe, datasource columns must not be in the graph.
-         if (RDFGraphDrawing::CheckIfDefaultOrDSColumn(column.first, column.second))
-            continue;
-         if (std::find(prevColumns.begin(), prevColumns.end(), column.first) == prevColumns.end()) {
-            auto defineNode = RDFGraphDrawing::CreateDefineNode(column.first, column.second.get());
-            evaluatedNode->SetPrevNode(defineNode);
-            evaluatedNode = defineNode;
-         }
-      }
+      auto upmostNode = AddDefinesToGraph(thisNode, fColRegister, prevColumns, visitedMap);
 
       // Keep track of the columns defined up to this point.
-      thisNode->AddDefinedColumns(fCustomColumns.GetNames());
+      thisNode->AddDefinedColumns(fColRegister.GetNames());
 
-      evaluatedNode->SetPrevNode(prevNode);
+      upmostNode->SetPrevNode(prevNode);
       return thisNode;
    }
 };

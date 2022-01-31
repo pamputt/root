@@ -19,30 +19,61 @@
      \ingroup Roofitcore
 
 RooAbsArg is the common abstract base class for objects that
-represent a value (of arbitrary type) and "shape" that in general
-depends on (is a client of) other RooAbsArg subclasses. The only
-state information about a value that is maintained in this base
-class consists of named attributes and flags that track when either
-the value or the shape of this object changes. The meaning of shape
-depends on the client implementation but could be, for example, the
-allowed range of a value. The base class is also responsible for
-managing client/server links and propagating value/shape changes
-through an expression tree. RooAbsArg implements public interfaces
-for inspecting client/server relationships and
-setting/clearing/testing named attributes.
+represent a value and a "shape" in RooFit. Values or shapes usually depend on values
+or shapes of other RooAbsArg instances. Connecting several RooAbsArg in
+a computation graph models an expression tree that can be evaluated.
+
+### Building a computation graph of RooFit objects
+Therefore, RooAbsArg provides functionality to connect objects of type RooAbsArg into
+a computation graph to pass values between those objects.
+A value can e.g. be a real-valued number, (instances of RooAbsReal), or an integer, that is,
+catgory index (instances of RooAbsCategory). The third subclass of RooAbsArg is RooStringVar,
+but it is rarely used.
+
+The "shapes" that a RooAbsArg can possess can e.g. be the definition
+range of an observable, or how many states a category object has. In computations,
+values are expected to change often, while shapes remain mostly constant
+(unless e.g. a new range is set for an observable).
+
+Nodes of a computation graph are connected using instances of RooAbsProxy.
+If Node B declares a member `RooTemplateProxy<TypeOfNodeA>`, Node A will be
+registered as a server of values to Node B, and Node B will know that it is
+a client of node A. Using functions like dependsOn(), or getObservables()
+/ getParameters(), the relation of `A --> B` can be queried. Using graphVizTree(),
+one can create a visualisation of the expression tree.
+
+
+An instance of RooAbsArg can have named attributes. It also has flags
+to indicate that either its value or its shape were changed (= it is dirty).
+RooAbsArg provides functionality to manage client/server relations in
+a computation graph (\ref clientServerInterface), and helps propagating
+value/shape changes through the graph. RooAbsArg implements interfaces
+for inspecting client/server relationships (\ref clientServerInterface) and
+setting/clearing/querying named attributes.
+
+### Caching of values
+The values of nodes in the computation graph are cached in RooFit. If
+a value is used in two nodes of a graph, it doesn't need to be recomputed. If
+a node acquires a new value, it notifies its consumers ("clients") that
+their cached values are dirty. See the functions in \ref optimisationInterface
+for details.
+A node uses its isValueDirty() and isShapeDirty() functions to decide if a
+computation is necessary. Caching can be vetoed globally by setting a
+bit using setDirtyInhibit(). This will make computations slower, but all the
+nodes of the computation graph will be evaluated irrespective of whether their
+state is clean or dirty. Using setOperMode(), caching can also be enabled/disabled
+for single nodes.
 
 */
 
 #include "RooFit.h"
-#include "Riostream.h"
 
 #include "TBuffer.h"
 #include "TClass.h"
 #include "TVirtualStreamerInfo.h"
-// #include "TGraphStruct.h"
+#include "strlcpy.h"
 
 #include "RooSecondMoment.h"
-#include "RooNameSet.h"
 #include "RooWorkspace.h"
 
 #include "RooMsgService.h"
@@ -57,18 +88,21 @@ setting/clearing/testing named attributes.
 #include "RooTrace.h"
 #include "RooRealIntegral.h"
 #include "RooConstVar.h"
-#include "RooMsgService.h"
 #include "RooExpensiveObjectCache.h"
 #include "RooAbsDataStore.h"
 #include "RooResolutionModel.h"
 #include "RooVectorDataStore.h"
 #include "RooTreeDataStore.h"
+#include "RooHelpers.h"
 
-#include <sstream>
-#include <string.h>
 #include <algorithm>
+#include <cstring>
+#include <fstream>
+#include <iostream>
+#include <memory>
+#include <sstream>
 
-using namespace std ;
+using namespace std;
 
 #if (__GNUC__==3&&__GNUC_MINOR__==2&&__GNUC_PATCHLEVEL__==3)
 char* operator+( streampos&, char* );
@@ -81,7 +115,7 @@ Bool_t RooAbsArg::_verboseDirty(kFALSE) ;
 Bool_t RooAbsArg::_inhibitDirty(kFALSE) ;
 Bool_t RooAbsArg::inhibitDirty() const { return _inhibitDirty && !_localNoInhibitDirty; }
 
-std::map<RooAbsArg*,TRefArray*> RooAbsArg::_ioEvoList ;
+std::map<RooAbsArg*,std::unique_ptr<TRefArray>> RooAbsArg::_ioEvoList;
 std::stack<RooAbsArg*> RooAbsArg::_ioReadStack ;
 
 
@@ -90,10 +124,10 @@ std::stack<RooAbsArg*> RooAbsArg::_ioReadStack ;
 
 RooAbsArg::RooAbsArg()
    : TNamed(), _deleteWatch(kFALSE), _valueDirty(kTRUE), _shapeDirty(kTRUE), _operMode(Auto), _fast(kFALSE), _ownedComponents(nullptr),
-     _prohibitServerRedirect(kFALSE), _eocache(0), _namePtr(0), _isConstant(kFALSE), _localNoInhibitDirty(kFALSE),
+     _prohibitServerRedirect(kFALSE), _namePtr(0), _isConstant(kFALSE), _localNoInhibitDirty(kFALSE),
      _myws(0)
 {
-  _namePtr = (TNamed*) RooNameReg::instance().constPtr(GetName()) ;
+  _namePtr = RooNameReg::instance().constPtr(GetName()) ;
 
 }
 
@@ -104,14 +138,14 @@ RooAbsArg::RooAbsArg()
 
 RooAbsArg::RooAbsArg(const char *name, const char *title)
    : TNamed(name, title), _deleteWatch(kFALSE), _valueDirty(kTRUE), _shapeDirty(kTRUE), _operMode(Auto), _fast(kFALSE),
-     _ownedComponents(0), _prohibitServerRedirect(kFALSE), _eocache(0), _namePtr(0), _isConstant(kFALSE),
+     _ownedComponents(0), _prohibitServerRedirect(kFALSE), _namePtr(0), _isConstant(kFALSE),
      _localNoInhibitDirty(kFALSE), _myws(0)
 {
   if (name == nullptr || strlen(name) == 0) {
     throw std::logic_error("Each RooFit object needs a name. "
         "Objects representing the same entity (e.g. an observable 'x') are identified using their name.");
   }
-  _namePtr = (TNamed*) RooNameReg::instance().constPtr(GetName()) ;
+  _namePtr = RooNameReg::instance().constPtr(GetName()) ;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -119,20 +153,13 @@ RooAbsArg::RooAbsArg(const char *name, const char *title)
 /// object. Transient properties and client-server links are not copied
 
 RooAbsArg::RooAbsArg(const RooAbsArg &other, const char *name)
-   : TNamed(other.GetName(), other.GetTitle()), RooPrintable(other), _boolAttrib(other._boolAttrib),
+   : TNamed(name ? name : other.GetName(), other.GetTitle()), RooPrintable(other),
+     _boolAttrib(other._boolAttrib),
      _stringAttrib(other._stringAttrib), _deleteWatch(other._deleteWatch), _operMode(Auto), _fast(kFALSE),
-     _ownedComponents(0), _prohibitServerRedirect(kFALSE), _eocache(other._eocache), _namePtr(other._namePtr),
+     _ownedComponents(0), _prohibitServerRedirect(kFALSE),
+     _namePtr(name ? RooNameReg::instance().constPtr(name) : other._namePtr),
      _isConstant(other._isConstant), _localNoInhibitDirty(other._localNoInhibitDirty), _myws(0)
 {
-  // Use name in argument, if supplied
-  if (name) {
-    TNamed::SetName(name) ;
-    _namePtr = (TNamed*) RooNameReg::instance().constPtr(name) ;
-  } else {
-    // Same name, don't recalculate name pointer (expensive)
-    TNamed::SetName(other.GetName()) ;
-    _namePtr = other._namePtr ;
-  }
 
   // Copy server list by hand
   Bool_t valueProp, shapeProp ;
@@ -163,7 +190,6 @@ RooAbsArg& RooAbsArg::operator=(const RooAbsArg& other) {
   _fast = other._fast;
   _ownedComponents = nullptr;
   _prohibitServerRedirect = other._prohibitServerRedirect;
-  _eocache = other._eocache;
   _namePtr = other._namePtr;
   _isConstant = other._isConstant;
   _localNoInhibitDirty = other._localNoInhibitDirty;
@@ -200,7 +226,7 @@ RooAbsArg::~RooAbsArg()
     client->setAttribute("ServerDied") ;
     TString attr("ServerDied:");
     attr.Append(GetName());
-    attr.Append(Form("(%lx)",(ULong_t)this)) ;
+    attr.Append(Form("(%zx)",(size_t)this)) ;
     client->setAttribute(attr.Data());
     client->removeServer(*this,kTRUE);
 
@@ -247,8 +273,8 @@ void RooAbsArg::verboseDirty(Bool_t flag)
 
 Bool_t RooAbsArg::isCloneOf(const RooAbsArg& other) const
 {
-  return (getAttribute(Form("CloneOf(%lx)",(ULong_t)&other)) ||
-	  other.getAttribute(Form("CloneOf(%lx)",(ULong_t)this))) ;
+  return (getAttribute(Form("CloneOf(%zx)",(size_t)&other)) ||
+	  other.getAttribute(Form("CloneOf(%zx)",(size_t)this))) ;
 }
 
 
@@ -358,7 +384,7 @@ void RooAbsArg::addServer(RooAbsArg& server, Bool_t valueProp, Bool_t shapeProp,
     cxcoutF(LinkStateMgmt) << "RooAbsArg::addServer(" << this << "," << GetName()
 			   << "): PROHIBITED SERVER ADDITION REQUESTED: adding server " << server.GetName()
 			   << "(" << &server << ") for " << (valueProp?"value ":"") << (shapeProp?"shape":"") << endl ;
-    assert(0) ;
+    throw std::logic_error("PROHIBITED SERVER ADDITION REQUESTED in RooAbsArg::addServer");
   }
 
   cxcoutD(LinkStateMgmt) << "RooAbsArg::addServer(" << this << "," << GetName() << "): adding server " << server.GetName()
@@ -549,22 +575,24 @@ RooArgSet* RooAbsArg::getParameters(const RooAbsData* set, Bool_t stripDisconnec
 
 
 ////////////////////////////////////////////////////////////////////////////////
-/// INTERNAL helper function for getParameters()
+/// Add all parameters of the function and its daughters to `params`.
+/// \param[in] params Collection that stores all parameters. Add all new parameters to this.
+/// \param[in] nset Normalisation set (optional). If a value depends on this set, it's not a parameter.
+/// \param[in] stripDisconnected Passed on to getParametersHook().
 
-void RooAbsArg::addParameters(RooArgSet& params, const RooArgSet* nset,Bool_t stripDisconnected) const
+void RooAbsArg::addParameters(RooAbsCollection& params, const RooArgSet* nset, bool stripDisconnected) const
 {
-  // INTERNAL helper function for getParameters()
 
-  RooArgSet nodeParamServers ;
-  RooArgSet nodeBranchServers ;
+  RooArgSet nodeParamServers;
+  std::vector<RooAbsArg*> branchList;
   for (const auto server : _serverList) {
     if (server->isValueServer(*this)) {
       if (server->isFundamental()) {
         if (!nset || !server->dependsOn(*nset)) {
-          nodeParamServers.add(*server) ;
+          nodeParamServers.add(*server);
         }
       } else {
-        nodeBranchServers.add(*server) ;
+        branchList.push_back(server);
       }
     }
   }
@@ -576,49 +604,105 @@ void RooAbsArg::addParameters(RooArgSet& params, const RooArgSet* nset,Bool_t st
   params.add(nodeParamServers,kTRUE) ;
 
   // Now recurse into branch servers
-  for (const auto server : nodeBranchServers) {
-    server->addParameters(params,nset) ;
+  std::sort(branchList.begin(), branchList.end());
+  const auto last = std::unique(branchList.begin(), branchList.end());
+  for (auto serverIt = branchList.begin(); serverIt < last; ++serverIt) {
+    (*serverIt)->addParameters(params, nset);
   }
 }
 
+////////////////////////////////////////////////////////////////////////////////
+/// Obtain an estimate of the number of parameters of the function and its daughters.
+/// Calling `addParamters` for large functions (NLL) can cause many reallocations of
+/// `params` due to the recursive behaviour. This utility function aims to pre-compute
+/// the total number of parameters, so that enough memory is reserved.
+/// The estimate is not fully accurate (overestimate) as there is no equivalent to `getParametersHook`.
+/// \param[in] nset Normalisation set (optional). If a value depends on this set, it's not a parameter.
+
+std::size_t RooAbsArg::getParametersSizeEstimate(const RooArgSet* nset) const
+{
+
+  std::size_t res = 0;
+  std::vector<RooAbsArg*> branchList;
+  for (const auto server : _serverList) {
+    if (server->isValueServer(*this)) {
+      if (server->isFundamental()) {
+        if (!nset || !server->dependsOn(*nset)) {
+          res++;
+        }
+      } else {
+        branchList.push_back(server);
+      }
+    }
+  }
+
+  // Now recurse into branch servers
+  std::sort(branchList.begin(), branchList.end());
+  const auto last = std::unique(branchList.begin(), branchList.end());
+  for (auto serverIt = branchList.begin(); serverIt < last; ++serverIt) {
+    res += (*serverIt)->getParametersSizeEstimate(nset);
+  }
+
+  return res;
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 /// Create a list of leaf nodes in the arg tree starting with
 /// ourself as top node that don't match any of the names the args in the
 /// supplied argset. The caller of this function is responsible
 /// for deleting the returned argset. The complement of this function
-/// is getObservables()
+/// is getObservables().
 
-RooArgSet* RooAbsArg::getParameters(const RooArgSet* nset, Bool_t stripDisconnected) const
+RooArgSet* RooAbsArg::getParameters(const RooArgSet* observables, bool stripDisconnected) const {
+  auto * outputSet = new RooArgSet;
+  getParameters(observables, *outputSet, stripDisconnected);
+  return outputSet;
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+/// Fills a list with leaf nodes in the arg tree starting with
+/// ourself as top node that don't match any of the names the args in the
+/// supplied argset. Returns `true` only if something went wrong.
+/// The complement of this function is getObservables().
+/// \param[in] observables Set of leafs to ignore because they are observables and not parameters.
+/// \param[out] outputSet Output set.
+/// \param[in] stripDisconnected Allow pdf to strip parameters from list before adding it.
+
+bool RooAbsArg::getParameters(const RooArgSet* observables, RooArgSet& outputSet, bool stripDisconnected) const
 {
+   using RooHelpers::getColonSeparatedNameString;
 
    // Check for cached parameter set
    if (_myws) {
-      RooNameSet nsetObs(nset ? *nset : RooArgSet());
-      const RooArgSet *paramSet = _myws->set(Form("CACHE_PARAMS_OF_PDF_%s_FOR_OBS_%s", GetName(), nsetObs.content()));
+      auto nsetObs = getColonSeparatedNameString(observables ? *observables : RooArgSet());
+      const RooArgSet *paramSet = _myws->set(Form("CACHE_PARAMS_OF_PDF_%s_FOR_OBS_%s", GetName(), nsetObs.c_str()));
       if (paramSet) {
-         // cout << " restoring parameter cache from workspace for pdf " << IsA()->GetName() << "::" << GetName() <<
-         // endl ;
-         return new RooArgSet(*paramSet);
+         outputSet.add(*paramSet);
+         return false;
       }
    }
 
-   RooArgSet *parList = new RooArgSet("parameters");
+   outputSet.clear();
+   outputSet.setName("parameters");
 
-   addParameters(*parList, nset, stripDisconnected);
+   RooArgList tempList;
+   // reserve all memory needed in one go
+   tempList.reserve(getParametersSizeEstimate(observables));
 
-   parList->sort();
+   addParameters(tempList, observables, stripDisconnected);
+
+   outputSet.add(tempList);
+   outputSet.sort();
 
    // Cache parameter set
-   if (_myws && parList->getSize() > 10) {
-      RooNameSet nsetObs(nset ? *nset : RooArgSet());
-      _myws->defineSetInternal(Form("CACHE_PARAMS_OF_PDF_%s_FOR_OBS_%s", GetName(), nsetObs.content()), *parList);
-      // cout << " caching parameters in workspace for pdf " << IsA()->GetName() << "::" << GetName() << endl ;
+   if (_myws && outputSet.size() > 10) {
+      auto nsetObs = getColonSeparatedNameString(observables ? *observables : RooArgSet());
+      _myws->defineSetInternal(Form("CACHE_PARAMS_OF_PDF_%s_FOR_OBS_%s", GetName(), nsetObs.c_str()), outputSet);
    }
 
-   return parList;
+   return false;
 }
-
 
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -643,12 +727,31 @@ RooArgSet* RooAbsArg::getObservables(const RooAbsData* set) const
 /// for deleting the returned argset. The complement of this function
 /// is getParameters().
 
-RooArgSet* RooAbsArg::getObservables(const RooArgSet* dataList, Bool_t valueOnly) const
+RooArgSet* RooAbsArg::getObservables(const RooArgSet* dataList, bool valueOnly) const
 {
-  //cout << "RooAbsArg::getObservables(" << GetName() << ")" << endl ;
+  auto depList = new RooArgSet;
+  getObservables(dataList, *depList, valueOnly);
+  return depList;
+}
 
-  RooArgSet* depList = new RooArgSet("dependents") ;
-  if (!dataList) return depList ;
+
+////////////////////////////////////////////////////////////////////////////////
+/// Create a list of leaf nodes in the arg tree starting with
+/// ourself as top node that match any of the names the args in the
+/// supplied argset.
+/// Returns `true` only if something went wrong.
+/// The complement of this function is getParameters().
+/// \param[in] dataList Set of leaf nodes to match.
+/// \param[out] outputSet Output set.
+/// \param[in] valueOnly If this parameter is true, we only match leafs that
+///                      depend on the value of any arg in `dataList`.
+
+bool RooAbsArg::getObservables(const RooAbsCollection* dataList, RooArgSet& outputSet, bool valueOnly) const
+{
+  outputSet.clear();
+  outputSet.setName("dependents");
+
+  if (!dataList) return false;
 
   // Make iterator over tree leaf node list
   RooArgSet leafList("leafNodeServerList") ;
@@ -657,26 +760,26 @@ RooArgSet* RooAbsArg::getObservables(const RooArgSet* dataList, Bool_t valueOnly
   if (valueOnly) {
     for (const auto arg : leafList) {
       if (arg->dependsOnValue(*dataList) && arg->isLValue()) {
-        depList->add(*arg) ;
+        outputSet.add(*arg) ;
       }
     }
   } else {
     for (const auto arg : leafList) {
       if (arg->dependsOn(*dataList) && arg->isLValue()) {
-        depList->add(*arg) ;
+        outputSet.add(*arg) ;
       }
     }
   }
 
-  return depList ;
+  return false;
 }
 
 
+////////////////////////////////////////////////////////////////////////////////
+/// Create a RooArgSet with all components (branch nodes) of the
+/// expression tree headed by this object.
 RooArgSet* RooAbsArg::getComponents() const
 {
-  // Return a RooArgSet with all component (branch nodes) of the
-  // expression tree headed by this object
-
   TString name(GetName()) ;
   name.Append("_components") ;
 
@@ -820,7 +923,7 @@ Bool_t RooAbsArg::observableOverlaps(const RooArgSet* nset, const RooAbsArg& tes
 ////////////////////////////////////////////////////////////////////////////////
 /// Mark this object as having changed its value, and propagate this status
 /// change to all of our clients. If the object is not in automatic dirty
-/// state propagation mode, this call has no effect
+/// state propagation mode, this call has no effect.
 
 void RooAbsArg::setValueDirty(const RooAbsArg* source)
 {
@@ -901,12 +1004,29 @@ void RooAbsArg::setShapeDirty(const RooAbsArg* source)
 
 
 ////////////////////////////////////////////////////////////////////////////////
-/// Substitute our servers with those listed in newSet. If nameChange is false, servers and
-/// and substitutes are matched by name. If nameChange is true, servers are matched to args
-/// in newSet that have the 'ORIGNAME:<servername>' attribute set. If mustReplaceAll is set,
-/// a warning is printed and error status is returned if not all servers could be successfully
-/// substituted.
-
+/// Replace all direct servers of this object with the new servers in `newServerList`.
+/// This substitutes objects that we receive values from with new objects that have the same name.
+/// \see recursiveRedirectServers() Use recursive version if servers that are only indirectly serving this object should be replaced as well.
+/// \see redirectServers() If only the direct servers of an object need to be replaced.
+///
+/// Note that changing the types of objects is generally allowed, but can be wrong if the interface of an object changes.
+/// For example, one can reparametrise a model by substituting a variable with a function:
+/// \f[
+///   f(x\, |\, a) = a \cdot x \rightarrow f(x\, |\, b) = (2.1 \cdot b) \cdot x
+/// \f]
+/// If an object, however, expects a PDF, and this is substituted with a function that isn't normalised, wrong results might be obtained
+/// or it might even crash the program. The types of the objects being substituted are not checked.
+///
+/// \param[in] newSetOrig Set of new servers that should be used instead of the current servers.
+/// \param[in] mustReplaceAll A warning is printed and error status is returned if not all servers could be
+/// substituted successfully.
+/// \param[in] nameChange If false, an object named "x" is only replaced with an object also named "x" in `newSetOrig`.
+/// If the object in `newSet` is called differently, set `nameChange` to true and use setAttribute() on the x object:
+/// ```
+/// objectToReplaceX.setAttribute("ORIGNAME:x")
+/// ```
+/// Now, the renamed object will be selected based on the attribute "ORIGNAME:<name>".
+/// \param[in] isRecursionStep Internal switch used when called from recursiveRedirectServers().
 Bool_t RooAbsArg::redirectServers(const RooAbsCollection& newSetOrig, Bool_t mustReplaceAll, Bool_t nameChange, Bool_t isRecursionStep)
 {
   // Trivial case, no servers
@@ -922,20 +1042,15 @@ Bool_t RooAbsArg::redirectServers(const RooAbsCollection& newSetOrig, Bool_t mus
 
       if (string("REMOVAL_DUMMY")==arg->GetName()) {
 
-	if (arg->getAttribute("REMOVE_ALL")) {
-// 	  cout << "RooAbsArg::redir including remove_all node " << arg->GetName() << endl ;
-	  newSet->add(*arg) ;
-	} else if (arg->getAttribute(Form("REMOVE_FROM_%s",getStringAttribute("ORIGNAME")))) {
-// 	  cout << "RooAbsArg::redir including remove_from_" << GetName() << " node " << arg->GetName() << endl ;
-	  newSet->add(*arg) ;
-	}
+        if (arg->getAttribute("REMOVE_ALL")) {
+          newSet->add(*arg) ;
+        } else if (arg->getAttribute(Form("REMOVE_FROM_%s",getStringAttribute("ORIGNAME")))) {
+          newSet->add(*arg) ;
+        }
       } else {
-	newSet->add(*arg) ;
+        newSet->add(*arg) ;
       }
     }
-
-//     cout << "RooAbsArg::redirect with name change(" << GetName() << ") newSet = " << newSet << " origSet = " << newSetOrig << endl ;
-
   } else {
     newSet = (RooAbsCollection*) &newSetOrig ;
   }
@@ -968,13 +1083,13 @@ Bool_t RooAbsArg::redirectServers(const RooAbsCollection& newSetOrig, Bool_t mus
 
     if (newServer && _verboseDirty) {
       cxcoutD(LinkStateMgmt) << "RooAbsArg::redirectServers(" << (void*)this << "," << GetName() << "): server " << oldServer->GetName()
-			     << " redirected from " << oldServer << " to " << newServer << endl ;
+			         << " redirected from " << oldServer << " to " << newServer << endl ;
     }
 
     if (!newServer) {
       if (mustReplaceAll) {
         coutE(LinkStateMgmt) << "RooAbsArg::redirectServers(" << (void*)this << "," << GetName() << "): server " << oldServer->GetName()
-			       << " (" << (void*)oldServer << ") not redirected" << (nameChange?"[nameChange]":"") << endl ;
+			           << " (" << (void*)oldServer << ") not redirected" << (nameChange?"[nameChange]":"") << endl ;
         ret = kTRUE ;
       }
       continue ;
@@ -985,7 +1100,7 @@ Bool_t RooAbsArg::redirectServers(const RooAbsCollection& newSetOrig, Bool_t mus
     };
     bool propValue = std::any_of(origServerValue.begin(), origServerValue.end(), findByNamePtr);
     bool propShape = std::any_of(origServerShape.begin(), origServerShape.end(), findByNamePtr);
-    // cout << "replaceServer with name " << oldServer->GetName() << " old=" << oldServer << " new=" << newServer << endl ;
+
     if (newServer != this) {
       replaceServer(*oldServer,*newServer,propValue,propShape) ;
     }
@@ -996,19 +1111,20 @@ Bool_t RooAbsArg::redirectServers(const RooAbsCollection& newSetOrig, Bool_t mus
   setShapeDirty() ;
 
   // Process the proxies
-  Bool_t allReplaced=kTRUE ;
   for (int i=0 ; i<numProxies() ; i++) {
     RooAbsProxy* p = getProxy(i) ;
     if (!p) continue ;
     Bool_t ret2 = p->changePointer(*newSet,nameChange,kFALSE) ;
-    allReplaced &= ret2 ;
+
+    if (mustReplaceAll && !ret2) {
+      auto ap = dynamic_cast<const RooArgProxy*>(p);
+      coutE(LinkStateMgmt) << "RooAbsArg::redirectServers(" << GetName()
+              << "): ERROR, proxy '" << p->name()
+              << "' with arg '" << (ap ? ap->absArg()->GetName() : "<could not cast>") << "' could not be adjusted" << endl;
+      ret = kTRUE ;
+    }
   }
 
-  if (mustReplaceAll && !allReplaced) {
-    coutE(LinkStateMgmt) << "RooAbsArg::redirectServers(" << GetName()
-			 << "): ERROR, some proxies could not be adjusted" << endl ;
-    ret = kTRUE ;
-  }
 
   // Optional subclass post-processing
   for (Int_t i=0 ;i<numCaches() ; i++) {
@@ -1025,10 +1141,11 @@ Bool_t RooAbsArg::redirectServers(const RooAbsCollection& newSetOrig, Bool_t mus
 
 ////////////////////////////////////////////////////////////////////////////////
 /// Find the new server in the specified set that matches the old server.
-/// Allow a name change if nameChange is kTRUE, in which case the new
-/// server is selected by searching for a new server with an attribute
-/// of "ORIGNAME:<oldName>". Return zero if there is not a unique match.
-
+///
+/// \param[in] newSet Search this set by name for a new server.
+/// \param[in] If true, search for an item with the bool attribute "ORIGNAME:<oldName>" set.
+/// Use `<object>.setAttribute("ORIGNAME:<oldName>")` to set this attribute.
+/// \return Pointer to the new server or `nullptr` if there's no unique match.
 RooAbsArg *RooAbsArg::findNewServer(const RooAbsCollection &newSet, Bool_t nameChange) const
 {
   RooAbsArg *newServer = 0;
@@ -1046,16 +1163,16 @@ RooAbsArg *RooAbsArg::findNewServer(const RooAbsCollection &newSet, Bool_t nameC
 
       // Check if any match was found
       if (tmp->getSize()==0) {
-	delete tmp ;
-	return 0 ;
+        delete tmp ;
+        return 0 ;
       }
 
       // Check if match is unique
       if(tmp->getSize()>1) {
-	coutF(LinkStateMgmt) << "RooAbsArg::redirectServers(" << GetName() << "): FATAL Error, " << tmp->getSize() << " servers with "
-			     << nameAttrib << " attribute" << endl ;
-	tmp->Print("v") ;
-	assert(0) ;
+        coutF(LinkStateMgmt) << "RooAbsArg::redirectServers(" << GetName() << "): FATAL Error, " << tmp->getSize() << " servers with "
+            << nameAttrib << " attribute" << endl ;
+        tmp->Print("v") ;
+        assert(0) ;
       }
 
       // use the unique element in the set
@@ -1066,17 +1183,16 @@ RooAbsArg *RooAbsArg::findNewServer(const RooAbsCollection &newSet, Bool_t nameC
   return newServer;
 }
 
+
+////////////////////////////////////////////////////////////////////////////////
+/// Recursively replace all servers with the new servers in `newSet`.
+/// This substitutes objects that we receive values from (also indirectly through other objects) with new objects that have the same name.
+///
+/// *Copied from redirectServers:*
+///
+/// \copydetails RooAbsArg::redirectServers
 Bool_t RooAbsArg::recursiveRedirectServers(const RooAbsCollection& newSet, Bool_t mustReplaceAll, Bool_t nameChange, Bool_t recurseInNewSet)
 {
-  // Recursively redirect all servers with new server in collection 'newSet'.
-  // Substitute our servers with those listed in newSet. If nameChange is false, servers and
-  // and substitutes are matched by name. If nameChange is true, servers are matched to args
-  // in newSet that have the 'ORIGNAME:<servername>' attribute set. If mustReplaceAll is set,
-  // a warning is printed and error status is returned if not all servers could be sucessfully
-  // substituted. If recurseInNewSet is true, the recursion algorithm also recursion into
-  // expression trees under the arguments in the new servers (i.e. those in newset)
-
-
   // Cyclic recursion protection
   static std::set<const RooAbsArg*> callStack;
   {
@@ -1142,6 +1258,7 @@ void RooAbsArg::registerProxy(RooArgProxy& proxy)
 
   // Register proxy itself
   _proxyList.Add(&proxy) ;
+  _proxyListCache.isDirty = true;
 }
 
 
@@ -1153,6 +1270,7 @@ void RooAbsArg::unRegisterProxy(RooArgProxy& proxy)
 {
   _proxyList.Remove(&proxy) ;
   _proxyList.Compress() ;
+  _proxyListCache.isDirty = true;
 }
 
 
@@ -1174,6 +1292,7 @@ void RooAbsArg::registerProxy(RooSetProxy& proxy)
 
   // Register proxy itself
   _proxyList.Add(&proxy) ;
+  _proxyListCache.isDirty = true;
 }
 
 
@@ -1186,6 +1305,7 @@ void RooAbsArg::unRegisterProxy(RooSetProxy& proxy)
 {
   _proxyList.Remove(&proxy) ;
   _proxyList.Compress() ;
+  _proxyListCache.isDirty = true;
 }
 
 
@@ -1208,6 +1328,7 @@ void RooAbsArg::registerProxy(RooListProxy& proxy)
   // Register proxy itself
   Int_t nProxyOld = _proxyList.GetEntries() ;
   _proxyList.Add(&proxy) ;
+  _proxyListCache.isDirty = true;
   if (_proxyList.GetEntries()!=nProxyOld+1) {
     cout << "RooAbsArg::registerProxy(" << GetName() << ") proxy registration failure! nold=" << nProxyOld << " nnew=" << _proxyList.GetEntries() << endl ;
   }
@@ -1223,6 +1344,7 @@ void RooAbsArg::unRegisterProxy(RooListProxy& proxy)
 {
   _proxyList.Remove(&proxy) ;
   _proxyList.Compress() ;
+  _proxyListCache.isDirty = true;
 }
 
 
@@ -1256,10 +1378,20 @@ Int_t RooAbsArg::numProxies() const
 
 void RooAbsArg::setProxyNormSet(const RooArgSet* nset)
 {
-  for (int i=0 ; i<numProxies() ; i++) {
-    RooAbsProxy* p = getProxy(i) ;
-    if (!p) continue ;
-    getProxy(i)->changeNormSet(nset) ;
+  if (_proxyListCache.isDirty) {
+    // First time we loop over proxies: cache the results to avoid future
+    // costly dynamic_casts
+    _proxyListCache.cache.clear();
+    for (int i=0 ; i<numProxies() ; i++) {
+      RooAbsProxy* p = getProxy(i) ;
+      if (!p) continue ;
+      _proxyListCache.cache.push_back(p);
+    }
+    _proxyListCache.isDirty = false;
+  }
+
+  for ( auto& p : _proxyListCache.cache ) {
+    p->changeNormSet(nset);
   }
 }
 
@@ -1435,7 +1567,7 @@ void RooAbsArg::printTree(ostream& os, TString /*indent*/) const
 ////////////////////////////////////////////////////////////////////////////////
 /// Ostream operator
 
-ostream& operator<<(ostream& os, RooAbsArg &arg)
+ostream& operator<<(ostream& os, RooAbsArg const& arg)
 {
   arg.writeToStream(os,kTRUE) ;
   return os ;
@@ -1465,23 +1597,34 @@ void RooAbsArg::printAttribList(ostream& os) const
   if (!first) os << "] " ;
 }
 
+
+////////////////////////////////////////////////////////////////////////////////
+/// Bind this node to objects in `set`.
+/// Search the set for objects that have the same name as our servers, and
+/// attach ourselves to those. After this operation, this node is computing its
+/// values based on the new servers. This can be used to e.g. read values from
+// a dataset.
+
+
+void RooAbsArg::attachArgs(const RooAbsCollection &set)
+{
+  RooArgSet branches;
+  branchNodeServerList(&branches,0,true);
+
+  for(auto const& branch : branches) {
+    branch->redirectServers(set,false,false);
+  }
+}
+
+
 ////////////////////////////////////////////////////////////////////////////////
 /// Replace server nodes with names matching the dataset variable names
 /// with those data set variables, making this PDF directly dependent on the dataset.
 
 void RooAbsArg::attachDataSet(const RooAbsData &data)
 {
-  const RooArgSet* set = data.get() ;
-  RooArgSet branches ;
-  branchNodeServerList(&branches,0,kTRUE) ;
-
-  RooFIter iter = branches.fwdIterator() ;
-  RooAbsArg* branch ;
-  while((branch=iter.next())) {
-    branch->redirectServers(*set,kFALSE,kFALSE) ;
-  }
+  attachArgs(*data.get());
 }
-
 
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1490,17 +1633,8 @@ void RooAbsArg::attachDataSet(const RooAbsData &data)
 
 void RooAbsArg::attachDataStore(const RooAbsDataStore &dstore)
 {
-  const RooArgSet* set = dstore.get() ;
-  RooArgSet branches ;
-  branchNodeServerList(&branches,0,kTRUE) ;
-
-  RooFIter iter = branches.fwdIterator() ;
-  RooAbsArg* branch ;
-  while((branch=iter.next())) {
-    branch->redirectServers(*set,kFALSE,kFALSE) ;
-  }
+  attachArgs(*dstore.get());
 }
-
 
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1579,11 +1713,24 @@ void RooAbsArg::optimizeCacheMode(const RooArgSet& observables, RooArgSet& optim
 
 
   // Terminate call if this node was already processed (tree structure may be cyclical)
-  if (processedNodes.findArg(this)) {
-    return ;
-  } else {
-    processedNodes.Add(this) ;
-  }
+  // LM : RooLinkedList::findArg looks by name and not but by object pointer,
+  //  should one use RooLinkedList::FindObject (look byt pointer) instead of findArg when
+  // tree contains nodes with the same name ?
+  // Add an info message if the require node does not exist but a different node already exists with same name
+
+  if (processedNodes.FindObject(this))
+     return;
+
+  // check if findArgs returns something different (i.e. a different node with same name) when
+  // this node has not been processed (FindObject returns a null pointer)
+  auto obj = processedNodes.findArg(this);
+  assert(obj != this); // obj == this cannot happen
+  if (obj)
+     // here for nodes with duplicate names
+     cxcoutI(Optimization) << "RooAbsArg::optimizeCacheMode(" << GetName()
+                           << " node " << this << " exists already as " << obj << " but with the SAME name !" << endl;
+
+  processedNodes.Add(this);
 
   // Set cache mode operator to 'AlwaysDirty' if we depend on any of the given observables
   if (dependsOnValue(observables)) {
@@ -1932,7 +2079,7 @@ RooLinkedList RooAbsArg::getCloningAncestors() const
       strlcpy(buf,iter->c_str(),128) ;
       strtok(buf,"(") ;
       char* ptrToken = strtok(0,")") ;
-      RooAbsArg* ptr = (RooAbsArg*) strtol(ptrToken,0,16) ;
+      RooAbsArg* ptr = (RooAbsArg*) strtoll(ptrToken,0,16) ;
       retVal.Add(ptr) ;
     }
   }
@@ -1944,9 +2091,11 @@ RooLinkedList RooAbsArg::getCloningAncestors() const
 ////////////////////////////////////////////////////////////////////////////////
 /// Create a GraphViz .dot file visualizing the expression tree headed by
 /// this RooAbsArg object. Use the GraphViz tool suite to make e.g. a gif
-/// or ps file from the .dot file
+/// or ps file from the .dot file.
+/// If a node derives from RooAbsReal, its current (unnormalised) value is
+/// printed as well.
 ///
-/// Based on concept developed by Kyle Cranmer
+/// Based on concept developed by Kyle Cranmer.
 
 void RooAbsArg::graphVizTree(const char* fileName, const char* delimiter, bool useTitle, bool useLatex)
 {
@@ -1961,8 +2110,10 @@ void RooAbsArg::graphVizTree(const char* fileName, const char* delimiter, bool u
 ////////////////////////////////////////////////////////////////////////////////
 /// Write the GraphViz representation of the expression tree headed by
 /// this RooAbsArg object to the given ostream.
+/// If a node derives from RooAbsReal, its current (unnormalised) value is
+/// printed as well.
 ///
-/// Based on concept developed by Kyle Cranmer
+/// Based on concept developed by Kyle Cranmer.
 
 void RooAbsArg::graphVizTree(ostream& os, const char* delimiter, bool useTitle, bool useLatex)
 {
@@ -1970,8 +2121,11 @@ void RooAbsArg::graphVizTree(ostream& os, const char* delimiter, bool useTitle, 
     coutE(InputArguments) << "RooAbsArg::graphVizTree() ERROR: output stream provided as input argument is in invalid state" << endl ;
   }
 
+  // silent warning messages coming when evaluating a RooAddPdf without a normalization set
+  RooHelpers::LocalChangeMsgLevel locmsg(RooFit::WARNING, 0u, RooFit::Eval, false);
+
   // Write header
-  os << "digraph " << GetName() << "{" << endl ;
+  os << "digraph \"" << GetName() << "\"{" << endl ;
 
   // First list all the tree nodes
   RooArgSet nodeSet ;
@@ -1994,6 +2148,10 @@ void RooAbsArg::graphVizTree(ostream& os, const char* delimiter, bool useTitle, 
     string typeFormat = "\\texttt{";
     string nodeType = (useLatex) ? typeFormat+node->IsA()->GetName()+"}" : node->IsA()->GetName();
 
+    if (auto realNode = dynamic_cast<RooAbsReal*>(node)) {
+      nodeLabel += delimiter + std::to_string(realNode->getVal());
+    }
+
     os << "\"" << nodeName << "\" [ color=" << (node->isFundamental()?"blue":"red")
        << ", label=\"" << nodeType << delimiter << nodeLabel << "\"];" << endl ;
 
@@ -2004,9 +2162,8 @@ void RooAbsArg::graphVizTree(ostream& os, const char* delimiter, bool useTitle, 
   graphVizAddConnections(links) ;
 
   // And write them out
-  set<pair<RooAbsArg*,RooAbsArg*> >::iterator liter = links.begin() ;
-  for( ; liter != links.end() ; ++liter ) {
-    os << "\"" << liter->first->GetName() << "\" -> \"" << liter->second->GetName() << "\";" << endl ;
+  for(auto const& link : links) {
+    os << "\"" << link.first->GetName() << "\" -> \"" << link.second->GetName() << "\";" << endl ;
   }
 
   // Write trailer
@@ -2107,9 +2264,9 @@ void RooAbsArg::graphVizAddConnections(set<pair<RooAbsArg*,RooAbsArg*> >& linkSe
 
 
 ////////////////////////////////////////////////////////////////////////////////
-/// Take ownership of the contents of 'comps'
+/// Take ownership of the contents of 'comps'.
 
-Bool_t RooAbsArg::addOwnedComponents(const RooArgSet& comps)
+bool RooAbsArg::addOwnedComponents(const RooAbsCollection& comps)
 {
   if (!_ownedComponents) {
     _ownedComponents = new RooArgSet("owned components") ;
@@ -2117,6 +2274,27 @@ Bool_t RooAbsArg::addOwnedComponents(const RooArgSet& comps)
   return _ownedComponents->addOwned(comps) ;
 }
 
+
+////////////////////////////////////////////////////////////////////////////////
+/// Take ownership of the contents of 'comps'. Different from the overload that
+/// taked the RooArgSet by `const&`, this version can also take an owning
+/// RooArgSet without error, because the ownership will not be ambiguous afterwards.
+
+bool RooAbsArg::addOwnedComponents(RooAbsCollection&& comps)
+{
+  if (!_ownedComponents) {
+    _ownedComponents = new RooArgSet("owned components") ;
+  }
+  return _ownedComponents->addOwned(std::move(comps)) ;
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+/// \copydoc RooAbsArg::addOwnedComponents(RooAbsCollection&& comps)
+
+bool RooAbsArg::addOwnedComponents(RooArgList&& comps) {
+  return addOwnedComponents(static_cast<RooAbsCollection&&>(std::move(comps)));
+}
 
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -2126,27 +2304,24 @@ Bool_t RooAbsArg::addOwnedComponents(const RooArgSet& comps)
 RooAbsArg* RooAbsArg::cloneTree(const char* newname) const
 {
   // Clone tree using snapshot
-  RooArgSet* clonedNodes = (RooArgSet*) RooArgSet(*this).snapshot(kTRUE) ;
+  RooArgSet clonedNodes;
+  RooArgSet(*this).snapshot(clonedNodes, true);
 
   // Find the head node in the cloneSet
-  RooAbsArg* head = clonedNodes->find(*this) ;
+  RooAbsArg* head = clonedNodes.find(*this) ;
   assert(head);
 
   // Remove the head node from the cloneSet
   // To release it from the set ownership
-  clonedNodes->remove(*head) ;
+  clonedNodes.remove(*head) ;
 
   // Add the set as owned component of the head
-  head->addOwnedComponents(*clonedNodes) ;
-
-  // Delete intermediate container
-  clonedNodes->releaseOwnership() ;
-  delete clonedNodes ;
+  head->addOwnedComponents(std::move(clonedNodes)) ;
 
   // Adjust name of head node if requested
   if (newname) {
     head->TNamed::SetName(newname) ;
-    head->_namePtr = (TNamed*) RooNameReg::instance().constPtr(newname) ;
+    head->_namePtr = RooNameReg::instance().constPtr(newname) ;
   }
 
   // Return the head
@@ -2204,12 +2379,9 @@ void RooAbsArg::wireAllCaches()
 {
   RooArgSet branches ;
   branchNodeServerList(&branches) ;
-  RooFIter iter = branches.fwdIterator() ;
-  RooAbsArg* arg ;
-  while((arg=iter.next())) {
-//     cout << "wiring caches on node " << arg->GetName() << endl ;
-    for (deque<RooAbsCache*>::iterator iter2 = arg->_cacheList.begin() ; iter2 != arg->_cacheList.end() ; ++iter2) {
-      (*iter2)->wireCache() ;
+  for(auto const& arg : branches) {
+    for (auto const& arg2 : arg->_cacheList) {
+      arg2->wireCache() ;
     }
   }
 }
@@ -2221,11 +2393,12 @@ void RooAbsArg::wireAllCaches()
 void RooAbsArg::SetName(const char* name)
 {
   TNamed::SetName(name) ;
-  TNamed* newPtr = (TNamed*) RooNameReg::instance().constPtr(GetName()) ;
+  auto newPtr = RooNameReg::instance().constPtr(GetName()) ;
   if (newPtr != _namePtr) {
     //cout << "Rename '" << _namePtr->GetName() << "' to '" << name << "' (set flag in new name)" << endl;
     _namePtr = newPtr;
-    _namePtr->SetBit(RooNameReg::kRenamedArg);
+    const_cast<TNamed*>(_namePtr)->SetBit(RooNameReg::kRenamedArg);
+    RooNameReg::incrementRenameCounter();
   }
 }
 
@@ -2236,13 +2409,8 @@ void RooAbsArg::SetName(const char* name)
 
 void RooAbsArg::SetNameTitle(const char *name, const char *title)
 {
-  TNamed::SetNameTitle(name,title) ;
-  TNamed* newPtr = (TNamed*) RooNameReg::instance().constPtr(GetName()) ;
-  if (newPtr != _namePtr) {
-    //cout << "Rename '" << _namePtr->GetName() << "' to '" << name << "' (set flag in new name)" << endl;
-    _namePtr = newPtr;
-    _namePtr->SetBit(RooNameReg::kRenamedArg);
-  }
+  TNamed::SetTitle(title) ;
+  SetName(name);
 }
 
 
@@ -2255,7 +2423,7 @@ void RooAbsArg::Streamer(TBuffer &R__b)
      _ioReadStack.push(this) ;
      R__b.ReadClassBuffer(RooAbsArg::Class(),this);
      _ioReadStack.pop() ;
-     _namePtr = (TNamed*) RooNameReg::instance().constPtr(GetName()) ;
+     _namePtr = RooNameReg::instance().constPtr(GetName()) ;
      _isConstant = getAttribute("Constant") ;
    } else {
      R__b.WriteClassBuffer(RooAbsArg::Class(),this);
@@ -2275,9 +2443,8 @@ void RooAbsArg::Streamer(TBuffer &R__b)
 
 void RooAbsArg::ioStreamerPass2()
 {
-
   // Handling of v5-v6 migration (TRefArray _proxyList --> RooRefArray _proxyList)
-  map<RooAbsArg*,TRefArray*>::iterator iter = _ioEvoList.find(this) ;
+  auto iter = _ioEvoList.find(this);
   if (iter != _ioEvoList.end()) {
 
     // Transfer contents of saved TRefArray to RooRefArray now
@@ -2287,8 +2454,7 @@ void RooAbsArg::ioStreamerPass2()
        _proxyList.Add(iter->second->At(i));
     }
     // Delete TRefArray and remove from list
-    delete iter->second ;
-    _ioEvoList.erase(iter) ;
+    _ioEvoList.erase(iter);
   }
 }
 
@@ -2305,30 +2471,20 @@ void RooAbsArg::ioStreamerPass2()
 
 void RooAbsArg::ioStreamerPass2Finalize()
 {
-
   // Handling of v5-v6 migration (TRefArray _proxyList --> RooRefArray _proxyList)
-  map<RooAbsArg*,TRefArray*>::iterator iter = _ioEvoList.begin() ;
-  while (iter != _ioEvoList.end()) {
+  for (const auto& iter : _ioEvoList) {
 
     // Transfer contents of saved TRefArray to RooRefArray now
-    if (!iter->first->_proxyList.GetEntriesFast())
-       iter->first->_proxyList.Expand(iter->second->GetEntriesFast());
-    for (int i = 0; i < iter->second->GetEntriesFast(); i++) {
-       iter->first->_proxyList.Add(iter->second->At(i));
+    if (!iter.first->_proxyList.GetEntriesFast())
+       iter.first->_proxyList.Expand(iter.second->GetEntriesFast());
+    for (int i = 0; i < iter.second->GetEntriesFast(); i++) {
+       iter.first->_proxyList.Add(iter.second->At(i));
     }
-
-    // Save iterator position for deletion after increment
-    map<RooAbsArg*,TRefArray*>::iterator iter_tmp = iter ;
-
-    ++iter ;
-
-    // Delete TRefArray and remove from list
-    delete iter_tmp->second ;
-    _ioEvoList.erase(iter_tmp) ;
-
   }
 
+  _ioEvoList.clear();
 }
+
 
 RooAbsArg::RefCountListLegacyIterator_t *
 RooAbsArg::makeLegacyIterator(const RooAbsArg::RefCountList_t& list) const {
@@ -2346,12 +2502,12 @@ void RooRefArray::Streamer(TBuffer &R__b)
       Version_t R__v = R__b.ReadVersion(&R__s, &R__c); if (R__v) { }
 
       // Make temporary refArray and read that from the streamer
-      TRefArray* refArray = new TRefArray ;
+      auto refArray = std::make_unique<TRefArray>();
       refArray->Streamer(R__b) ;
       R__b.CheckByteCount(R__s, R__c, refArray->IsA());
 
       // Schedule deferred processing of TRefArray into proxy list
-      RooAbsArg::_ioEvoList[RooAbsArg::_ioReadStack.top()] = refArray ;
+      RooAbsArg::_ioEvoList[RooAbsArg::_ioReadStack.top()] = std::move(refArray);
 
    } else {
 
@@ -2384,4 +2540,3 @@ std::string printValue(RooAbsArg *raa)
    return s.str();
 }
 } // namespace cling
-

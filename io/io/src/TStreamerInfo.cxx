@@ -9,9 +9,8 @@
  * For the list of contributors see $ROOTSYS/README/CREDITS.             *
  *************************************************************************/
 
-/**
-\class TStreamerInfo TStreamerInfo.cxx
-\ingroup IO
+/** \class TStreamerInfo
+    \ingroup IO
 
 Describes a persistent version of a class.
 
@@ -52,9 +51,12 @@ element type.
 #include "TArrayS.h"
 #include "TArrayL.h"
 #include "TError.h"
+#include "TEnum.h"
 #include "TRef.h"
 #include "TProcessID.h"
 #include "TSystem.h"
+#include "TObjString.h"
+#include "snprintf.h"
 
 #include "TStreamer.h"
 #include "TContainerConverters.h"
@@ -158,7 +160,6 @@ TStreamerInfo::TStreamerInfo()
    fOldVersion = Class()->GetClassVersion();
    fNVirtualInfoLoc = 0;
    fVirtualInfoLoc = 0;
-   fLiveCount = 0;
 
    fReadObjectWise = 0;
    fReadMemberWise = 0;
@@ -193,7 +194,6 @@ TStreamerInfo::TStreamerInfo(TClass *cl)
    fOldVersion = Class()->GetClassVersion();
    fNVirtualInfoLoc = 0;
    fVirtualInfoLoc = 0;
-   fLiveCount = 0;
 
    fReadObjectWise = 0;
    fReadMemberWise = 0;
@@ -210,6 +210,12 @@ TStreamerInfo::TStreamerInfo(TClass *cl)
 
 TStreamerInfo::~TStreamerInfo()
 {
+   // Note: If a StreamerInfo is loaded from a file and is the same information
+   // as an existing one, it is assigned the same "unique id" and we need to double
+   // check before removing it from the global list.
+   if (fNumber >=0 && gROOT->GetListOfStreamerInfo()->At(fNumber) == this)
+      gROOT->GetListOfStreamerInfo()->RemoveAt(fNumber);
+
    delete [] fComp;     fComp     = 0;
    delete [] fCompFull; fCompFull = 0;
    delete [] fCompOpt;  fCompOpt  = 0;
@@ -253,7 +259,7 @@ namespace {
 ///
 /// A list of TStreamerElement derived classes is built by scanning
 /// one by one the list of data members of the analyzed class.
-void TStreamerInfo::Build()
+void TStreamerInfo::Build(Bool_t isTransient)
 {
    // Did another thread already do the work?
    if (fIsCompiled) return;
@@ -288,9 +294,16 @@ void TStreamerInfo::Build()
       return;
    }
 
+   // Warn on read/write of RVec (see 6.24 release notes)
+   if (strncmp(GetName(), "ROOT::VecOps::RVec<", 19) == 0) {
+      Warning("Build", "Due to some major, backward-incompatible improvements planned for ROOT::RVec, direct I/O of "
+                       "ROOT::RVec objects will break between v6.24 and v6.26. Please use std::vectors instead. See "
+                       "the release notes of v6.24 for more information.");
+   }
+
    TStreamerElement::Class()->IgnoreTObjectStreamer();
 
-   fClass->BuildRealData();
+   fClass->BuildRealData(nullptr, isTransient);
 
    fCheckSum = fClass->GetCheckSum();
 
@@ -309,7 +322,7 @@ void TStreamerInfo::Build()
    // this is a pair, otherwise, on some STL implementations, it can happen that
    // pair has mother classes which are an internal implementation detail and
    // would result in bogus messages printed on screen.
-   if (strncmp(fClass->GetName(), "pair<", 5)) {
+   if (!TClassEdit::IsStdPair(fClass->GetName())) {
       const bool isCollection = fClass->GetCollectionProxy();
       const bool isString = !strcmp(fClass->GetName(), "string");
       TBaseClass* base = 0;
@@ -321,8 +334,9 @@ void TStreamerInfo::Build()
             continue;
          }
          if (offset == kNeedObjectForVirtualBaseClass) {
-            Error("Build()", "Cannot stream virtual base %s of class %s",
-                  base->GetName(), fClass->GetName());
+            if (!isTransient)
+               Error("Build()", "Cannot stream virtual base %s of class %s",
+                     base->GetName(), fClass->GetName());
             continue;
          }
          const char* bname  = base->GetName();
@@ -336,13 +350,14 @@ void TStreamerInfo::Build()
             else       element = new TStreamerSTL(bname, btitle, offset, bname, 0, kFALSE);
             if (fClass->IsLoaded() && ((TStreamerSTL*)element)->GetSTLtype() != ROOT::kSTLvector) {
                if (!element->GetClassPointer()->IsLoaded()) {
-                  Error("Build","The class \"%s\" is compiled and its base class \"%s\" is a collection and we do not have a dictionary for it, we will not be able to read or write this base class.",GetName(),bname);
+                  if (!isTransient)
+                     Error("Build","The class \"%s\" is compiled and its base class \"%s\" is a collection and we do not have a dictionary for it, we will not be able to read or write this base class.",GetName(),bname);
                   delete element;
                   continue;
                }
             }
          } else {
-            element = new TStreamerBase(bname, btitle, offset);
+            element = new TStreamerBase(bname, btitle, offset, isTransient);
             TClass* clm = element->GetClassPointer();
             if (!clm) {
                // We have no information about the class yet, except that since it
@@ -366,7 +381,7 @@ void TStreamerInfo::Build()
                   // element from being inserted into the compiled info.
                   element->SetType(-1);
                }
-               if (!clm->IsLoaded() && !(isCollection || isString)) {
+               if (!isTransient && !clm->IsLoaded() && !(isCollection || isString)) {
                   // Don't complain about the base classes of collections nor of
                   // std::string.
                   Warning("Build", "%s: base class %s has no streamer or dictionary it will not be saved", GetName(), clm->GetName());
@@ -393,6 +408,9 @@ void TStreamerInfo::Build()
          continue;
       }
       if (!dm->IsPersistent()) {
+         continue;
+      }
+      if (dm->Property() & kIsUnionMember) {
          continue;
       }
       TMemberStreamer* streamer = 0;
@@ -451,14 +469,16 @@ void TStreamerInfo::Build()
             const char* counterName = dm->GetArrayIndex();
             TRealData* rdCounter = (TRealData*) fClass->GetListOfRealData()->FindObject(counterName);
             if (!rdCounter || rdCounter->TestBit(TRealData::kTransient)) {
-               Error("Build", "%s, discarding: %s %s, illegal %s\n", GetName(), dmFull, dmName, dmTitle);
+               if (!isTransient)
+                  Error("Build", "%s, discarding: %s %s, illegal %s\n", GetName(), dmFull, dmName, dmTitle);
                continue;
             }
             dmCounter = rdCounter->GetDataMember();
             TDataType* dtCounter = dmCounter->GetDataType();
             Bool_t isInteger = dtCounter && ((dtCounter->GetType() == 3) || (dtCounter->GetType() == 13));
             if (!dtCounter || !isInteger) {
-               Error("Build", "%s, discarding: %s %s, illegal [%s] (must be Int_t)\n", GetName(), dmFull, dmName, counterName);
+               if (!isTransient)
+                  Error("Build", "%s, discarding: %s %s, illegal [%s] (must be Int_t)\n", GetName(), dmFull, dmName, counterName);
                continue;
             }
             TStreamerBasicType* bt = TStreamerInfo::GetElementCounter(counterName, dmCounter->GetClass());
@@ -466,7 +486,8 @@ void TStreamerInfo::Build()
                if (dmCounter->GetClass()->Property() & kIsAbstract) {
                   continue;
                }
-               Error("Build", "%s, discarding: %s %s, illegal [%s] must be placed before \n", GetName(), dmFull, dmName, counterName);
+               if (!isTransient)
+                  Error("Build", "%s, discarding: %s %s, illegal [%s] must be placed before \n", GetName(), dmFull, dmName, counterName);
                continue;
             }
          }
@@ -481,7 +502,8 @@ void TStreamerInfo::Build()
             dsize = sizeof(char*);
          }
          if (dtype == kOther_t || dtype == kNoType_t) {
-            Error("Build", "%s, unknown type: %s %s", GetName(), dmFull, dmName);
+            if (!isTransient)
+               Error("Build", "%s, unknown type: %s %s", GetName(), dmFull, dmName);
             continue;
          } else if (dmIsPtr && (dtype != kCharStar)) {
             if (dmCounter) {
@@ -491,7 +513,8 @@ void TStreamerInfo::Build()
                if ((fName == "TString") || (fName == "TClass")) {
                   continue;
                }
-               Error("Build", "%s, discarding: %s %s, no [dimension]\n", GetName(), dmFull, dmName);
+               if (!isTransient)
+                  Error("Build", "%s, discarding: %s %s, no [dimension]\n", GetName(), dmFull, dmName);
                continue;
             }
          } else {
@@ -516,7 +539,8 @@ void TStreamerInfo::Build()
             if (((TStreamerSTL*)element)->GetSTLtype() != ROOT::kSTLvector || hasCustomAlloc) {
                auto printErrorMsg = [&](const char* category)
                   {
-                     Error("Build","The class \"%s\" is %s and for its data member \"%s\" we do not have a dictionary for the collection \"%s\". Because of this, we will not be able to read or write this data member.",GetName(), category, dmName, dmType);
+                     if (!isTransient)
+                        Error("Build","The class \"%s\" is %s and for its data member \"%s\" we do not have a dictionary for the collection \"%s\". Because of this, we will not be able to read or write this data member.",GetName(), category, dmName, dmType);
                   };
                if (fClass->IsLoaded()) {
                   if (!element->GetClassPointer()->IsLoaded()) {
@@ -535,7 +559,8 @@ void TStreamerInfo::Build()
          } else {
             TClass* clm = TClass::GetClass(dmType);
             if (!clm) {
-               Error("Build", "%s, unknown type: %s %s\n", GetName(), dmFull, dmName);
+               if (!isTransient)
+                  Error("Build", "%s, unknown type: %s %s\n", GetName(), dmFull, dmName);
                continue;
             }
             if (isStdArray) {
@@ -552,8 +577,9 @@ void TStreamerInfo::Build()
                      element = new TStreamerObjectPointer(dmName, dmTitle, offset, dmFull);
                   } else {
                      element = new TStreamerObjectAnyPointer(dmName, dmTitle, offset, dmFull);
-                     if (!streamer && !clm->GetStreamer() && !clm->IsLoaded()) {
-                        Error("Build", "%s: %s has no streamer or dictionary, data member %s will not be saved", GetName(), dmFull, dmName);
+                     if (!isTransient && !streamer && !clm->GetStreamer() && !clm->IsLoaded() && !clm->fIsSyntheticPair) {
+                        Error("Build", "%s: %s has no streamer or dictionary, data member %s will not be saved",
+                              GetName(), dmFull, dmName);
                      }
                   }
                }
@@ -563,8 +589,9 @@ void TStreamerInfo::Build()
                element = new TStreamerString(dmName, dmTitle, offset);
             } else {
                element = new TStreamerObjectAny(dmName, dmTitle, offset, dmFull);
-               if (!streamer && !clm->GetStreamer() && !clm->IsLoaded()) {
-                  Warning("Build", "%s: %s has no streamer or dictionary, data member \"%s\" will not be saved", GetName(), dmFull, dmName);
+               if (!isTransient && !streamer && !clm->GetStreamer() && !clm->IsLoaded() && !clm->fIsSyntheticPair) {
+                  Warning("Build", "%s: %s has no streamer or dictionary, data member \"%s\" will not be saved",
+                          GetName(), dmFull, dmName);
                }
             }
          }
@@ -640,7 +667,8 @@ void TStreamerInfo::Build()
    if (needAllocClass) {
       TStreamerInfo *infoalloc  = (TStreamerInfo *)Clone(TString::Format("%s@@%d",GetName(),GetClassVersion()));
       if (!infoalloc) {
-         Error("Build","Could you create a TStreamerInfo for %s\n",TString::Format("%s@@%d",GetName(),GetClassVersion()).Data());
+         if (!isTransient)
+            Error("Build","Could you create a TStreamerInfo for %s\n",TString::Format("%s@@%d",GetName(),GetClassVersion()).Data());
       } else {
          // Tell clone we should rerun BuildOld
          infoalloc->SetBit(kBuildOldUsed,false);
@@ -694,11 +722,11 @@ void TStreamerInfo::Build()
 /// Check if built and consistent with the class dictionary.
 /// This method is called by TFile::ReadStreamerInfo.
 
-void TStreamerInfo::BuildCheck(TFile *file /* = 0 */)
+void TStreamerInfo::BuildCheck(TFile *file /* = 0 */, Bool_t load /* = kTRUE */)
 {
    R__LOCKGUARD(gInterpreterMutex);
 
-   fClass = TClass::GetClass(GetName());
+   fClass = TClass::GetClass(GetName(), load);
    if (!fClass) {
       // fClassVersion should have been a Version_t and/or Version_t
       // should have been an Int_t.  Changing the on-file format
@@ -709,7 +737,7 @@ void TStreamerInfo::BuildCheck(TFile *file /* = 0 */)
 
       // Case of a custom collection (the user provided a CollectionProxy
       // for a class that is not an STL collection).
-      if (GetElements()->GetEntries() == 1) {
+      if (GetElements()->GetEntriesFast() == 1) {
          TObject *element = GetElements()->UncheckedAt(0);
          Bool_t isstl = element && strcmp("This",element->GetName())==0;
          if (isstl) {
@@ -746,12 +774,21 @@ void TStreamerInfo::BuildCheck(TFile *file /* = 0 */)
 
   } else {
       if (fClass->GetCollectionType() > ROOT::kNotSTL) {
-         if (TClassEdit::IsSTLCont(fClass->GetName())) {
+         const bool isOldRVec = fClass->GetCollectionType() == ROOT::kROOTRVec && (fElements->GetEntries() == 1) &&
+                                !strcmp(fElements->At(0)->GetName(), "fData");
+         if (!isOldRVec && TClassEdit::IsSTLCont(fClass->GetName())) {
             // We have a collection that is indeed an STL collection,
             // we know we don't need its streamerInfo.
             SetBit(kCanDelete);
             return;
          }
+      }
+      if (fClass->fIsSyntheticPair) {
+         // The format never change, no need to import the old StreamerInfo
+         // (which anyway would have issue when being setup due to the lack
+         // of TDataMember in the TClass.
+         SetBit(kCanDelete);
+         return;
       }
 
       if (0 == strcmp("string",fClass->GetName())) {
@@ -763,7 +800,7 @@ void TStreamerInfo::BuildCheck(TFile *file /* = 0 */)
       const TObjArray *array = fClass->GetStreamerInfos();
       TStreamerInfo* info = 0;
 
-      if (fClass->TestBit(TClass::kIsEmulation) && array->GetEntries()==0) {
+      if (fClass->TestBit(TClass::kIsEmulation) && array->IsEmpty()) {
          // We have an emulated class that has no TStreamerInfo, this
          // means it was created to insert a (default) rule.  Consequently
          // the error message about the missing dictionary was not printed.
@@ -774,7 +811,7 @@ void TStreamerInfo::BuildCheck(TFile *file /* = 0 */)
 
       // Case of a custom collection (the user provided a CollectionProxy
       // for a class that is not an STL collection).
-      if (GetElements()->GetEntries() == 1) {
+      if (GetElements()->GetEntriesFast() == 1) {
          TObject *element = GetElements()->UncheckedAt(0);
          Bool_t isstl = element && strcmp("This",element->GetName())==0;
          if (isstl && !fClass->GetCollectionProxy()) {
@@ -1072,12 +1109,12 @@ void TStreamerInfo::BuildCheck(TFile *file /* = 0 */)
                              fClassVersion, GetName(), GetName(), GetName(), fClassVersion);
                   } else {
                      Warning("BuildCheck", "\n\
-   The StreamerInfo from %s does not match existing one (%s:%d)\n\
+   The StreamerInfo does not match existing one (%s:%d)\n\
    The existing one has not been used yet and will be discarded.\n\
    Reading should work properly, however writing object of\n\
    type %s will not work properly.  Most likely the version number\n\
    of the class was not properly updated [See ClassDef(%s,%d)].",
-                             file->GetName(), GetName(), fClassVersion, GetName(), GetName(), fClassVersion);
+                             GetName(), fClassVersion, GetName(), GetName(), fClassVersion);
                   }
                }
             }
@@ -1228,7 +1265,7 @@ void TStreamerInfo::BuildEmulated(TFile *file)
    fClassVersion = -1;
    fCheckSum = 2001;
    TObjArray *elements = GetElements();
-   Int_t ndata = elements ? elements->GetEntries() : 0;
+   Int_t ndata = elements ? elements->GetEntriesFast() : 0;
    for (Int_t i=0;i < ndata;i++) {
       TStreamerElement *element = (TStreamerElement*)elements->UncheckedAt(i);
       if (!element) break;
@@ -1543,20 +1580,25 @@ namespace {
             // be a pair and thus have a TClass ... so let's just give up ...
             // It actually happens in the case where one of the member is an
             // enum that is part of dictionary payload that is not yet
-            // autoloaded.
+            // auto-loaded.
             return nullptr;
          }
          TVirtualStreamerInfo *info = current->GetValueClass()->GetStreamerInfo();
-         if (info->GetElements()->GetEntries() != 2) {
+         if (info->GetElements()->GetEntriesFast() != 2) {
             return oldClass;
          }
          TStreamerElement *f = (TStreamerElement*) info->GetElements()->At(0);
          TStreamerElement *s = (TStreamerElement*) info->GetElements()->At(1);
 
-         info = old->GetValueClass()->GetStreamerInfo();
-         assert(info->GetElements()->GetEntries() == 2);
-         TStreamerElement *of = (TStreamerElement*) info->GetElements()->At(0);
-         TStreamerElement *os = (TStreamerElement*) info->GetElements()->At(1);
+         // Since we do not create TClass for pair of unknown types, old->GetValueClass can
+         // be nullptr even-though the type used be known.  An example of such change
+         // is `RooExpensiveObjectCache::ExpensiveObject` which used to be recorded
+         // as `ExpensiveObject` in the name of the map ... making it unknown
+         // (and this is precisely the type of change we are trying to handle here/below!)
+         info = old->GetValueClass() ? old->GetValueClass()->GetStreamerInfo() : nullptr;
+         assert(!info || info->GetElements()->GetEntriesFast() == 2);
+         TStreamerElement *of = info ? (TStreamerElement*) info->GetElements()->At(0) : nullptr;
+         TStreamerElement *os = info ? (TStreamerElement*) info->GetElements()->At(1) : nullptr;
 
          TClass *firstNewCl  = f ? f->GetClass() : 0;
          TClass *secondNewCl = s ? s->GetClass() : 0;
@@ -1574,6 +1616,12 @@ namespace {
             TClass *secondAltCl = secondOldCl;
             std::string firstNewName;
             std::string secondNewName;
+            if (!info && !firstOldCl) {
+               firstOldCl = TClass::GetClass(inside[1].c_str(), kTRUE, kTRUE);
+            }
+            if (!info && !secondOldCl) {
+               secondOldCl = TClass::GetClass(inside[2].c_str(), kTRUE, kTRUE);
+            }
             if (firstNewCl && !firstOldCl) {
                firstAltCl = FindAlternate(context, inside[1], firstNewName);
             } else if (firstAltCl) {
@@ -1719,7 +1767,7 @@ void TStreamerInfo::BuildOld()
 
    int nBaze = 0;
 
-   if ((fElements->GetEntries() == 1) && !strcmp(fElements->At(0)->GetName(), "This")) {
+   if ((fElements->GetEntriesFast() == 1) && !strcmp(fElements->At(0)->GetName(), "This")) {
       if (fClass->GetCollectionProxy())  {
          element = (TStreamerElement*)next();
          element->SetNewType( element->GetType() );
@@ -1759,7 +1807,7 @@ void TStreamerInfo::BuildOld()
       {
          // Prevent BuildOld from modifying existing ArtificialElement (We need to review when and why BuildOld
          // needs to be re-run; it might be needed if the 'current' class change (for example from being an onfile
-         // version to being a version loaded from a shared library) and we thus may have to remove the artifical
+         // version to being a version loaded from a shared library) and we thus may have to remove the artificial
          // element at the beginning of BuildOld)
 
          continue;
@@ -2088,6 +2136,13 @@ void TStreamerInfo::BuildOld()
                }
                int dsize = dm->GetUnitSize();
                element->SetSize(dsize*narr);
+            } else if (strcmp(element->GetName(), "fData") == 0 && strncmp(GetName(), "ROOT::VecOps::RVec", 18) == 0) {
+               Error("BuildCheck", "Reading RVecs that were written directly to file before ROOT v6.24 is not "
+                                   "supported, the program will likely crash.");
+               element->SetOffset(0);
+               element->Init(this);
+               dmType = element->GetTypeName();
+               dmIsPtr = false;
             }
          }
       } // Class corresponding to StreamerInfo is emulated or not.
@@ -2398,7 +2453,7 @@ void TStreamerInfo::BuildOld()
          element->SetOffset(kMissing);
       }
 
-      if (offset != kMissing && fClass->GetState() <= TClass::kEmulated) {
+      if (offset != kMissing && fClass->GetState() <= TClass::kEmulated && !fClass->fIsSyntheticPair) {
          // Note the initialization in this case are
          // delayed until __after__ the schema evolution
          // section, just in case the info has changed.
@@ -2746,7 +2801,7 @@ TObject *TStreamerInfo::Clone(const char *newname) const
    TStreamerInfo *newinfo = (TStreamerInfo*)TNamed::Clone(newname);
    if (newname && newname[0] && fName != newname) {
       TObjArray *newelems = newinfo->GetElements();
-      Int_t ndata = newelems->GetEntries();
+      Int_t ndata = newelems->GetEntriesFast();
       for(Int_t i = 0; i < ndata; ++i) {
          TObject *element = newelems->UncheckedAt(i);
          if (element->IsA() == TStreamerLoop::Class()) {
@@ -3062,6 +3117,13 @@ Bool_t TStreamerInfo::CompareContent(TClass *cl, TVirtualStreamerInfo *info, Boo
 
 void TStreamerInfo::ComputeSize()
 {
+   if (this == fClass->GetCurrentStreamerInfo()) {
+      if (fClass->GetState() >= TClass::kInterpreted || fClass->fIsSyntheticPair) {
+         fSize = fClass->GetClassSize();
+         return;
+      }
+   }
+
    TStreamerElement *element = (TStreamerElement*)fElements->Last();
    //faster and more precise to use last element offset +size
    //on 64 bit machines, offset may be forced to be a multiple of 8 bytes
@@ -3120,7 +3182,7 @@ void TStreamerInfo::ForceWriteInfo(TFile* file, Bool_t force)
    if (fClass==0) {
       // Build or BuildCheck has not been called yet.
       // Let's use another means of checking.
-      if (fElements && fElements->GetEntries()==1 && strcmp("This",fElements->UncheckedAt(0)->GetName())==0) {
+      if (fElements && fElements->GetEntriesFast()==1 && strcmp("This",fElements->UncheckedAt(0)->GetName())==0) {
          // We are an STL collection.
          return;
       }
@@ -3228,7 +3290,7 @@ UInt_t TStreamerInfo::GetCheckSum(TClass::ECheckSum code) const
    // Here we skip he base classes in case this is a pair or STL collection,
    // otherwise, on some STL implementations, it can happen that pair has
    // base classes which are an internal implementation detail.
-   if (!fClass->GetCollectionProxy() && strncmp(fClass->GetName(), "pair<", 5)) {
+   if (!fClass->GetCollectionProxy() && !TClassEdit::IsStdPair(fClass->GetName())) {
       while ( (el=(TStreamerElement*)next())) { // loop over bases
          if (el->IsBase()) {
             name = el->GetName();
@@ -3362,40 +3424,17 @@ static bool R__IsUniquePtr(TStreamerElement *element) {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-/// Write down the body of the 'move' constructor.
+/// Write down the pointers and arrays part of the body of the 'move' constructor.
 
-static void R__WriteMoveConstructorBody(FILE *file, const TString &protoname, TIter &next)
+static void R__WriteMoveBodyPointersArrays(FILE *file, const TString &protoname, TIter &next)
 {
    TStreamerElement *element = 0;
-   next.Reset();
-   Bool_t atstart = kTRUE;
-   while ((element = (TStreamerElement*)next())) {
-      if (element->IsBase()) {
-         if (atstart) { fprintf(file,"   : "); atstart = kFALSE; }
-         else fprintf(file,"   , ");
-         fprintf(file, "%s(const_cast<%s &>( rhs ))\n", element->GetName(),protoname.Data());
-      } else {
-         if (element->GetArrayLength() <= 1) {
-            if (atstart) { fprintf(file,"   : "); atstart = kFALSE; }
-            else fprintf(file,"   , ");
-            if (R__IsUniquePtr(element)) {
-               fprintf(file, "%s(const_cast<%s &>( rhs ).%s.release() )\n",element->GetName(),protoname.Data(),element->GetName());
-            } else {
-               fprintf(file, "%s(const_cast<%s &>( rhs ).%s)\n",element->GetName(),protoname.Data(),element->GetName());
-            }
-         }
-      }
-   }
-   fprintf(file,"{\n");
-   fprintf(file,"   // This is NOT a copy constructor. This is actually a move constructor (for stl container's sake).\n");
-   fprintf(file,"   // Use at your own risk!\n");
-   fprintf(file,"   (void)rhs; // avoid warning about unused parameter\n");
    next.Reset();
    Bool_t defMod = kFALSE;
    while ((element = (TStreamerElement*)next())) {
       if (element->GetType() == TVirtualStreamerInfo::kObjectp || element->GetType() == TVirtualStreamerInfo::kObjectP||
-          element->GetType() == TVirtualStreamerInfo::kAnyp || element->GetType() == TVirtualStreamerInfo::kAnyP
-          || element->GetType() == TVirtualStreamerInfo::kAnyPnoVT)
+         element->GetType() == TVirtualStreamerInfo::kAnyp || element->GetType() == TVirtualStreamerInfo::kAnyP
+         || element->GetType() == TVirtualStreamerInfo::kAnyPnoVT)
       {
          if (!defMod) { fprintf(file,"   %s &modrhs = const_cast<%s &>( rhs );\n",protoname.Data(),protoname.Data()); defMod = kTRUE; };
          const char *ename = element->GetName();
@@ -3444,7 +3483,7 @@ static void R__WriteMoveConstructorBody(FILE *file, const TString &protoname, TI
             TVirtualCollectionProxy *proxy = cle ? element->GetClassPointer()->GetCollectionProxy() : 0;
             std::string method_name = "clear";
             if (!element->TestBit(TStreamerElement::kDoNotDelete) && proxy && (((TStreamerSTL*)element)->GetSTLtype() == ROOT::kSTLbitset)) {
-                method_name = "reset";
+               method_name = "reset";
             }
             if (element->IsBase()) {
                fprintf(file,"   modrhs.%s();\n", method_name.c_str());
@@ -3454,6 +3493,70 @@ static void R__WriteMoveConstructorBody(FILE *file, const TString &protoname, TI
          }
       }
    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+/// Write down the body of the 'move' constructor.
+
+static void R__WriteMoveConstructorBody(FILE *file, const TString &protoname, TIter &next)
+{
+   TStreamerElement *element = 0;
+   next.Reset();
+   Bool_t atstart = kTRUE;
+   while ((element = (TStreamerElement*)next())) {
+      if (element->IsBase()) {
+         if (atstart) { fprintf(file,"   : "); atstart = kFALSE; }
+         else fprintf(file,"   , ");
+         fprintf(file, "%s(const_cast<%s &>( rhs ))\n", element->GetName(),protoname.Data());
+      } else {
+         if (element->GetArrayLength() <= 1) {
+            if (atstart) { fprintf(file,"   : "); atstart = kFALSE; }
+            else fprintf(file,"   , ");
+            if (R__IsUniquePtr(element)) {
+               fprintf(file, "%s(const_cast<%s &>( rhs ).%s.release() )\n",element->GetName(),protoname.Data(),element->GetName());
+            } else {
+               fprintf(file, "%s(const_cast<%s &>( rhs ).%s)\n",element->GetName(),protoname.Data(),element->GetName());
+            }
+         }
+      }
+   }
+   fprintf(file,"{\n");
+   fprintf(file,"   // This is NOT a copy constructor. This is actually a move constructor (for stl container's sake).\n");
+   fprintf(file,"   // Use at your own risk!\n");
+   fprintf(file,"   (void)rhs; // avoid warning about unused parameter\n");
+
+   R__WriteMoveBodyPointersArrays(file, protoname, next);
+}
+
+////////////////////////////////////////////////////////////////////////////////
+/// Write down the body of the 'move' constructor.
+
+static void R__WriteOddOperatorEqualBody(FILE *file, const TString &protoname, TIter &next)
+{
+   fprintf(file,"{\n");
+   fprintf(file,"   // This is NOT a copy operator=. This is actually a move operator= (for stl container's sake).\n");
+   fprintf(file,"   // Use at your own risk!\n");
+   fprintf(file,"   (void)rhs; // avoid warning about unused parameter\n");
+
+   TStreamerElement *element = 0;
+   next.Reset();
+   while ((element = (TStreamerElement*)next())) {
+      if (element->IsBase()) {
+         fprintf(file, "   %s::operator=(const_cast<%s &>( rhs ));\n", element->GetName(),protoname.Data());
+      } else {
+         if (element->GetArrayLength() <= 1) {
+            if (R__IsUniquePtr(element)) {
+               fprintf(file, "   %s = std::move((const_cast<%s &>( rhs ).%s));\n",element->GetName(),protoname.Data(),element->GetName());
+            } else {
+               fprintf(file, "   %s = (const_cast<%s &>( rhs ).%s);\n",element->GetName(),protoname.Data(),element->GetName());
+            }
+         }
+      }
+   }
+
+   R__WriteMoveBodyPointersArrays(file, protoname, next);
+
+   fprintf(file, "   return *this;\n");
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -3527,7 +3630,8 @@ static void R__WriteDestructorBody(FILE *file, TIter &next)
                   std::vector<std::string> inside;
                   int nestedLoc;
                   TClassEdit::GetSplit(enamebasic, inside, nestedLoc, TClassEdit::kLong64);
-                  if (inside[1][inside[1].size()-1]=='*' || inside[2][inside[2].size()-1]=='*') {
+                  if ((!inside[1].empty() && inside[1][inside[1].size()-1]=='*')
+                     || (!inside[2].empty() && inside[2][inside[2].size()-1]=='*')) {
                      fprintf(file,"   std::for_each( (%s %s).rbegin(), (%s %s).rend(), DeleteObjectFunctor() );\n",prefix,ename,prefix,ename);
                   }
                }
@@ -3549,7 +3653,7 @@ void TStreamerInfo::GenerateDeclaration(FILE *fp, FILE *sfp, const TList *subCla
       return;
    }
 
-   Bool_t needGenericTemplate = fElements==0 || fElements->GetEntries() == 0;
+   Bool_t needGenericTemplate = fElements==0 || fElements->IsEmpty();
    Bool_t isTemplate = kFALSE;
    const char *clname = GetName();
    TString template_protoname;
@@ -3741,10 +3845,13 @@ void TStreamerInfo::GenerateDeclaration(FILE *fp, FILE *sfp, const TList *subCla
       R__WriteConstructorBody(fp,next);
       fprintf(fp,"   }\n");
       fprintf(fp,"   %s(%s && ) = default;\n",protoname.Data(),protoname.Data());
-      fprintf(fp,"   %s(const %s & rhs )\n",protoname.Data(),protoname.Data());
+      fprintf(fp,"   %s &operator=(const %s & rhs)\n   ",protoname.Data(),protoname.Data());
+      R__WriteOddOperatorEqualBody(fp,protoname,next);
+      fprintf(fp,"   }\n");
+      fprintf(fp,"   %s(const %s & rhs )\n   ",protoname.Data(),protoname.Data());
       R__WriteMoveConstructorBody(fp,protoname,next);
       fprintf(fp,"   }\n");
-      fprintf(fp,"   virtual ~%s() {\n",protoname.Data());
+      fprintf(fp,"   virtual ~%s() {\n   ",protoname.Data());
       R__WriteDestructorBody(fp,next);
       fprintf(fp,"   }\n\n");
 
@@ -3752,6 +3859,7 @@ void TStreamerInfo::GenerateDeclaration(FILE *fp, FILE *sfp, const TList *subCla
       // Generate default functions, ClassDef and trailer.
       fprintf(fp,"\n   %s();\n",protoname.Data());
       fprintf(fp,"   %s(%s && ) = default;\n",protoname.Data(),protoname.Data());
+      fprintf(fp,"   %s &operator=(const %s & );\n",protoname.Data(),protoname.Data());
       fprintf(fp,"   %s(const %s & );\n",protoname.Data(),protoname.Data());
       fprintf(fp,"   virtual ~%s();\n\n",protoname.Data());
 
@@ -3761,6 +3869,10 @@ void TStreamerInfo::GenerateDeclaration(FILE *fp, FILE *sfp, const TList *subCla
       fprintf(sfp,"#define %s_cxx\n",guard.Data());
       fprintf(sfp,"%s::%s() {\n",GetName(),protoname.Data());
       R__WriteConstructorBody(sfp,next);
+      fprintf(sfp,"}\n");
+
+      fprintf(sfp,"%s &%s::operator=(const %s & rhs)\n",GetName(),GetName(),protoname.Data());
+      R__WriteOddOperatorEqualBody(sfp,protoname,next);
       fprintf(sfp,"}\n");
 
       fprintf(sfp,"%s::%s(const %s & rhs)\n",GetName(),protoname.Data(),protoname.Data());
@@ -3852,7 +3964,7 @@ UInt_t TStreamerInfo::GenerateIncludes(FILE *fp, char *inclist, const TList *ext
       if (strncmp(include,"include\\",9)==0) {
          include += 9;
       }
-      if (strncmp(element->GetTypeName(),"pair<",strlen("pair<"))==0) {
+      if (TClassEdit::IsStdPair(element->GetTypeName())) {
          TMakeProject::AddInclude( fp, "utility", kTRUE, inclist);
       } else if (strncmp(element->GetTypeName(),"auto_ptr<",strlen("auto_ptr<"))==0) {
          TMakeProject::AddInclude( fp, "memory", kTRUE, inclist);
@@ -3878,7 +3990,7 @@ Int_t TStreamerInfo::GenerateHeaderFile(const char *dirname, const TList *subCla
 {
    // if (fClassVersion == -4) return 0;
    if ((fClass && fClass->GetCollectionType()) || TClassEdit::IsSTLCont(GetName())) return 0;
-   if (strncmp(GetName(),"pair<",strlen("pair<"))==0) return 0;
+   if (TClassEdit::IsStdPair(GetName())) return 0;
    if (strncmp(GetName(),"auto_ptr<",strlen("auto_ptr<"))==0) return 0;
 
    TClass *cl = TClass::GetClass(GetName());
@@ -3915,7 +4027,7 @@ Int_t TStreamerInfo::GenerateHeaderFile(const char *dirname, const TList *subCla
          }
       }
    }
-   Bool_t needGenericTemplate = isTemplate && (fElements==0 || fElements->GetEntries()==0);
+   Bool_t needGenericTemplate = isTemplate && (fElements==0 || fElements->IsEmpty());
 
    if (gDebug) printf("generating code for class %s\n",GetName());
 
@@ -4467,8 +4579,7 @@ void TStreamerInfo::InsertArtificialElements(std::vector<const ROOT::TSchemaRule
       if (!rule) continue;
 
       TStreamerArtificial *newel;
-      typedef std::vector<TStreamerArtificial*> vec_t;
-      vec_t toAdd;
+      std::vector<TStreamerArtificial*> toAdd;
 
       if (rule->GetTarget()==0) {
          TString newName;
@@ -4482,7 +4593,7 @@ void TStreamerInfo::InsertArtificialElements(std::vector<const ROOT::TSchemaRule
          newel->SetReadRawFunc( rule->GetReadRawFunctionPointer() );
          toAdd.push_back(newel);
       } else {
-         toAdd.reserve(rule->GetTarget()->GetEntries());
+         toAdd.reserve(rule->GetTarget()->GetEntriesFast());
          TObjString * objstr = (TObjString*)(rule->GetTarget()->At(0));
          if (objstr) {
             TString newName = objstr->String();
@@ -4500,7 +4611,7 @@ void TStreamerInfo::InsertArtificialElements(std::vector<const ROOT::TSchemaRule
                // This would be a completely new member (so it would need to be cached)
                // TOBEDONE
             }
-            for(Int_t other = 1; other < rule->GetTarget()->GetEntries(); ++other) {
+            for(Int_t other = 1; other < rule->GetTarget()->GetEntriesFast(); ++other) {
                objstr = (TObjString*)(rule->GetTarget()->At(other));
                if (objstr) {
                   newName = objstr->String();
@@ -4538,8 +4649,8 @@ void TStreamerInfo::InsertArtificialElements(std::vector<const ROOT::TSchemaRule
          }
       }
       if (loc == -1) {
-         for(vec_t::iterator iter = toAdd.begin(); iter != toAdd.end(); ++iter) {
-            fElements->Add(*iter);
+         for(auto &el : toAdd) {
+            fElements->Add(el);
          }
       } else {
          R__TObjArray_InsertAt(fElements, toAdd, loc);
@@ -4749,7 +4860,10 @@ void* TStreamerInfo::New(void *obj)
                // missing information, avoid infinite loop
                // by doing nothing ....
             } else {
-               cle->New(eaddr);
+               if (cle->GetCollectionProxy())
+                  cle->GetCollectionProxy()->New(eaddr);
+               else
+                  cle->New(eaddr);
             }
          }
          break;
@@ -4776,7 +4890,6 @@ void* TStreamerInfo::New(void *obj)
    for(int nbase = 0; nbase < fNVirtualInfoLoc; ++nbase) {
       *(TStreamerInfo**)(p + fVirtualInfoLoc[nbase]) = this;
    }
-   ++fLiveCount;
    return p;
 }
 
@@ -4957,7 +5070,6 @@ void TStreamerInfo::DestructorImpl(void* obj, Bool_t dtorOnly)
    if (!dtorOnly) {
       delete[] p;
    }
-   --fLiveCount;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -5051,7 +5163,7 @@ void TStreamerInfo::PrintValue(const char *name, char *pointer, Int_t i, Int_t l
                TString *st = (TString*)(pointer);
                printf("%s\n",st->Data());
             } else {
-               printf("(%s*)0x%lx\n",GetName(),(ULong_t)pointer);
+               printf("(%s*)0x%zx\n",GetName(),(size_t)pointer);
             }
          }
          return;
@@ -5116,6 +5228,18 @@ void TStreamerInfo::PrintValueSTL(const char *name, TVirtualCollectionProxy *con
       if (k < nc-1) printf(", ");
    }
    printf("\n");
+}
+
+////////////////////////////////////////////////////////////////////////////////
+/// Replace the TClass this streamerInfo is pointing to (belongs to)
+
+void TStreamerInfo::SetClass(TClass *newcl)
+{
+   if (newcl) {
+      // This is mostly (but not only) for the artificial "This" streamerElement for an stl collection.
+      Update(fClass, newcl);
+   }
+   fClass = newcl;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -5355,7 +5479,7 @@ void TStreamerInfo::PrintValueAux(char *ladd, Int_t atype, TStreamerElement *aEl
       case kObjectp: {
          TObject **obj = (TObject**)(ladd);
          TStreamerObjectPointer *el = (TStreamerObjectPointer*)aElement;
-         printf("(%s*)%lx",el ? el->GetClass()->GetName() : "unknown_type",(Long_t)(*obj));
+         printf("(%s*)%zx",el ? el->GetClass()->GetName() : "unknown_type",(size_t)(*obj));
          break;
       }
 
@@ -5363,7 +5487,7 @@ void TStreamerInfo::PrintValueAux(char *ladd, Int_t atype, TStreamerElement *aEl
       case kObjectP: {
          TObject **obj = (TObject**)(ladd);
          TStreamerObjectPointer *el = (TStreamerObjectPointer*)aElement;
-         printf("(%s*)%lx",el ? el->GetClass()->GetName() : "unknown_type",(Long_t)(*obj));
+         printf("(%s*)%zx",el ? el->GetClass()->GetName() : "unknown_type",(size_t)(*obj));
          break;
       }
 
@@ -5395,7 +5519,7 @@ void TStreamerInfo::PrintValueAux(char *ladd, Int_t atype, TStreamerElement *aEl
       case kAnyp:    {
          TObject **obj = (TObject**)(ladd);
          TStreamerObjectAnyPointer *el = (TStreamerObjectAnyPointer*)aElement;
-         printf("(%s*)0x%lx",el ? el->GetClass()->GetName() : "unknown_type",(Long_t)(*obj));
+         printf("(%s*)0x%zx",el ? el->GetClass()->GetName() : "unknown_type",(size_t)(*obj));
          break;
       }
 
@@ -5403,7 +5527,7 @@ void TStreamerInfo::PrintValueAux(char *ladd, Int_t atype, TStreamerElement *aEl
       case kAnyP:    {
          TObject **obj = (TObject**)(ladd);
          TStreamerObjectAnyPointer *el = (TStreamerObjectAnyPointer*)aElement;
-         printf("(%s*)0x%lx",el ? el->GetClass()->GetName() : "unknown_type",(Long_t)(*obj));
+         printf("(%s*)0x%zx",el ? el->GetClass()->GetName() : "unknown_type",(size_t)(*obj));
          break;
       }
       // Any Class not derived from TObject
@@ -5470,10 +5594,10 @@ void TStreamerInfo::PrintValueAux(char *ladd, Int_t atype, TStreamerElement *aEl
                std::string *st = (std::string*)(ladd);
                printf("%s",st->c_str());
             } else {
-               printf("(%s*)0x%lx",aElement->GetClass()->GetName(),(Long_t)(ladd));
+               printf("(%s*)0x%zx",aElement->GetClass()->GetName(),(size_t)(ladd));
             }
          } else {
-            printf("(unknown_type*)0x%lx",(Long_t)(ladd));
+            printf("(unknown_type*)0x%zx",(size_t)(ladd));
          }
          break;
       }
@@ -5543,4 +5667,172 @@ TClassStreamer*
 TStreamerInfo::GenExplicitClassStreamer( const ::ROOT::TCollectionProxyInfo &info, TClass *cl )
 {
    return TCollectionProxyFactory::GenExplicitClassStreamer(info, cl);
+}
+
+//
+// Utility functions
+//
+static TStreamerElement* R__CreateEmulatedElement(const char *dmName, const std::string &dmFull, Int_t offset, bool silent)
+{
+   // Create a TStreamerElement for the type 'dmFull' and whose data member name is 'dmName'.
+
+   TString s1( TClassEdit::ShortType(dmFull.c_str(),0) );
+   TString dmType( TClassEdit::ShortType(dmFull.c_str(),1) );
+   Bool_t dmIsPtr = (s1 != dmType);
+   const char *dmTitle = "Emulation";
+
+   TDataType *dt = gROOT->GetType(dmType);
+   if (dt && dt->GetType() > 0 ) {  // found a basic type
+      Int_t dsize,dtype;
+      dtype = dt->GetType();
+      dsize = dt->Size();
+      if (dmIsPtr && dtype != kCharStar) {
+         if (!silent)
+            Error("Pair Emulation Building","%s is not yet supported in pair emulation",
+                  dmFull.c_str());
+         return 0;
+      } else {
+         TStreamerElement *el = new TStreamerBasicType(dmName,dmTitle,offset,dtype,dmFull.c_str());
+         el->SetSize(dsize);
+         return el;
+      }
+   } else {
+
+      static const char *full_string_name = "basic_string<char,char_traits<char>,allocator<char> >";
+      if (strcmp(dmType,"string") == 0 || strcmp(dmType,"std::string") == 0 || strcmp(dmType,full_string_name)==0 ) {
+         return new TStreamerSTLstring(dmName,dmTitle,offset,dmFull.c_str(),dmIsPtr);
+      }
+      if (TClassEdit::IsSTLCont(dmType)) {
+         return new TStreamerSTL(dmName,dmTitle,offset,dmFull.c_str(),dmFull.c_str(),dmIsPtr);
+      }
+      TClass *clm = TClass::GetClass(dmType);
+      if (!clm) {
+         auto enumdesc = TEnum::GetEnum(dmType, TEnum::kNone);
+         if (enumdesc) {
+            auto dtype = enumdesc->GetUnderlyingType();
+            auto el = new TStreamerBasicType(dmName, dmTitle, offset, dtype, dmFull.c_str());
+            auto datatype = TDataType::GetDataType(dtype);
+            if (datatype)
+               el->SetSize(datatype->Size());
+            else
+               el->SetSize(sizeof(int)); // Default size of enums.
+            return el;
+         }
+         return nullptr;
+      }
+      if (clm->GetState() <= TClass::kForwardDeclared)
+         return nullptr;
+      // a pointer to a class
+      if ( dmIsPtr ) {
+         if (clm->IsTObject()) {
+            return new TStreamerObjectPointer(dmName,dmTitle,offset,dmFull.c_str());
+         } else {
+            return new TStreamerObjectAnyPointer(dmName,dmTitle,offset,dmFull.c_str());
+         }
+      }
+      // a class
+      if (clm->IsTObject()) {
+         return new TStreamerObject(dmName,dmTitle,offset,dmFull.c_str());
+      } else if(clm == TString::Class() && !dmIsPtr) {
+         return new TStreamerString(dmName,dmTitle,offset);
+      } else {
+         return new TStreamerObjectAny(dmName,dmTitle,offset,dmFull.c_str());
+      }
+   }
+}
+
+/// \brief Generate the TClass and TStreamerInfo for the requested pair.
+/// This creates a TVirtualStreamerInfo for the pair and trigger the BuildCheck/Old to
+/// provoke the creation of the corresponding TClass.  This relies on the dictionary for
+/// std::pair<const int, int> to already exist (or the interpreter information being available)
+/// as it is used as a template.
+/// \note The returned object is owned by the caller.
+TVirtualStreamerInfo *TStreamerInfo::GenerateInfoForPair(const std::string &firstname, const std::string &secondname, bool silent, size_t hint_pair_offset, size_t hint_pair_size)
+{
+   // Generate a TStreamerInfo for a std::pair<fname,sname>
+   // This TStreamerInfo is then used as if it was read from a file to generate
+   // and emulated TClass.
+
+   if (hint_pair_offset && hint_pair_offset >= hint_pair_size) {
+      const char *msg = "problematic";
+      if (hint_pair_offset == hint_pair_size)
+         msg = "the same";
+      else if (hint_pair_offset > hint_pair_size) {
+         if (hint_pair_size == 0)
+            msg = "not specified";
+         else
+            msg = "smaller";
+      }
+      Error("GenerateInfoForPair",
+            "Called with inconsistent offset and size. For \"std::pair<%s,%s>\" the requested offset is %ld but the size is %s (%ld)",
+            firstname.c_str(), secondname.c_str(), (long)hint_pair_offset, msg, (long)hint_pair_offset);
+      return nullptr;
+   }
+   TStreamerInfo *i = (TStreamerInfo*)TClass::GetClass("pair<const int,int>")->GetStreamerInfo()->Clone();
+   std::string pname = "pair<" + firstname + "," + secondname;
+   pname += (pname[pname.length()-1]=='>') ? " >" : ">";
+   i->SetName(pname.c_str());
+   i->SetClass(nullptr);
+   i->GetElements()->Delete();
+   TStreamerElement *fel = R__CreateEmulatedElement("first", firstname, 0, silent);
+   Int_t size = 0;
+   if (fel) {
+      i->GetElements()->Add( fel );
+
+      size = fel->GetSize();
+      Int_t sp = sizeof(void *);
+      //align the non-basic data types (required on alpha and IRIX!!)
+      if (size%sp != 0) size = size - size%sp + sp;
+   } else {
+      delete i;
+      return 0;
+   }
+   if (hint_pair_offset)
+      size = hint_pair_offset;
+   TStreamerElement *second = R__CreateEmulatedElement("second", secondname, size, silent);
+   if (second) {
+      i->GetElements()->Add( second );
+   } else {
+      delete i;
+      return 0;
+   }
+   Int_t oldlevel = gErrorIgnoreLevel;
+   // Hide the warning about the missing pair dictionary.
+   gErrorIgnoreLevel = kError;
+   i->BuildCheck(nullptr, kFALSE); // Skipping the loading part (it would leads to infinite recursion on this very routine)
+   gErrorIgnoreLevel = oldlevel;
+   // In the state emulated, BuildOld would recalculate the offset and undo the offset update.
+   // Note: we should consider adding a new state just for this (the hints indicates that we are mapping a compiled class but
+   // then we would have to investigate all use of the state with <= and >= condition to make sure they are still appropriate).
+   if (hint_pair_size) {
+      i->GetClass()->SetClassSize(hint_pair_size);
+      i->GetClass()->fIsSyntheticPair = kTRUE;
+   }
+
+   i->BuildOld();
+
+   if (hint_pair_size)
+      i->GetClass()->SetClassSize(hint_pair_size);
+   return i;
+}
+
+TVirtualStreamerInfo *TStreamerInfo::GenerateInfoForPair(const std::string &pairclassname, bool silent, size_t hint_pair_offset, size_t hint_pair_size)
+{
+   const static int pairlen = strlen("pair<");
+   if (pairclassname.compare(0, pairlen, "pair<") != 0) {
+      if (!silent)
+         Error("GenerateInfoForPair", "The class name passed is not a pair: %s", pairclassname.c_str());
+      return nullptr;
+   }
+
+   std::vector<std::string> inside;
+   int nested = 0;
+   int num = TClassEdit::GetSplit(pairclassname.c_str(), inside, nested);
+   if (num != 4) {
+      if (!silent)
+         Error("GenerateInfoForPair", "Could not find the pair arguments in %s", pairclassname.c_str());
+      return nullptr;
+   }
+
+   return GenerateInfoForPair(inside[1], inside[2], silent, hint_pair_offset, hint_pair_size);
 }

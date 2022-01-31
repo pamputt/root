@@ -38,16 +38,18 @@ instantiate objects.
 #include "RooWorkspace.h"
 #include "RooGlobalFunc.h"
 #include "RooAbsPdf.h"
+#include "strlcpy.h"
 #include <fstream>
 
-using namespace std ;
+using namespace std;
 
 ClassImp(RooClassFactory);
-;
+
+namespace {
 
 static Int_t init();
 
-static Int_t dummy = init() ;
+Int_t dummy = init();
 
 static Int_t init()
 {
@@ -58,7 +60,7 @@ static Int_t init()
   return 0 ;
 }
 
-
+}
 
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -228,14 +230,14 @@ RooAbsReal* RooClassFactory::makeFunctionInstance(const char* className, const c
   RooAbsArg* var ;
   while((var=(RooAbsArg*)iter->Next())) {
     if (dynamic_cast<RooAbsReal*>(var)) {
-      argList += Form(",*((RooAbsReal*)0x%lx)",(ULong_t)var) ;
+      argList += Form(",*((RooAbsReal*)0x%zx)",(size_t)var) ;
     }
   }
   iter->Reset() ;
   // Next pass the RooAbsCategory arguments in the list order
   while((var=(RooAbsArg*)iter->Next())) {
     if (dynamic_cast<RooAbsCategory*>(var)) {
-      argList += Form(",*((RooAbsCategory*)0x%lx)",(ULong_t)var) ;
+      argList += Form(",*((RooAbsCategory*)0x%zx)",(size_t)var) ;
     }
   }
   delete iter ;
@@ -324,14 +326,14 @@ RooAbsPdf* RooClassFactory::makePdfInstance(const char* className, const char* n
   RooAbsArg* var ;
   while((var=(RooAbsArg*)iter->Next())) {
     if (dynamic_cast<RooAbsReal*>(var)) {
-      argList += Form(",*((RooAbsReal*)0x%lx)",(ULong_t)var) ;
+      argList += Form(",*((RooAbsReal*)0x%zx)",(size_t)var) ;
     }
   }
   iter->Reset() ;
   // Next pass the RooAbsCategory arguments in the list order
   while((var=(RooAbsArg*)iter->Next())) {
     if (dynamic_cast<RooAbsCategory*>(var)) {
-      argList += Form(",*((RooAbsCategory*)0x%lx)",(ULong_t)var) ;
+      argList += Form(",*((RooAbsCategory*)0x%zx)",(size_t)var) ;
     }
   }
   delete iter ;

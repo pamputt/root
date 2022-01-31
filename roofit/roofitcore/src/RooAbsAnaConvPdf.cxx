@@ -19,7 +19,7 @@
 ///  \ingroup Roofitcore
 ///
 ///  RooAbsAnaConvPdf is the base class for PDFs that represent a
-///  physics model that can be analytically convolved with a resolution model
+///  physics model that can be analytically convolved with a resolution model.
 ///
 ///  To achieve factorization between the physics model and the resolution
 ///  model, each physics model must be able to be written in the form
@@ -83,8 +83,8 @@ ClassImp(RooAbsAnaConvPdf);
 /// Default constructor, required for persistence
 
 RooAbsAnaConvPdf::RooAbsAnaConvPdf() :
-  _isCopy(kFALSE),
-  _convNormSet(nullptr)
+  _isCopy(false),
+  _coefNormMgr(this,10)
 {
 }
 
@@ -100,11 +100,9 @@ RooAbsAnaConvPdf::RooAbsAnaConvPdf(const char *name, const char *title,
   _model("!model","Original resolution model",this,(RooResolutionModel&)model,kFALSE,kFALSE),
   _convVar("!convVar","Convolution variable",this,cVar,kFALSE,kFALSE),
   _convSet("!convSet","Set of resModel X basisFunc convolutions",this),
-  _convNormSet(nullptr),
   _coefNormMgr(this,10),
   _codeReg(10)
 {
-  _convNormSet = new RooArgSet(cVar,"convNormSet") ;
   _model.absArg()->setAttribute("NOCacheAndTrack") ;
 }
 
@@ -117,8 +115,6 @@ RooAbsAnaConvPdf::RooAbsAnaConvPdf(const RooAbsAnaConvPdf& other, const char* na
   _model("!model",this,other._model),
   _convVar("!convVar",this,other._convVar),
   _convSet("!convSet",this,other._convSet),
-  // _basisList(other._basisList),
-  _convNormSet(other._convNormSet? new RooArgSet(*other._convNormSet) : new RooArgSet() ),
   _coefNormMgr(other._coefNormMgr,this),
   _codeReg(other._codeReg)
 {
@@ -136,10 +132,6 @@ RooAbsAnaConvPdf::RooAbsAnaConvPdf(const RooAbsAnaConvPdf& other, const char* na
 
 RooAbsAnaConvPdf::~RooAbsAnaConvPdf()
 {
-  if (_convNormSet) {
-    delete _convNormSet ;
-  }
-
   if (!_isCopy) {
     std::vector<RooAbsArg*> tmp(_convSet.begin(), _convSet.end());
 
@@ -521,7 +513,7 @@ Double_t RooAbsAnaConvPdf::analyticalIntegralWN(Int_t code, const RooArgSet* nor
       Double_t coef = getCoefNorm(index++,intCoefSet,_rangeName) ; 
       //cout << "coefInt[" << index << "] = " << coef << " " ; intCoefSet->Print("1") ; 
       if (coef!=0) {
-	integral += coef*(_rangeName ? conv->getNormObj(0,intConvSet,_rangeName)->getVal() :  conv->getNorm(intConvSet) ) ;       
+	integral += coef* conv->getNormObj(0,intConvSet,_rangeName)->getVal();
 	cxcoutD(Eval) << "RooAbsAnaConv::aiWN(" << GetName() << ") [" << index-1 << "] integral += " << conv->getNorm(intConvSet) << endl ;
       }
 
@@ -540,14 +532,14 @@ Double_t RooAbsAnaConvPdf::analyticalIntegralWN(Int_t code, const RooArgSet* nor
       Double_t coefInt = getCoefNorm(index,intCoefSet,_rangeName) ;
       //cout << "coefInt[" << index << "] = " << coefInt << "*" << term << " " << (intCoefSet?*intCoefSet:RooArgSet()) << endl ;
       if (coefInt!=0) {
-	Double_t term = (_rangeName ? conv->getNormObj(0,intConvSet,_rangeName)->getVal() : conv->getNorm(intConvSet) ) ;
+	Double_t term = conv->getNormObj(0,intConvSet,_rangeName)->getVal();
 	integral += coefInt*term ;
       }
 
       Double_t coefNorm = getCoefNorm(index,normCoefSet) ;
       //cout << "coefNorm[" << index << "] = " << coefNorm << "*" << term << " " << (normCoefSet?*normCoefSet:RooArgSet()) << endl ;
       if (coefNorm!=0) {
-	Double_t term = conv->getNorm(normConvSet) ;
+	Double_t term = conv->getNormObj(0,normConvSet)->getVal();
 	norm += coefNorm*term ;
       }
 
@@ -686,9 +678,9 @@ void RooAbsAnaConvPdf::printMultiline(ostream& os, Int_t contents, Bool_t verbos
   RooAbsPdf::printMultiline(os,contents,verbose,indent);
 
   os << indent << "--- RooAbsAnaConvPdf ---" << endl;
-  TIterator* iter = _convSet.createIterator() ;
+  TIter iter = _convSet.createIterator() ;
   RooResolutionModel* conv ;
-  while (((conv=(RooResolutionModel*)iter->Next()))) {
+  while (((conv=(RooResolutionModel*)iter.Next()))) {
     conv->printMultiline(os,contents,verbose,indent) ;
   }
 }

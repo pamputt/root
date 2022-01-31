@@ -21,9 +21,16 @@
 //                                                                      //
 //////////////////////////////////////////////////////////////////////////
 
-#include "TH1.h"
+#include "TNamed.h"
 #include "TObjArray.h"
 
+#ifdef R__LESS_INCLUDES
+class TH1;
+class TList;
+class TAxis;
+#else
+#include "TH1.h"
+#endif
 
 class TBrowser;
 class TFileMergeInfo;
@@ -33,11 +40,11 @@ private:
    THStack& operator=(const THStack&); // Not implemented
 
 protected:
-   TList      *fHists;      //Pointer to array of TH1
-   TObjArray  *fStack;      //!Pointer to array of sums of TH1
-   TH1        *fHistogram;  //Pointer to histogram used for drawing axis
-   Double_t    fMaximum;    //Maximum value for plotting along y
-   Double_t    fMinimum;    //Minimum value for plotting along y
+   TList      *fHists;      ///<  Pointer to array of TH1
+   TObjArray  *fStack;      ///<! Pointer to array of sums of TH1
+   TH1        *fHistogram;  ///<  Pointer to histogram used for drawing axis
+   Double_t    fMaximum;    ///<  Maximum value for plotting along y
+   Double_t    fMinimum;    ///<  Minimum value for plotting along y
 
    void BuildStack();
 
@@ -66,6 +73,7 @@ public:
    virtual Double_t GetMinimum(Option_t *option="");
    TAxis           *GetXaxis() const;
    TAxis           *GetYaxis() const;
+   TAxis           *GetZaxis() const;
    virtual void     ls(Option_t *option="") const;
    virtual Long64_t Merge(TCollection* li, TFileMergeInfo *info);
    virtual void     Modified();

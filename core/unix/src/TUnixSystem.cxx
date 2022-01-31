@@ -33,9 +33,13 @@
 #include "TInterpreter.h"
 #include "TApplication.h"
 #include "TObjString.h"
-#include "Riostream.h"
 #include "TVirtualMutex.h"
+#include "ThreadLocalStorage.h"
 #include "TObjArray.h"
+#include "snprintf.h"
+#include "strlcpy.h"
+#include <iostream>
+#include <fstream>
 #include <map>
 #include <algorithm>
 #include <atomic>
@@ -144,17 +148,6 @@
 #   define UTMP_NO_ADDR
 #endif
 
-#if (defined(R__AIX) && !defined(_AIX43)) || \
-    (defined(R__SUNGCC3) && !defined(__arch64__))
-#   define USE_SIZE_T
-#elif defined(R__GLIBC) || defined(R__FBSD) || \
-      (defined(R__SUNGCC3) && defined(__arch64__)) || \
-      defined(R__OBSD) || defined(MAC_OS_X_VERSION_10_4) || \
-      (defined(R__AIX) && defined(_AIX43)) || \
-      (defined(R__SOLARIS) && defined(_SOCKLEN_T))
-#   define USE_SOCKLEN_T
-#endif
-
 #if defined(R__LYNXOS)
 extern "C" {
    extern int putenv(const char *);
@@ -210,7 +203,6 @@ extern "C" {
 
 // FPE handling includes
 #if (defined(R__LINUX) && !defined(R__WINGCC))
-#include <fpu_control.h>
 #include <fenv.h>
 #include <sys/prctl.h>    // for prctl() function used in StackTrace()
 #endif
@@ -519,8 +511,15 @@ static void DylibAdded(const struct mach_header *mh, intptr_t /* vmaddr_slide */
    // explicitly linked against the executable. Additional dylibs
    // come when they are explicitly linked against loaded so's, currently
    // we are not interested in these
-   if (lib.EndsWith("/libSystem.B.dylib"))
+   if (lib.EndsWith("/libSystem.B.dylib")) {
       gotFirstSo = kTRUE;
+      if (linkedDylibs.IsNull()) {
+         // TSystem::GetLibraries() assumes that an empty GetLinkedLibraries()
+         // means failure to extract the linked libraries. Signal "we did
+         // manage, but it's empty" by returning a single space.
+         linkedDylibs = ' ';
+      }
+   }
 
    // add all libs loaded before libSystem.B.dylib
    if (!gotFirstSo && (lib.EndsWith(".dylib") || lib.EndsWith(".so"))) {
@@ -675,7 +674,7 @@ void TUnixSystem::SetDisplay()
                char hbuf[NI_MAXHOST + 4];
                if (getnameinfo(sa, sizeof(struct sockaddr), hbuf, sizeof(hbuf), nullptr, 0, NI_NAMEREQD) == 0) {
                   assert( strlen(hbuf) < NI_MAXHOST );
-                  strcat(hbuf, ":0.0");
+                  strlcat(hbuf, ":0.0", sizeof(hbuf));
                   Setenv("DISPLAY", hbuf);
                   Warning("SetDisplay", "DISPLAY not set, setting it to %s",
                           hbuf);
@@ -2934,7 +2933,7 @@ Bool_t TUnixSystem::DispatchTimers(Bool_t mode)
 
    fInsideNotify = kTRUE;
 
-   TOrdCollectionIter it((TOrdCollection*)fTimers);
+   TListIter it(fTimers);
    TTimer *t;
    Bool_t  timedout = kFALSE;
 
@@ -3063,13 +3062,7 @@ TInetAddress TUnixSystem::GetHostByName(const char *hostname)
 TInetAddress TUnixSystem::GetSockName(int sock)
 {
    struct sockaddr addr;
-#if defined(USE_SIZE_T)
-   size_t len = sizeof(addr);
-#elif defined(USE_SOCKLEN_T)
    socklen_t len = sizeof(addr);
-#else
-   int len = sizeof(addr);
-#endif
 
    TInetAddress ia;
    if (getsockname(sock, &addr, &len) == -1) {
@@ -3099,13 +3092,7 @@ TInetAddress TUnixSystem::GetSockName(int sock)
 TInetAddress TUnixSystem::GetPeerName(int sock)
 {
    struct sockaddr addr;
-#if defined(USE_SIZE_T)
-   size_t len = sizeof(addr);
-#elif defined(USE_SOCKLEN_T)
    socklen_t len = sizeof(addr);
-#else
-   int len = sizeof(addr);
-#endif
 
    TInetAddress ia;
    if (getpeername(sock, &addr, &len) == -1) {
@@ -3472,13 +3459,7 @@ int TUnixSystem::GetSockOpt(int sock, int opt, int *val)
 {
    if (sock < 0) return -1;
 
-#if defined(USE_SOCKLEN_T) || defined(_AIX43)
    socklen_t optlen = sizeof(*val);
-#elif defined(USE_SIZE_T)
-   size_t optlen = sizeof(*val);
-#else
-   int optlen = sizeof(*val);
-#endif
 
    switch (opt) {
    case kSendBuffer:
@@ -3925,12 +3906,12 @@ const char *TUnixSystem::UnixHomedirectory(const char *name, char *path, char *m
       if (mydir[0])
          return mydir;
       pw = getpwuid(getuid());
-      if (pw && pw->pw_dir) {
-         strncpy(mydir, pw->pw_dir, kMAXPATHLEN-1);
+      if (gSystem->Getenv("HOME")) {
+         strncpy(mydir, gSystem->Getenv("HOME"), kMAXPATHLEN-1);
          mydir[kMAXPATHLEN-1] = '\0';
          return mydir;
-      } else if (gSystem->Getenv("HOME")) {
-         strncpy(mydir, gSystem->Getenv("HOME"), kMAXPATHLEN-1);
+      } else if (pw && pw->pw_dir) {
+         strncpy(mydir, pw->pw_dir, kMAXPATHLEN-1);
          mydir[kMAXPATHLEN-1] = '\0';
          return mydir;
       }
@@ -4232,7 +4213,7 @@ int TUnixSystem::UnixUnixConnect(const char *sockpath)
               sockpath, (UInt_t)sizeof(unserver.sun_path)-1);
       return -1;
    }
-   strcpy(unserver.sun_path, sockpath);
+   strlcpy(unserver.sun_path, sockpath, sizeof(unserver.sun_path));
 
    // Open socket
    if ((sock = socket(AF_UNIX, SOCK_STREAM, 0)) < 0) {
@@ -4444,7 +4425,7 @@ int TUnixSystem::UnixUnixService(const char *sockpath, int backlog)
               sockpath, (UInt_t)sizeof(unserver.sun_path)-1);
       return -1;
    }
-   strcpy(unserver.sun_path, sockpath);
+   strlcpy(unserver.sun_path, sockpath, sizeof(unserver.sun_path));
 
    // Create socket
    if ((sock = socket(AF_UNIX, SOCK_STREAM, 0)) < 0) {
@@ -4579,6 +4560,7 @@ static const char *DynamicPath(const char *newpath = 0, Bool_t reset = kFALSE)
       dynpath = newpath;
    } else if (reset || !initialized) {
       initialized = kTRUE;
+      dynpath = gSystem->Getenv("ROOT_LIBRARY_PATH");
       TString rdynpath = gEnv->GetValue("Root.DynamicPath", (char*)0);
       rdynpath.ReplaceAll(": ", ":");  // in case DynamicPath was extended
       if (rdynpath.IsNull()) {
@@ -4598,10 +4580,15 @@ static const char *DynamicPath(const char *newpath = 0, Bool_t reset = kFALSE)
 #else
       ldpath = gSystem->Getenv("LD_LIBRARY_PATH");
 #endif
-      if (ldpath.IsNull())
-         dynpath = rdynpath;
-      else {
-         dynpath = ldpath; dynpath += ":"; dynpath += rdynpath;
+      if (!ldpath.IsNull()) {
+         if (!dynpath.IsNull())
+            dynpath += ":";
+         dynpath += ldpath;
+      }
+      if (!rdynpath.IsNull()) {
+         if (!dynpath.IsNull())
+            dynpath += ":";
+         dynpath += rdynpath;
       }
       if (!dynpath.Contains(TROOT::GetLibDir())) {
          dynpath += ":"; dynpath += TROOT::GetLibDir();

@@ -20,7 +20,9 @@
 #include "TString.h"
 #include "TObjString.h"
 #include "TList.h"
-#include "Riostream.h"
+#include "strlcpy.h"
+
+#include <iostream>
 
 
 #include <sqlext.h>
@@ -295,7 +297,7 @@ TList* TODBCServer::GetDrivers()
 
 ////////////////////////////////////////////////////////////////////////////////
 /// Print list of ODBC drivers in form:
-///   <name> : <options list>
+///   `<name`> : `<options-list>`
 
 void TODBCServer::PrintDrivers()
 {
@@ -321,7 +323,7 @@ TList* TODBCServer::GetDataSources()
 
 ////////////////////////////////////////////////////////////////////////////////
 /// Print list of ODBC data sources in form:
-///   <name> : <options list>
+///   `<name>` : `<options list>`
 
 void TODBCServer::PrintDataSources()
 {

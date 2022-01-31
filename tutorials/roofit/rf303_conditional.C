@@ -1,14 +1,16 @@
 /// \file
 /// \ingroup tutorial_roofit
 /// \notebook -js
-/// Multidimensional models: use of tailored p.d.f as conditional p.d.fs.s
+/// Multidimensional models: use of tailored pdf as conditional pdfs.s
 ///
-///  pdf = gauss(x,f(y),sx | y ) with f(y) = a0 + a1*y
+/// `pdf = gauss(x,f(y),sx | y )` with `f(y) = a0 + a1*y`
 ///
 /// \macro_image
 /// \macro_output
 /// \macro_code
-/// \author 07/2008 - Wouter Verkerke
+///
+/// \date July 2008
+/// \author Wouter Verkerke
 
 #include "RooRealVar.h"
 #include "RooDataSet.h"
@@ -98,8 +100,8 @@ RooDataSet *makeFakeDataXY()
       Double_t tmpy = gRandom->Gaus(0, 10);
       Double_t tmpx = gRandom->Gaus(0.5 * tmpy, 1);
       if (fabs(tmpy) < 10 && fabs(tmpx) < 10) {
-         x = tmpx;
-         y = tmpy;
+         x.setVal(tmpx);
+         y.setVal(tmpy);
          d->add(coord);
       }
    }

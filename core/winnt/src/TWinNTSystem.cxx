@@ -37,6 +37,9 @@
 #include "TInterpreter.h"
 #include "TVirtualX.h"
 #include "TUrl.h"
+#include "ThreadLocalStorage.h"
+#include "snprintf.h"
+#include "strlcpy.h"
 
 #include <sys/utime.h>
 #include <sys/timeb.h>
@@ -57,6 +60,7 @@
 #include <list>
 #include <shlobj.h>
 #include <conio.h>
+#include <time.h>
 
 #if defined (_MSC_VER) && (_MSC_VER >= 1400)
    #include <intrin.h>
@@ -355,24 +359,26 @@ namespace {
          dynpath = "";
       }
       if (newpath) {
-
          dynpath = newpath;
-
       } else if (dynpath == "") {
+         dynpath = gSystem->Getenv("ROOT_LIBRARY_PATH");
          TString rdynpath = gEnv ? gEnv->GetValue("Root.DynamicPath", (char*)0) : "";
          rdynpath.ReplaceAll("; ", ";");  // in case DynamicPath was extended
          if (rdynpath == "") {
             rdynpath = ".;"; rdynpath += TROOT::GetBinDir();
          }
          TString path = gSystem->Getenv("PATH");
-         if (path == "")
-            dynpath = rdynpath;
-         else {
-            dynpath = path; dynpath += ";"; dynpath += rdynpath;
+         if (!path.IsNull()) {
+            if (!dynpath.IsNull())
+               dynpath += ";";
+            dynpath += path;
          }
-
+         if (!rdynpath.IsNull()) {
+            if (!dynpath.IsNull())
+               dynpath += ";";
+            dynpath += rdynpath;
+         }
       }
-
       if (!dynpath.Contains(TROOT::GetLibDir())) {
          dynpath += ";"; dynpath += TROOT::GetLibDir();
       }
@@ -924,7 +930,7 @@ namespace {
       // ensure window title has been updated
       ::Sleep(40);
       // look for NewWindowTitle
-      gConsoleWindow = (ULong_t)::FindWindow(0, pszNewWindowTitle);
+      gConsoleWindow = (ULongptr_t)::FindWindow(0, pszNewWindowTitle);
       if (gConsoleWindow) {
          // restore original window title
          ::ShowWindow((HWND)gConsoleWindow, SW_RESTORE);
@@ -932,6 +938,8 @@ namespace {
          ::SetConsoleTitle("ROOT session");
       }
       hStdout = GetStdHandle(STD_OUTPUT_HANDLE);
+      // adding the ENABLE_VIRTUAL_TERMINAL_PROCESSING flag would enable the ANSI control
+      // character sequences (e.g. `\033[39m`), but then it breaks the WRAP_AT_EOL_OUTPUT
       ::SetConsoleMode(hStdout, ENABLE_PROCESSED_OUTPUT |
                        ENABLE_WRAP_AT_EOL_OUTPUT);
       if (!::GetConsoleScreenBufferInfo(hStdout, &csbiInfo))
@@ -945,7 +953,7 @@ namespace {
 ///////////////////////////////////////////////////////////////////////////////
 ClassImp(TWinNTSystem);
 
-ULong_t gConsoleWindow = 0;
+ULongptr_t gConsoleWindow = 0;
 
 ////////////////////////////////////////////////////////////////////////////////
 ///
@@ -1179,13 +1187,13 @@ const char *TWinNTSystem::BaseName(const char *name)
 
 void TWinNTSystem::SetProgname(const char *name)
 {
-   ULong_t  idot = 0;
+   size_t idot = 0;
    char *dot = nullptr;
    char *progname;
    char *fullname = nullptr; // the program name with extension
 
   // On command prompt the progname can be supplied with no extension (under Windows)
-   ULong_t namelen=name ? strlen(name) : 0;
+   size_t namelen = name ? strlen(name) : 0;
    if (name && namelen > 0) {
       // Check whether the name contains "extention"
       fullname = new char[namelen+5];
@@ -1195,7 +1203,7 @@ void TWinNTSystem::SetProgname(const char *name)
 
       progname = StrDup(BaseName(fullname));
       dot = strrchr(progname, '.');
-      idot = dot ? (ULong_t)(dot - progname) : strlen(progname);
+      idot = dot ? (size_t)(dot - progname) : strlen(progname);
 
       char *which = nullptr;
 
@@ -1973,13 +1981,13 @@ __inline BOOL DBL_BSLASH(LPCTSTR psz)
 /// Returns TRUE if the given string is a UNC path.
 ///
 /// TRUE
-///      "\\foo\bar"
-///      "\\foo"         <- careful
-///      "\\"
+///      `\\foo\bar`
+///      `\\foo`         <- careful
+///      `\\`
 /// FALSE
-///      "\foo"
-///      "foo"
-///      "c:\foo"
+///      `\foo`
+///      `foo"`
+///      `c:\foo`
 
 BOOL PathIsUNC(LPCTSTR pszPath)
 {
@@ -2045,7 +2053,7 @@ void *TWinNTSystem::OpenDirectory(const char *fdir)
    else
       strlcpy(dir, sdir,MAX_PATH);
 
-   int nche = strlen(dir)+3;
+   size_t nche = strlen(dir)+3;
    char *entry = new char[nche];
    struct _stati64 finfo;
 
@@ -2452,7 +2460,7 @@ Bool_t TWinNTSystem::IsAbsoluteFileName(const char *dir)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-/// Convert a pathname to a unix pathname. E.g. form \user\root to /user/root.
+/// Convert a pathname to a unix pathname. E.g. from `\user\root` to `/user/root`.
 /// General rules for applications creating names for directories and files or
 /// processing names supplied by the user include the following:
 ///
@@ -2595,7 +2603,7 @@ int TWinNTSystem::GetPathInfo(const char *path, FileStat_t &buf)
    // Remove trailing backslashes
    const char *proto = (strstr(path, "file:///")) ? "file://" : "file:";
    char *newpath = StrDup(StripOffProto(path, proto));
-   int l = strlen(newpath);
+   size_t l = strlen(newpath);
    while (l > 1) {
       if (newpath[--l] != '\\' || newpath[--l] != '/') {
          break;
@@ -3867,17 +3875,14 @@ void TWinNTSystem::Exit(int code, Bool_t mode)
             TIter next(gROOT->GetListOfBrowsers());
             while ((b = (TBrowser*) next()))
                gROOT->ProcessLine(TString::Format("\
-                  if (((TBrowser*)0x%lx)->GetBrowserImp() &&\
-                      ((TBrowser*)0x%lx)->GetBrowserImp()->GetMainFrame()) \
-                     ((TBrowser*)0x%lx)->GetBrowserImp()->GetMainFrame()->CloseWindow();\
-                  else delete (TBrowser*)0x%lx", (ULong_t)b, (ULong_t)b, (ULong_t)b, (ULong_t)b));
+                  if (((TBrowser*)0x%zx)->GetBrowserImp() &&\
+                      ((TBrowser*)0x%zx)->GetBrowserImp()->GetMainFrame()) \
+                     ((TBrowser*)0x%zx)->GetBrowserImp()->GetMainFrame()->CloseWindow();\
+                  else delete (TBrowser*)0x%zx", (size_t)b, (size_t)b, (size_t)b, (size_t)b));
          }
       }
-      gROOT->EndOfProcessCleanups();
    }
-   if (gInterpreter) {
-      gInterpreter->ShutDown();
-   }
+   TROOT::ShutDown();
    gVirtualX->CloseDisplay();
 
    if (mode) {
@@ -4251,49 +4256,87 @@ const char *TWinNTSystem::GetLinkedLibraries()
 const char *TWinNTSystem::GetLibraries(const char *regexp, const char *options,
                                        Bool_t isRegexp)
 {
-   TString libs(TSystem::GetLibraries(regexp, options, isRegexp));
    TString ntlibs;
+   struct _stat buf;
+   std::string str;
+   char drive[_MAX_DRIVE], dir[_MAX_DIR], fname[_MAX_FNAME], ext[_MAX_EXT];
+   TString libs(TSystem::GetLibraries(regexp, options, isRegexp));
    TString opt = options;
+   std::vector<std::string> all_libs, libpaths;
 
    if ( (opt.First('L')!=kNPOS) ) {
-      TRegexp separator("[^ \\t\\s]+");
-      TRegexp user_dll("\\.dll$");
-      TRegexp user_lib("\\.lib$");
-      FileStat_t sbuf;
-      TString s;
-      Ssiz_t start, index, end;
-      start = index = end = 0;
-
-      while ((start < libs.Length()) && (index != kNPOS)) {
-         index = libs.Index(separator, &end, start);
-         if (index >= 0) {
-            // Change .dll into .lib and remove the
-            // path info if it not accessible.
-            s = libs(index, end);
-            s.ToLower();
-            if ((s.Index("c:/windows/") != kNPOS) ||
-                (s.Index("python") != kNPOS)) {
-               start += end+1;
+      libs.ReplaceAll("/","\\");
+      // get the %LIB% environment path list
+      std::stringstream libenv(gSystem->Getenv("LIB"));
+      while (getline(libenv, str, ';')) {
+         libpaths.push_back(str);
+      }
+      // now get the list of libraries
+      std::stringstream libraries(libs.Data());
+      while (getline(libraries, str, ' ')) {
+         std::string::size_type first, last;
+         // if the line begins with "-L", it's a linker option
+         // (e.g. -LIBPATH:%ROOTSYS%\\lib), so add it to the path list
+         if (str.rfind("-L", 0) == 0) {
+            first = str.find_first_of('%');
+            last = str.find_last_of('%');
+            if ((first != std::string::npos) && (last != std::string::npos) &&
+                (first != last)) {
+               // if there is a string between %%, this is an environment
+               // variable (e.g. %ROOTSYS%), so let's try to resolve it
+               // and replace it with the real path
+               std::string var = str.substr(first+1, last-first-1);
+               std::string env(gSystem->Getenv(var.c_str()));
+               if (!env.empty()) {
+                  // the environment variable exist and properly resolved
+                  // so add the last part of the path and add it to the list
+                  env += str.substr(last+1);
+                  libpaths.push_back(env);
+               }
+            }
+            // keep the linker instuction in the final list
+            ntlibs.Append(str.c_str());
+            ntlibs += " ";
+            continue;
+         }
+         // replace the '.dll' or '.DLL' extension by '.lib'
+         last = str.rfind(".dll");
+         if (last != std::string::npos)
+            str.replace(last, 4, ".lib");
+         last = str.rfind(".DLL");
+         if (last != std::string::npos)
+            str.replace(last, 4, ".lib");
+         if (str.rfind(".lib") != std::string::npos ||
+             str.rfind(".LIB") != std::string::npos) {
+            // check if the .lib with its full path exists
+            if (_stat( str.c_str(), &buf ) == 0) {
+               // file exists, so keep it with full path in our final list
+               ntlibs.Append(str.c_str());
+               ntlibs += " ";
                continue;
             }
-            if (s.Index(user_dll) != kNPOS) {
-               s.ReplaceAll(".dll",".lib");
-               if ( GetPathInfo( s, sbuf ) != 0 ) {
-                  s.Replace( 0, s.Last('/')+1, 0, 0);
-                  s.Replace( 0, s.Last('\\')+1, 0, 0);
-               }
-            } else if (s.Index(user_lib) != kNPOS) {
-               if ( GetPathInfo( s, sbuf ) != 0 ) {
-                  s.Replace( 0, s.Last('/')+1, 0, 0);
-                  s.Replace( 0, s.Last('\\')+1, 0, 0);
-               }
-            }
-            if (!ntlibs.IsNull()) ntlibs.Append(" ");
-            if ((s.Index("python") == kNPOS) && (s.Index("cppyy") == kNPOS) &&
-                (s.Index("vcruntime") == kNPOS) && (s.Index(".pyd") == kNPOS))
-              ntlibs.Append(s);
          }
-         start += end+1;
+         // full path not found, so split it to extract the library name
+         // only, set its extension to '.lib' and add it to the list of
+         // libraries to search
+         _splitpath(str.c_str(), drive, dir, fname, ext);
+         std::string libname(fname);
+         libname += ".lib";
+         all_libs.push_back(libname);
+      }
+      for (auto lib : all_libs) {
+         // loop over all libraries to check which one exists
+         for (auto libpath : libpaths) {
+            // check in each path of the %LIB% environment
+            std::string path_lib(libpath);
+            path_lib += "\\";
+            path_lib += lib;
+            if (_stat( path_lib.c_str(), &buf ) == 0) {
+                // file exists, add it to the final list of libraries
+               ntlibs.Append(lib.c_str());
+               ntlibs += " ";
+            }
+         }
       }
    } else {
       ntlibs = libs;
@@ -4347,7 +4390,7 @@ Bool_t TWinNTSystem::DispatchTimers(Bool_t mode)
 
    fInsideNotify = kTRUE;
 
-   TOrdCollectionIter it((TOrdCollection*)fTimers);
+   TListIter it(fTimers);
    TTimer *t;
    Bool_t  timedout = kFALSE;
 

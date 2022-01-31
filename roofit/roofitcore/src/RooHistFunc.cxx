@@ -24,17 +24,20 @@ multidimensional histogram. The histogram can have an arbitrary number of real o
 discrete dimensions and may have negative values.
 **/
 
-#include "RooFit.h"
-#include "Riostream.h"
-
 #include "RooHistFunc.h"
 #include "RooDataHist.h"
 #include "RooMsgService.h"
 #include "RooRealVar.h"
 #include "RooCategory.h"
 #include "RooWorkspace.h"
+#include "RooHistPdf.h"
+#include "RooHelpers.h"
+#include "RunContext.h"
 
 #include "TError.h"
+#include "TBuffer.h"
+
+#include <stdexcept>
 
 using namespace std;
 
@@ -83,14 +86,14 @@ RooHistFunc::RooHistFunc(const char *name, const char *title, const RooArgSet& v
   if (vars.getSize()!=dvars->getSize()) {
     coutE(InputArguments) << "RooHistFunc::ctor(" << GetName() 
 			  << ") ERROR variable list and RooDataHist must contain the same variables." << endl ;
-    assert(0) ;
+    throw std::invalid_argument("RooHistFunc: ERROR variable list and RooDataHist must contain the same variables.");
   }
 
   for (const auto arg : vars) {
     if (!dvars->find(arg->GetName())) {
       coutE(InputArguments) << "RooHistFunc::ctor(" << GetName() 
 			    << ") ERROR variable list and RooDataHist must contain the same variables." << endl ;
-      assert(0) ;
+      throw std::invalid_argument("RooHistFunc: ERROR variable list and RooDataHist must contain the same variables.");
     }
   }
 
@@ -125,14 +128,14 @@ RooHistFunc::RooHistFunc(const char *name, const char *title, const RooArgList& 
   if (histObs.getSize()!=dvars->getSize()) {
     coutE(InputArguments) << "RooHistFunc::ctor(" << GetName() 
 			  << ") ERROR variable list and RooDataHist must contain the same variables." << endl ;
-    assert(0) ;
+    throw std::invalid_argument("RooHistFunc: ERROR variable list and RooDataHist must contain the same variables.");
   }
 
   for (const auto arg : histObs) {
     if (!dvars->find(arg->GetName())) {
       coutE(InputArguments) << "RooHistFunc::ctor(" << GetName() 
 			    << ") ERROR variable list and RooDataHist must contain the same variables." << endl ;
-      assert(0) ;
+      throw std::invalid_argument("RooHistFunc: ERROR variable list and RooDataHist must contain the same variables.");
     }
   }
 
@@ -194,9 +197,52 @@ Double_t RooHistFunc::evaluate() const
     }
   }
 
-  Double_t ret =  _dataHist->weight(_histObsList,_intOrder,kFALSE,_cdfBoundaries) ;  
+  Double_t ret =  _dataHist->weightFast(_histObsList,_intOrder,kFALSE,_cdfBoundaries) ;  
   return ret ;
 }
+
+
+////////////////////////////////////////////////////////////////////////////////
+/// Compute value of the HistFunc for every entry in `evalData`.
+/// \param[in/out] evalData Struct with input data. The computation results will be stored here.
+/// \param[in] normSet Set of observables to normalise over (ignored).
+RooSpan<double> RooHistFunc::evaluateSpan(RooBatchCompute::RunContext& evalData, const RooArgSet* /*normSet*/) const {
+  std::vector<RooSpan<const double>> inputValues;
+  std::size_t batchSize = 0;
+  for (const auto& obs : _depList) {
+    auto realObs = dynamic_cast<const RooAbsReal*>(obs);
+    if (realObs) {
+      auto inputs = realObs->getValues(evalData, nullptr);
+      batchSize = std::max(batchSize, inputs.size());
+      inputValues.push_back(std::move(inputs));
+    } else {
+      inputValues.emplace_back();
+    }
+  }
+
+  auto results = evalData.makeBatch(this, batchSize);
+
+  for (std::size_t i = 0; i < batchSize; ++i) {
+    bool skip = false;
+
+    for (auto j = 0u; j < _histObsList.size(); ++j) {
+      const auto histObs = _histObsList[j];
+
+      if (i < inputValues[j].size()) {
+        histObs->setCachedValue(inputValues[j][i], false);
+        if (!histObs->inRange(nullptr)) {
+          skip = true;
+          break;
+        }
+      }
+    }
+
+    results[i] = skip ? 0. : _dataHist->weightFast(_histObsList, _intOrder, false, _cdfBoundaries);
+  }
+
+  return results;
+}
+
 
 ////////////////////////////////////////////////////////////////////////////////
 /// Only handle case of maximum in all variables
@@ -254,7 +300,6 @@ Double_t RooHistFunc::totVolume() const
 }
 
 
-
 ////////////////////////////////////////////////////////////////////////////////
 /// Determine integration scenario. If no interpolation is used,
 /// RooHistFunc can perform all integrals over its dependents
@@ -264,46 +309,8 @@ Double_t RooHistFunc::totVolume() const
 
 Int_t RooHistFunc::getAnalyticalIntegral(RooArgSet& allVars, RooArgSet& analVars, const char* rangeName) const 
 {
-
-  // Only analytical integrals over the full range are defined
-  if (rangeName!=0) {
-    return 0 ;
-  }
-
-  // Simplest scenario, integrate over all dependents
-  RooAbsCollection *allVarsCommon = allVars.selectCommon(_depList) ;  
-  Bool_t intAllObs = (allVarsCommon->getSize()==_depList.getSize()) ;  
-  delete allVarsCommon ;
-  if (intAllObs && matchArgs(allVars,analVars,_depList)) {
-    return 1000 ;
-  }
-
-  // Disable partial analytical integrals if interpolation is used
-  if (_intOrder>0) {
-    return 0 ;
-  }
-
-  // Find subset of _depList that integration is requested over
-  RooArgSet* allVarsSel = (RooArgSet*) allVars.selectCommon(_depList) ;
-  if (allVarsSel->getSize()==0) {
-    delete allVarsSel ;
-    return 0 ;
-  }
-
-  // Partial integration scenarios.
-  // Build unique code from bit mask of integrated variables in depList
-  Int_t code(0),n(0) ;
-  for (const auto arg : _depList) {
-    if (allVars.find(arg->GetName())) code |= (1<<n) ;
-    n++ ;
-  }
-
-  analVars.add(*allVarsSel) ;
-
-  return code ;
-
+    return RooHistPdf::getAnalyticalIntegral(allVars, analVars, rangeName, _histObsList, _depList, _intOrder);
 }
-
 
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -311,44 +318,10 @@ Int_t RooHistFunc::getAnalyticalIntegral(RooArgSet& allVars, RooArgSet& analVars
 /// is deferred to RooDataHist::sum() which implements partial
 /// or complete summation over the histograms contents
 
-Double_t RooHistFunc::analyticalIntegral(Int_t code, const char* /*rangeName*/) const 
+Double_t RooHistFunc::analyticalIntegral(Int_t code, const char* rangeName) const 
 {
-  // WVE needs adaptation for rangeName feature
-
-  // Simplest scenario, integration over all dependents
-  if (code==1000) {
-    return _dataHist->sum(kTRUE) ;
-  }
-
-  // Partial integration scenario, retrieve set of variables, calculate partial sum
-  RooArgSet intSet ;
-  Int_t n(0) ;
-  for (const auto arg : _depList) {
-    if (code & (1<<n)) {
-      intSet.add(*arg) ;
-    }
-    n++ ;
-  }
-
-  if (_depList.getSize()>0) {
-    for (auto i = 0u; i < _histObsList.size(); ++i) {
-      const auto harg = _histObsList[i];
-      const auto parg = _depList[i];
-
-      if (harg != parg) {
-        parg->syncCache() ;
-        harg->copyCache(parg,kTRUE) ;
-        if (!harg->inRange(0)) {
-          return 0 ;
-        }
-      }
-    }
-  }
-
-  Double_t ret =  _dataHist->sum(intSet,_histObsList,kTRUE) ;
-  return ret ;
+    return RooHistPdf::analyticalIntegral(code, rangeName, _histObsList, _depList, *_dataHist, true);
 }
-
 
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -505,23 +478,17 @@ std::list<Double_t>* RooHistFunc::binBoundaries(RooAbsRealLValue& obs, Double_t 
 
 
 ////////////////////////////////////////////////////////////////////////////////
-/// Check if our datahist is already in the workspace
-
+/// Check if our datahist is already in the workspace.
+/// In case of error, return true.
 Bool_t RooHistFunc::importWorkspaceHook(RooWorkspace& ws) 
 {  
-  std::list<RooAbsData*> allData = ws.allEmbeddedData() ;
-  std::list<RooAbsData*>::const_iterator iter ;
-  for (iter = allData.begin() ; iter != allData.end() ; ++iter) {
-    // If your dataset is already in this workspace nothing needs to be done
-    if (*iter == _dataHist) {
-      return kFALSE ;
-    }
-  }
-
   // Check if dataset with given name already exists
   RooAbsData* wsdata = ws.embeddedData(_dataHist->GetName()) ;
 
   if (wsdata) {
+    // If our data is exactly the same, we are done:
+    if (static_cast<RooDataHist*>(wsdata) == _dataHist)
+      return false;
 
     // Yes it exists - now check if it is identical to our internal histogram 
     if (wsdata->InheritsFrom(RooDataHist::Class())) {
@@ -529,18 +496,18 @@ Bool_t RooHistFunc::importWorkspaceHook(RooWorkspace& ws)
       // Check if histograms are identical
       if (areIdentical((RooDataHist&)*wsdata,*_dataHist)) {
 
-	// Exists and is of correct type, and identical -- adjust internal pointer to WS copy
-	_dataHist = (RooDataHist*) wsdata ;
+        // Exists and is of correct type, and identical -- adjust internal pointer to WS copy
+        _dataHist = (RooDataHist*) wsdata ;
       } else {
 
-	// not identical, clone rename and import
-	TString uniqueName = Form("%s_%s",_dataHist->GetName(),GetName()) ;
-	Bool_t flag = ws.import(*_dataHist,RooFit::Rename(uniqueName.Data()),RooFit::Embedded()) ;
-	if (flag) {
-	  coutE(ObjectHandling) << " RooHistPdf::importWorkspaceHook(" << GetName() << ") unable to import clone of underlying RooDataHist with unique name " << uniqueName << ", abort" << endl ;
-	  return kTRUE ;
-	}
-	_dataHist = (RooDataHist*) ws.embeddedData(uniqueName.Data()) ;
+        // not identical, clone rename and import
+        TString uniqueName = Form("%s_%s",_dataHist->GetName(),GetName()) ;
+        Bool_t flag = ws.import(*_dataHist,RooFit::Rename(uniqueName.Data()),RooFit::Embedded()) ;
+        if (flag) {
+          coutE(ObjectHandling) << " RooHistPdf::importWorkspaceHook(" << GetName() << ") unable to import clone of underlying RooDataHist with unique name " << uniqueName << ", abort" << endl ;
+          return kTRUE ;
+        }
+        _dataHist = (RooDataHist*) ws.embeddedData(uniqueName.Data()) ;
       }
 
     } else {
@@ -549,18 +516,18 @@ Bool_t RooHistFunc::importWorkspaceHook(RooWorkspace& ws)
       TString uniqueName = Form("%s_%s",_dataHist->GetName(),GetName()) ;
       Bool_t flag = ws.import(*_dataHist,RooFit::Rename(uniqueName.Data()),RooFit::Embedded()) ;
       if (flag) {
-	coutE(ObjectHandling) << " RooHistPdf::importWorkspaceHook(" << GetName() << ") unable to import clone of underlying RooDataHist with unique name " << uniqueName << ", abort" << endl ;
-	return kTRUE ;
+        coutE(ObjectHandling) << " RooHistPdf::importWorkspaceHook(" << GetName() << ") unable to import clone of underlying RooDataHist with unique name " << uniqueName << ", abort" << endl ;
+        return kTRUE ;
       }
       _dataHist = (RooDataHist*) ws.embeddedData(uniqueName.Data()) ;
-      
+
     }
     return kFALSE ;
   }
-  
+
   // We need to import our datahist into the workspace
   ws.import(*_dataHist,RooFit::Embedded()) ;
-  
+
   // Redirect our internal pointer to the copy in the workspace
   _dataHist = (RooDataHist*) ws.embeddedData(_dataHist->GetName()) ;
   return kFALSE ;
@@ -578,7 +545,8 @@ Bool_t RooHistFunc::areIdentical(const RooDataHist& dh1, const RooDataHist& dh2)
     dh2.get(i) ;
     if (fabs(dh1.weight()-dh2.weight())>1e-8) return kFALSE ;
   }
-  if (!(RooNameSet(*dh1.get())==RooNameSet(*dh2.get()))) return kFALSE ;
+  using RooHelpers::getColonSeparatedNameString;
+  if (getColonSeparatedNameString(*dh1.get()) != getColonSeparatedNameString(*dh2.get())) return kFALSE ;
   return kTRUE ;
 }
 
@@ -612,3 +580,65 @@ void RooHistFunc::ioStreamerPass2()
   }
 }
 
+
+////////////////////////////////////////////////////////////////////////////////
+/// Compute bin number corresponding to current coordinates.
+/// \return If a bin is not in the current range of the observables, return -1.
+Int_t RooHistFunc::getBin() const {
+  if (!_depList.empty()) {
+    for (auto i = 0u; i < _histObsList.size(); ++i) {
+      const auto harg = _histObsList[i];
+      const auto parg = _depList[i];
+
+      if (harg != parg) {
+        parg->syncCache() ;
+        harg->copyCache(parg,kTRUE) ;
+        if (!harg->inRange(nullptr)) {
+          return -1;
+        }
+      }
+    }
+  }
+
+  return _dataHist->getIndex(_histObsList, true);
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+/// Compute bin numbers corresponding to all coordinates in `evalData`.
+/// \return Vector of bin numbers. If a bin is not in the current range of the observables, return -1.
+std::vector<Int_t> RooHistFunc::getBins(RooBatchCompute::RunContext& evalData) const {
+  std::vector<RooSpan<const double>> depData;
+  for (const auto dep : _depList) {
+    auto real = dynamic_cast<const RooAbsReal*>(dep);
+    if (real) {
+      depData.push_back(real->getValues(evalData, nullptr));
+    } else {
+      depData.emplace_back(nullptr, 0);
+    }
+  }
+
+  const auto batchSize = std::max_element(depData.begin(), depData.end(),
+      [](const RooSpan<const double>& a, const RooSpan<const double>& b){ return a.size() < b.size(); })->size();
+  std::vector<Int_t> results;
+
+  for (std::size_t evt = 0; evt < batchSize; ++evt) {
+    if (!_depList.empty()) {
+      for (auto i = 0u; i < _histObsList.size(); ++i) {
+        const auto harg = _histObsList[i];
+
+        if (evt < depData[i].size())
+          harg->setCachedValue(depData[i][evt], false);
+
+        if (!harg->inRange(nullptr)) {
+          results.push_back(-1);
+          continue;
+        }
+      }
+    }
+
+    results.push_back(_dataHist->getIndex(_histObsList, true));
+  }
+
+  return results;
+}

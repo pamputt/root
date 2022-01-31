@@ -8,20 +8,26 @@
  * For the licensing terms see $ROOTSYS/LICENSE.                         *
  * For the list of contributors see $ROOTSYS/README/CREDITS.             *
  *************************************************************************/
-/**
-  \defgroup proof PROOF
 
-  Classes defining the Parallel ROOT Facility, PROOF, a framework for parallel analysis of ROOT TTrees.
+/**
+\defgroup proof PROOF
+
+Classes defining the Parallel ROOT Facility, PROOF, a framework for parallel analysis of ROOT TTrees.
+
+\deprecated
+We keep PROOF for those who still need it for legacy use cases.
+PROOF is not developed anymore and receiving only limited support.
+%ROOT has since a few years moved to RDataFrame and related products as multi-core/multi-processing engines.
 
 */
 
 /**
-  \defgroup proofkernel PROOF kernel Libraries
-  \ingroup proof
+\defgroup proofkernel PROOF kernel Libraries
+\ingroup proof
 
-  The PROOF kernel libraries (libProof, libProofPlayer, libProofDraw) contain the classes defining
-  the kernel of the PROOF facility, i.e. the protocol and the utilities to steer data processing
-  and handling of results.
+The PROOF kernel libraries (libProof, libProofPlayer, libProofDraw) contain the classes defining
+the kernel of the PROOF facility, i.e. the protocol and the utilities to steer data processing
+and handling of results.
 
 */
 
@@ -657,19 +663,21 @@ TProof::~TProof()
    if (TestBit(TProof::kIsClient)) {
       // iterate over all packages
       TList *epl = fPackMgr->GetListOfEnabled();
-      TIter nxp(epl);
-      while (TObjString *pck = (TObjString *)(nxp())) {
-         FileStat_t stat;
-         if (gSystem->GetPathInfo(pck->String(), stat) == 0) {
-            // check if symlink, if so unlink
-            // NOTE: GetPathInfo() returns 1 in case of symlink that does not point to
-            // existing file or to a directory, but if fIsLink is true the symlink exists
-            if (stat.fIsLink)
-               gSystem->Unlink(pck->String());
+      if (epl) {
+         TIter nxp(epl);
+         while (TObjString *pck = (TObjString *)(nxp())) {
+            FileStat_t stat;
+            if (gSystem->GetPathInfo(pck->String(), stat) == 0) {
+               // check if symlink, if so unlink
+               // NOTE: GetPathInfo() returns 1 in case of symlink that does not point to
+               // existing file or to a directory, but if fIsLink is true the symlink exists
+               if (stat.fIsLink)
+                  gSystem->Unlink(pck->String());
+            }
          }
+         epl->Delete();
+         delete epl;
       }
-      epl->Delete();
-      delete epl;
    }
 
    Close();
@@ -9262,7 +9270,7 @@ void TProof::Feedback(TList *objs)
       objs->ls();
    }
 
-   Emit("Feedback(TList *objs)", (Long_t) objs);
+   Emit("Feedback(TList *objs)", (Longptr_t) objs);
 }
 
 ////////////////////////////////////////////////////////////////////////////////

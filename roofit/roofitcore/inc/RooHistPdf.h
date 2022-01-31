@@ -20,6 +20,7 @@
 #include "RooRealProxy.h"
 #include "RooSetProxy.h"
 #include "RooAICRegistry.h"
+#include <list>
 
 class RooRealVar;
 class RooAbsReal;
@@ -27,7 +28,7 @@ class RooDataHist ;
 
 class RooHistPdf : public RooAbsPdf {
 public:
-  RooHistPdf() ; 
+  RooHistPdf() ;
   RooHistPdf(const char *name, const char *title, const RooArgSet& vars, const RooDataHist& dhist, Int_t intOrder=0);
   RooHistPdf(const char *name, const char *title, const RooArgList& pdfObs, const RooArgList& histObs, const RooDataHist& dhist, Int_t intOrder=0);
   RooHistPdf(const RooHistPdf& other, const char* name=0);
@@ -51,6 +52,20 @@ public:
     // Return histogram interpolation order
     return _intOrder ; 
   }
+
+  static Int_t getAnalyticalIntegral(RooArgSet& allVars,
+                                     RooArgSet& analVars,
+                                     const char* rangeName,
+                                     RooArgSet const& histObsList,
+                                     RooSetProxy const& pdfObsList,
+                                     Int_t intOrder) ;
+
+  static Double_t analyticalIntegral(Int_t code,
+                                     const char* rangeName,
+                                     RooArgSet const& histObsList,
+                                     RooSetProxy const& pdfObsList,
+                                     RooDataHist& dataHist,
+                                     bool histFuncMode) ;
 
   Int_t getAnalyticalIntegral(RooArgSet& allVars, RooArgSet& analVars, const char* rangeName=0) const ;
   Double_t analyticalIntegral(Int_t code, const char* rangeName=0) const ;

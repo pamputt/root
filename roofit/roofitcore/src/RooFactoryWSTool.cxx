@@ -19,11 +19,13 @@
 \class RooFactoryWSTool
 \ingroup Roofitcore
 
-RooFactoryWSTool is a clase like TTree::MakeClass() that generates
+RooFactoryWSTool is a class similar to TTree::MakeClass() that generates
 skeleton code for RooAbsPdf and RooAbsReal functions given
 a list of input parameter names. The factory can also compile
-the generated code on the fly, and on request also immediate
-instantiate objects.
+the generated code on the fly, and on request also
+instantiate the objects.
+
+It interprets all expressions for RooWorkspace::factory(const char*).
 **/
 
 #include "RooFit.h"
@@ -39,13 +41,16 @@ instantiate objects.
 #include "TInterpreter.h"
 #include "TEnum.h"
 #include "RooAbsPdf.h"
-#include "RooGaussian.h"
+#include <array>
 #include <fstream>
+#include "strtok.h"
+#include "strlcpy.h"
 #include "RooGlobalFunc.h"
 #include "RooDataSet.h"
 #include "RooDataHist.h"
 #include "RooAddPdf.h"
 #include "RooProdPdf.h"
+#include "RooPolyFunc.h"
 #include "RooSimultaneous.h"
 #include "RooFFTConvPdf.h"
 #include "RooNumConvPdf.h"
@@ -71,9 +76,11 @@ ClassImp(RooFactoryWSTool);
 RooFactoryWSTool* RooFactoryWSTool::_of = 0 ;
 map<string,RooFactoryWSTool::IFace*>* RooFactoryWSTool::_hooks=0 ;
 
+namespace {
+
 static Int_t init();
 
-static Int_t dummy = init() ;
+Int_t dummy = init() ;
 
 static Int_t init()
 {
@@ -94,6 +101,7 @@ static Int_t init()
   RooFactoryWSTool::registerSpecial("prod",iface) ;
   RooFactoryWSTool::registerSpecial("expr",iface) ;
   RooFactoryWSTool::registerSpecial("nconv",iface) ;
+  RooFactoryWSTool::registerSpecial("taylorexpand", iface);
 
   // Test statistics
   RooFactoryWSTool::registerSpecial("nll",iface) ;
@@ -109,11 +117,13 @@ static Int_t init()
   // Miscellaneous
   RooFactoryWSTool::registerSpecial("dataobs",iface) ;
   RooFactoryWSTool::registerSpecial("set",iface) ;
+  RooFactoryWSTool::registerSpecial("lagrangianmorph",iface) ;
 
   (void) dummy;
   return 0 ;
 }
 
+}
 
 #ifndef _WIN32
 #include <strings.h>
@@ -525,13 +535,13 @@ RooAddPdf* RooFactoryWSTool::add(const char *objName, const char* specList, Bool
   } catch (const string &err) {
     coutE(ObjectHandling) << "RooFactoryWSTool::add(" << objName << ") ERROR creating RooAddPdf: " << err << endl ;    
     logError() ;
-    return 0 ;
+    return nullptr;
   }
   
-  RooAddPdf* pdf =  new RooAddPdf(objName,objName,pdfList,coefList,recursiveCoefs) ;
-  pdf->setStringAttribute("factory_tag",Form("SUM::%s(%s)",objName,specList)) ;
-  if (_ws->import(*pdf,Silence())) logError() ;
-  return (RooAddPdf*) _ws->pdf(objName) ;
+  RooAddPdf pdf{objName,objName,pdfList,coefList,recursiveCoefs};
+  pdf.setStringAttribute("factory_tag",Form("SUM::%s(%s)",objName,specList)) ;
+  if (_ws->import(pdf,Silence())) logError() ;
+  return static_cast<RooAddPdf*>(_ws->pdf(objName));
 }
 
 
@@ -567,13 +577,13 @@ RooRealSumPdf* RooFactoryWSTool::amplAdd(const char *objName, const char* specLi
   } catch (const string &err) {
     coutE(ObjectHandling) << "RooFactoryWSTool::add(" << objName << ") ERROR creating RooRealSumPdf: " << err << endl ;    
     logError() ;
-    return 0 ;
+    return nullptr;
   }
   
-  RooRealSumPdf* pdf =  new RooRealSumPdf(objName,objName,amplList,coefList,(amplList.getSize()==coefList.getSize())) ;
-  pdf->setStringAttribute("factory_tag",Form("ASUM::%s(%s)",objName,specList)) ;
-  if (_ws->import(*pdf,Silence())) logError() ;
-  return (RooRealSumPdf*) _ws->pdf(objName) ;
+  RooRealSumPdf pdf(objName,objName,amplList,coefList,(amplList.getSize()==coefList.getSize())) ;
+  pdf.setStringAttribute("factory_tag",Form("ASUM::%s(%s)",objName,specList)) ;
+  if (_ws->import(pdf,Silence())) logError() ;
+  return static_cast<RooRealSumPdf*>(_ws->pdf(objName));
 }
 
 
@@ -623,23 +633,21 @@ RooProdPdf* RooFactoryWSTool::prod(const char *objName, const char* pdfList)
   }
   regPdfList += "}" ;
   
-  RooProdPdf* pdf = 0 ;
+  std::unique_ptr<RooProdPdf> pdf;
   try {
-    pdf = new RooProdPdf(objName,objName,asSET(regPdfList.c_str()),cmdList) ;
+    pdf = std::make_unique<RooProdPdf>(objName,objName,asSET(regPdfList.c_str()),cmdList);
   } catch (const string &err) {
     coutE(ObjectHandling) << "RooFactoryWSTool::prod(" << objName << ") ERROR creating RooProdPdf input set of regular p.d.f.s: " << err << endl ;
     logError() ;
-    pdf = 0 ;
   }
   cmdList.Delete() ;
   
   if (pdf) {
     pdf->setStringAttribute("factory_tag",Form("PROD::%s(%s)",objName,pdfList)) ;
     if (_ws->import(*pdf,Silence())) logError() ;
-    delete pdf ;
     return (RooProdPdf*) _ws->pdf(objName) ;
   } else {
-    return 0 ;
+    return nullptr;
   }
 }
 
@@ -677,12 +685,13 @@ RooSimultaneous* RooFactoryWSTool::simul(const char* objName, const char* indexC
 
 
   // Create simultaneous p.d.f.
-  RooSimultaneous* pdf(0) ;
+  std::unique_ptr<RooSimultaneous> pdf;
   try {
-    pdf = new RooSimultaneous(objName,objName,theMap,asCATLV(indexCat)) ;
+    pdf = std::make_unique<RooSimultaneous>(objName,objName,theMap,asCATLV(indexCat)) ;
   } catch (const string &err) {
     coutE(ObjectHandling) << "RooFactoryWSTool::simul(" << objName << ") ERROR creating RooSimultaneous::" << objName << " " << err << endl ;
     logError() ;
+    return nullptr;
   }
 
   // Import p.d.f into workspace
@@ -732,16 +741,11 @@ RooAddition* RooFactoryWSTool::addfunc(const char *objName, const char* specList
   }
 
 
-  RooAddition* sum ;
-  if (sumlist2.getSize()>0) {
-    sum = new RooAddition(objName,objName,sumlist1,sumlist2) ;
-  } else {
-    sum = new RooAddition(objName,objName,sumlist1) ;
-  }
+  auto sum = sumlist2.empty() ? std::make_unique<RooAddition>(objName,objName,sumlist1)
+                              : std::make_unique<RooAddition>(objName,objName,sumlist1,sumlist2);
 
   sum->setStringAttribute("factory_tag",Form("sum::%s(%s)",objName,specList)) ;
   if (_ws->import(*sum,Silence())) logError() ;
-  delete sum ;
   return (RooAddition*) _ws->pdf(objName) ;
   
 }
@@ -761,109 +765,91 @@ RooProduct* RooFactoryWSTool::prodfunc(const char *objName, const char* pdfList)
 
 
 ////////////////////////////////////////////////////////////////////////////////
-/// Process high-level object creation syntax
-/// Accepted forms of syntax are
+/// Create a RooFit object from the given expression.
 ///
-///
-/// Creating variables
-///
-/// x[-10,10]             -  Create variable x with given range and put it in workspace
-/// x[3,-10,10]           -  Create variable x with given range and initial value and put it in workspace
-/// x[3]                  -  Create variable x with given constant value
-///
-/// <numeric literal>     - Numeric literal expressions (0.5, -3 etc..) are converted to a RooConst(<numeric literal>) 
-///                         where ever a RooAbsReal or RooAbsArg argument is expected
-///
-/// Creating categories
-///
-/// c[lep,kao,nt1,nt2]    -  Create category c with given state names
-/// tag[B0=1,B0bar=-1]    -  Create category tag with given state names and index assignments
-///
-///
-/// Creating functions and p.d.f.s
-///
-/// MyPdf::g(x,m,s)       - Create p.d.f or function of type MyPdf with name g with argument x,m,s
+/// <table>
+/// <tr><th> Creating variables <th>
+/// <tr><td> `x[-10,10]`             <td>  Create variable x with given range and put it in workspace
+/// <tr><td> `x[3,-10,10]`           <td>  Create variable x with given range and initial value and put it in workspace
+/// <tr><td> `x[3]`                  <td>  Create variable x with given constant value
+/// <tr><td> `<numeric literal>`     <td> Numeric literal expressions (0.5, -3 etc..) are converted to a RooConst(<numeric literal>)
+///                                       wherever a RooAbsReal or RooAbsArg argument is expected
+/// <tr><th> Creating categories <th>
+/// <tr><td> `c[lep,kao,nt1,nt2]`    <td>  Create category c with given state names
+/// <tr><td> `tag[B0=1,B0bar=-1]`    <td>  Create category tag with given state names and index assignments
+/// <tr><th> Creating functions and p.d.f.s <th>
+/// <tr><td> `MyPdf::g(x,m,s)`       <td> Create p.d.f or function of type MyPdf with name g with argument x,m,s
 ///                         Interpretation and number of arguments are mapped to the constructor arguments of the class 
 ///                         (after the name and title).
-///
-/// MyPdf(x,m,s)          - As above, but with an implicitly defined (unique) object name
-/// 
-///
-/// Creating sets and lists (to be used as inputs above)
-///
-/// {a,b,c}               - Create RooArgSet or RooArgList (as determined by context) from given contents
-///
+/// <tr><td> `MyPdf(x,m,s)`          <td> As above, but with an implicitly defined (unique) object name
+/// <tr><th> Creating sets and lists (to be used as inputs above) <th>
+/// <tr><td> `{a,b,c}`               <td> Create RooArgSet or RooArgList (as determined by context) from given contents
+/// </table>
 ///
 ///
 /// Objects that are not created, are assumed to exist in the workspace
 /// Object creation expressions as shown above can be nested, e.g. one can do
-///
+/// ```
 ///   RooGaussian::g(x[-10,10],m[0],3) 
-///
+/// ```
 /// to create a p.d.f and its variables in one go. This nesting can be applied recursively e.g.
-///
+/// ```
 ///   SUM::model( f[0.5,0,1] * RooGaussian::g( x[-10,10], m[0], 3] ),
 ///                            RooChebychev::c( x, {a0[0.1],a1[0.2],a2[-0.3]} ))
-///
-/// creates the sum of a Gaussian and a Chebychev and all its variables
+/// ```
+/// creates the sum of a Gaussian and a Chebychev and all its variables.
 ///
 ///
 /// A seperate series of operator meta-type exists to simplify the construction of composite expressions
 /// meta-types in all capitals (SUM) create p.d.f.s, meta types in lower case (sum) create
 /// functions.
 ///
+/// <table>
+/// <tr><th> Expression <th> Effect
+/// <tr><td> `SUM::name(f1*pdf1,f2*pdf2,pdf3]`  <td> Create sum p.d.f name with value f1*pdf1+f2*pdf2+(1-f1-f2)*pdf3
+/// <tr><td> `RSUM::name(f1*pdf1,f2*pdf2,pdf3]` <td> Create recursive sum p.d.f. name with value f1*pdf1 + (1-f1)(f2*pdf2 + (1-f2)pdf3)
+/// <tr><td> `ASUM::name(f1*amp1,f2*amp2,amp3]` <td> Create sum p.d.f. name with value f1*amp1+f2*amp2+(1-f1-f2)*amp3 where amplX are amplitudes of type RooAbsReal
+/// <tr><td> `sum::name(a1,a2,a3]`              <td> Create sum function with value a1+a2+a3
+/// <tr><td> `sum::name(a1*b1,a2*b2,a3*b 3]`    <td> Create sum function with value a1*b1+a2*b2+a3*b3
+/// <tr><td> `PROD::name(pdf1,pdf2]`            <td> Create product of p.d.f with 'name' with given input p.d.fs
+/// <tr><td> `PROD::name(pdf1|x,pdf2]`          <td> Create product of conditional p.d.f. pdf1 given x and pdf2
+/// <tr><td> `prod::name(a,b,c]`                <td> Create production function with value a*b*c
+/// <tr><td> `SIMUL::name(cat,a=pdf1,b=pdf2]`   <td> Create simultaneous p.d.f index category cat. Make pdf1 to state a, pdf2 to state b
+/// <tr><td> `EXPR::name(<expr>,var,...]`       <td> Create a generic p.d.f that interprets the given expression
+/// <tr><td> `expr::name(<expr>,var,...] `       <td> Create a generic function that interprets the given expression
+/// <tr><td> `taylorexpand::name(func,{var1,var2,...},val,order,eps1,eps2] ` Create a taylor expansion of func w.r.t. {var1,var2,..} around val upto order
+/// <tr><td> `lagrangianmorph::name("$fileName('infile.root'),$observableName(obs),$couplings({var1[-10,10],var2[-10,10]}),$folders({'sample1,sample2,sample3'}),$NewPhysics(var1=1,var2=0)"]`       <td> Create a RooLagrangianMorphFunc function for the observable obs as a function of var1, var2 based on input templates stored in the folders in the file
+/// </table>
 ///
-/// SUM::name(f1*pdf1,f2*pdf2,pdf3]  -- Create sum p.d.f name with value f1*pdf1+f2*pdf2+(1-f1-f2)*pdf3
-/// RSUM::name(f1*pdf1,f2*pdf2,pdf3] -- Create recursive sum p.d.f. name with value f1*pdf1 + (1-f1)(f2*pdf2 + (1-f2)pdf3)
-/// ASUM::name(f1*amp1,f2*amp2,amp3] -- Create sum p.d.f. name with value f1*amp1+f2*amp2+(1-f1-f2)*amp3 where amplX are amplitudes of type RooAbsReal
-/// sum::name(a1,a2,a3]              -- Create sum function with value a1+a2+a3
-/// sum::name(a1*b1,a2*b2,a3*b 3]    -- Create sum function with value a1*b1+a2*b2+a3*b3
+/// The functionality of high-level object creation tools like RooSimWSTool, RooCustomizer and RooClassFactory
+/// is also interfaced through meta-types in the factory.
+/// <table>
+/// <tr><th> Interface to %RooSimWSTool <th>
+/// <tr><td> `SIMCLONE::name( modelPdf, $ParamSplit(...), $ParamSplitConstrained(...), $Restrict(...) ]`
+///             <td> Clone-and-customize modelPdf according to ParamSplit and ParamSplitConstrained()
+///                  specifications and return a RooSimultaneous p.d.f. of all built clones
 ///
-/// PROD::name(pdf1,pdf2]            -- Create product of p.d.f with 'name' with given input p.d.fs
-/// PROD::name(pdf1|x,pdf2]          -- Create product of conditional p.d.f. pdf1 given x and pdf2
-/// prod::name(a,b,c]                -- Create production function with value a*b*c
-///
-/// SIMUL::name(cat,a=pdf1,b=pdf2]   -- Create simultaneous p.d.f index category cat. Make pdf1 to state a, pdf2 to state b
-///
-/// EXPR::name('expr',var,...]       -- Create an generic p.d.f that interprets the given expression 
-/// expr::name('expr',var,...]       -- Create an generic function that interprets the given expression 
-///
-///
-/// The functionality of high level object creation tools like RooSimWSTool, RooCustomizer and RooClassFactory
-/// is also interfaced through meta-types in the factory
-///
-///
-/// Interface to RooSimWSTool
-///
-/// SIMCLONE::name( modelPdf, $ParamSplit(...), 
-///                 $ParamSplitConstrained(...), $Restrict(...) ]            -- Clone-and-customize modelPdf according to ParamSplit and ParamSplitConstrained()
-///                                                                             specifications and return a RooSimultaneous p.d.f. of all built clones
-///
-/// MSIMCLONE::name( masterIndex, 
-///                  $AddPdf(mstate1, modelPdf1, $ParamSplit(...)), 
-///                  $AddPdf(mstate2,modelPdf2),...) ]                       -- Clone-and-customize multiple models (modelPdf1,modelPdf2) according to ParamSplit and 
+/// <tr><td> `MSIMCLONE::name( masterIndex, $AddPdf(mstate1, modelPdf1, $ParamSplit(...)), $AddPdf(mstate2,modelPdf2),...) ]`
+///                        <td> Clone-and-customize multiple models (modelPdf1,modelPdf2) according to ParamSplit and
 ///                                                                             ParamSplitConstrained() specifications and return a RooSimultaneous p.d.f. of all built clones,
 ///                                                                             using the specified master index to map prototype p.d.f.s to master states
-/// Interface to RooCustomizer
-///
-/// EDIT::name( orig, substNode=origNode), ... ]                             -- Create a clone of input object orig, with the specified replacements operations executed
-/// EDIT::name( orig, origNode=$REMOVE(), ... ]                              -- Create clone of input removing term origNode from all PROD() terms that contained it
-/// EDIT::name( orig, origNode=$REMOVE(prodname,...), ... ]                  -- As above, but restrict removal of origNode to PROD term(s) prodname,...
-///
-///
-/// Interface to RooClassFactory
-///
-/// CEXPR::name('expr',var,...]       -- Create an custom compiled p.d.f that evaluates the given expression 
-/// cexpr::name('expr',var,...]       -- Create an custom compiled function that evaluates the given expression 
+/// <tr><th> Interface to %RooCustomizer <th>
+/// <tr><td> `EDIT::name( orig, substNode=origNode), ... ]`                             <td> Create a clone of input object orig, with the specified replacements operations executed
+/// <tr><td> `EDIT::name( orig, origNode=$REMOVE(), ... ]`                              <td> Create clone of input removing term origNode from all PROD() terms that contained it
+/// <tr><td> `EDIT::name( orig, origNode=$REMOVE(prodname,...), ... ]`                  <td> As above, but restrict removal of origNode to PROD term(s) prodname,...
 ///
 ///
-/// $MetaType(...)        - Meta argument that does not result in construction of an object but is used logically organize 
+/// <tr><th> Interface to %RooClassFactory <th>
+/// <tr><td> `CEXPR::name(<expr>,var,...]`       <td> Create a custom compiled p.d.f that evaluates the given expression
+/// <tr><td> `cexpr::name(<expr>,var,...]`       <td> Create a custom compiled function that evaluates the given expression
+///
+///
+/// <tr><td> `$MetaType(...)`        <td> Meta argument that does not result in construction of an object but is used logically organize
 ///                         input arguments in certain operator p.d.f. constructions. The defined meta arguments are context dependent.
-///
-///                         The only meta argument that is defined globally is $Alias(typeName,aliasName) to  
+///                         The only meta argument that is defined globally is `$Alias(typeName,aliasName)` to
 ///                         define aliases for type names. For the definition of meta arguments in operator p.d.f.s
-///                         see the definitions below
-
+///                         see the definitions below.
+/// </table>
 RooAbsArg* RooFactoryWSTool::process(const char* expr) 
 {
 
@@ -2051,6 +2037,60 @@ std::string RooFactoryWSTool::SpecialsIFace::create(RooFactoryWSTool& ft, const 
     // prod::name[a,b,c]
     ft.prodfunc(instName,pargs) ;
     
+  } else if (cl == "lagrangianmorph") {
+    // Perform syntax check. Warn about any meta parameters other than the ones needed
+    const std::array<std::string,4> funcArgs{{"fileName","observableName","couplings","folders"}};
+    map<string,string> mapped_inputs; 
+
+    for (unsigned int i=1 ; i<pargv.size() ; i++) {
+      if (pargv[i].find("$fileName(")!=0 &&
+        pargv[i].find("$observableName(")!=0 &&
+        pargv[i].find("$couplings(")!=0 &&
+        pargv[i].find("$folders(")!=0 &&
+        pargv[i].find("$NewPhysics(")!=0) {
+        throw string(Form("%s::create() ERROR: unknown token %s encountered",instName, pargv[i].c_str())) ;
+      }
+    }
+ 
+    char pargsmorph[BUFFER_SIZE];
+    pargsmorph[0] = 0;
+ 
+    for (unsigned int i=0 ; i<pargv.size() ; i++) {
+      if (pargv[i].find("$NewPhysics(")==0) {
+        vector<string> subargs = ft.splitFunctionArgs(pargv[i].c_str()) ;
+        for(const auto& subarg: subargs) {
+          char buf[BUFFER_SIZE];
+          strlcpy(buf, subarg.c_str(), BUFFER_SIZE);
+          char *save;
+          char *tok = R__STRTOK_R(buf, "=", &save);
+          vector<string> parts;
+          while (tok) {
+            parts.push_back(string(tok));
+            tok = R__STRTOK_R(0, "=", &save);
+          }
+          if (parts.size() == 2){
+            ft.ws().arg(parts[0].c_str())->setAttribute("NewPhysics",atoi(parts[1].c_str()));
+          }
+          else throw string(Form("%s::create() ERROR: unknown token %s encountered, check input provided for %s",instName,subarg.c_str(), pargv[i].c_str()));
+        }
+      }
+      else {
+        vector<string> subargs = ft.splitFunctionArgs(pargv[i].c_str()) ;
+        if (subargs.size()==1){
+          string expr = ft.processExpression(subargs[0].c_str());
+          for(auto const& param : funcArgs){
+            if(pargv[i].find(param)!=string::npos) mapped_inputs[param]=subargs[0];
+          }
+        }
+        else throw string(Form("Incorrect number of arguments in %s, have %d, expect 1",pargv[i].c_str(),(Int_t)subargs.size())) ;
+      }
+    }
+    for(auto const& param : funcArgs){
+      if(strlen(pargsmorph) > 0) strlcat(pargsmorph, ",", BUFFER_SIZE);
+      strlcat(pargsmorph, mapped_inputs[param].c_str(),BUFFER_SIZE);
+    }
+    ft.createArg("RooLagrangianMorphFunc",instName, pargsmorph);
+ 
   } else if (cl=="expr") {
 
     // expr::name['expr',var,var,...]
@@ -2068,7 +2108,41 @@ std::string RooFactoryWSTool::SpecialsIFace::create(RooFactoryWSTool& ft, const 
       ft.createArg("RooFormulaVar",instName,genargs) ;
     }
 
-  } else if (cl=="nconv") {
+  } else if (cl == "taylorexpand") {
+
+    // taylorexpand::name[func,{var,var,..},val,order]
+    int order(1);
+    double eps1(1e-6), eps2(1e-3), observablesValue(0.0);
+
+    if (pargv.size() < 2)
+      throw string(Form("taylorexpand::%s, requires atleast 2 arguments (function, observables) atleast, has %d arguments", instName, (Int_t)pargv.size()));
+
+    RooAbsReal &func = ft.asFUNC(pargv[0].c_str());
+    RooArgList observables = ft.asLIST(pargv[1].c_str());
+
+    if (pargv.size() > 3)
+      order = atoi(pargv[3].c_str());
+    if (pargv.size() > 2) {
+      if (pargv[2].find(",") != string::npos)
+        throw string(Form("taylorexpand::%s, factory syntax supports expansion only around same value for all observables", instName));
+      else observablesValue = atof(pargv[2].c_str());
+    }
+
+    if (pargv.size() > 3)
+      order = atoi(pargv[3].c_str());
+    if (pargv.size() > 4)
+      eps1 = atof(pargv[4].c_str());
+    if (pargv.size() > 5)
+      eps2 = atof(pargv[5].c_str());
+
+    if (pargv.size() > 6)
+      throw string(
+        Form("taylorexpand::%s, requires max. 6 arguments, has %d arguments", instName, (Int_t)pargv.size()));
+
+    auto taylor = RooPolyFunc::taylorExpand(instName, instName, func, observables, observablesValue, order, eps1, eps2);
+    if (ft.ws().import(*taylor, Silence())) ft.logError();
+
+   } else if (cl=="nconv") {
 
     // nconv::name[var,pdf1,pdf2]
     ft.createArg("RooNumConvolution",instName,pargs) ;
@@ -2122,18 +2196,18 @@ std::string RooFactoryWSTool::SpecialsIFace::create(RooFactoryWSTool& ft, const 
     const char* range = R__STRTOK_R(0,"",&save) ;
     if (!range) range="" ;
 
-    RooAbsReal* integral = 0 ;
+    std::unique_ptr<RooAbsReal> integral;
     if (pargv.size()==2) {
       if (range && strlen(range)) {
-	integral = func.createIntegral(ft.asSET(intobs),Range(range)) ;
+        integral.reset(func.createIntegral(ft.asSET(intobs),Range(range)));
       } else {
-	integral = func.createIntegral(ft.asSET(intobs)) ;
+        integral.reset(func.createIntegral(ft.asSET(intobs)));
       }
     } else {
       if (range && strlen(range)) {
-	integral = func.createIntegral(ft.asSET(intobs),Range(range),NormSet(ft.asSET(pargv[2].c_str()))) ;
+        integral.reset(func.createIntegral(ft.asSET(intobs),Range(range),NormSet(ft.asSET(pargv[2].c_str()))));
       } else {
-	integral = func.createIntegral(ft.asSET(intobs),NormSet(ft.asSET(pargv[2].c_str()))) ;
+        integral.reset(func.createIntegral(ft.asSET(intobs),NormSet(ft.asSET(pargv[2].c_str()))));
       }
     }
 
@@ -2150,11 +2224,11 @@ std::string RooFactoryWSTool::SpecialsIFace::create(RooFactoryWSTool& ft, const 
 
     RooAbsReal& func = ft.asFUNC(pargv[0].c_str()) ;
 
-    RooAbsReal* derivative(0) ;
+    std::unique_ptr<RooAbsReal> derivative;
     if (pargv.size()==2) {
-      derivative = func.derivative(ft.asVAR(pargv[1].c_str()),1) ;
+      derivative.reset(func.derivative(ft.asVAR(pargv[1].c_str()),1));
     } else {
-      derivative = func.derivative(ft.asVAR(pargv[1].c_str()),ft.asINT(pargv[2].c_str())) ;
+      derivative.reset(func.derivative(ft.asVAR(pargv[1].c_str()),ft.asINT(pargv[2].c_str())));
     }
 
     derivative->SetName(instName) ;
@@ -2170,11 +2244,11 @@ std::string RooFactoryWSTool::SpecialsIFace::create(RooFactoryWSTool& ft, const 
 
     RooAbsPdf& pdf = ft.asPDF(pargv[0].c_str()) ;
 
-    RooAbsReal* cdf(0) ;
+    std::unique_ptr<RooAbsReal> cdf;
     if (pargv.size()==2) {
-      cdf = pdf.createCdf(ft.asSET(pargv[1].c_str())) ;
+      cdf.reset(pdf.createCdf(ft.asSET(pargv[1].c_str())));
     } else {
-      cdf = pdf.createCdf(ft.asSET(pargv[1].c_str()),ft.asSET(pargv[2].c_str())) ;
+      cdf.reset(pdf.createCdf(ft.asSET(pargv[1].c_str()),ft.asSET(pargv[2].c_str())));
     }
 
     cdf->SetName(instName) ;
@@ -2189,7 +2263,7 @@ std::string RooFactoryWSTool::SpecialsIFace::create(RooFactoryWSTool& ft, const 
     }
 
     RooAbsPdf& pdf = ft.asPDF(pargv[0].c_str()) ;
-    RooAbsPdf* projection = pdf.createProjection(ft.asSET(pargv[1].c_str())) ;
+    std::unique_ptr<RooAbsPdf> projection{pdf.createProjection(ft.asSET(pargv[1].c_str()))};
     projection->SetName(instName) ;
 
     if (ft.ws().import(*projection,Silence())) ft.logError() ;

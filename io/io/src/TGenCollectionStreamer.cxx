@@ -28,8 +28,9 @@ size(), clear(), resize(). resize() may be a void operation.
 #include "TROOT.h"
 #include "TStreamerInfo.h"
 #include "TStreamerElement.h"
-#include "Riostream.h"
 #include "TVirtualCollectionIterators.h"
+
+#include <memory>
 
 TGenCollectionStreamer::TGenCollectionStreamer(const TGenCollectionStreamer& copy)
       : TGenCollectionProxy(copy), fReadBufferFunc(&TGenCollectionStreamer::ReadBufferDefault)
@@ -43,7 +44,7 @@ TGenCollectionStreamer::TGenCollectionStreamer(Info_t info, size_t iter_size)
    // Build a Streamer for a collection whose type is described by 'collectionClass'.
 }
 
-TGenCollectionStreamer::TGenCollectionStreamer(const ::ROOT::TCollectionProxyInfo &info, TClass *cl)
+TGenCollectionStreamer::TGenCollectionStreamer(const ROOT::TCollectionProxyInfo &info, TClass *cl)
       : TGenCollectionProxy(info, cl), fReadBufferFunc(&TGenCollectionStreamer::ReadBufferDefault)
 {
    // Build a Streamer for a collection whose type is described by 'collectionClass'.
@@ -62,7 +63,7 @@ TVirtualCollectionProxy* TGenCollectionStreamer::Generate() const
 }
 
 template <typename T>
-static T* getaddress(TGenCollectionProxy::StreamHelper &itm);
+T* getaddress(TGenCollectionProxy::StreamHelper &itm);
 
 template <>
 bool* getaddress<bool>(TGenCollectionProxy::StreamHelper &itm)
@@ -219,6 +220,7 @@ void TGenCollectionStreamer::ReadPrimitives(int nElements, TBuffer &b, const TCl
    StreamHelper* itmstore = 0;
    StreamHelper* itmconv = 0;
    fEnv->fSize = nElements;
+   // TODO could RVec use something faster the default?
    switch (fSTL_type)  {
       case ROOT::kSTLvector:
          if (fVal->fKind != kBool_t)  {
@@ -367,8 +369,6 @@ void TGenCollectionStreamer::ReadObjects(int nElements, TBuffer &b, const TClass
    Bool_t vsn3 = b.GetInfo() && b.GetInfo()->GetOldVersion() <= 3;
    size_t len = fValDiff * nElements;
    StreamHelper* itm = 0;
-   char   buffer[8096];
-   void*  memory = 0;
 
    TClass* onFileValClass = (onFileClass ? onFileClass->GetCollectionProxy()->GetValueClass() : 0);
 
@@ -406,6 +406,7 @@ void TGenCollectionStreamer::ReadObjects(int nElements, TBuffer &b, const TClass
       case ROOT::kSTLlist:
       case ROOT::kSTLforwardlist:
       case ROOT::kSTLdeque:
+      case ROOT::kROOTRVec: // TODO could we do something faster?
 #define DOLOOP(x) {int idx=0; while(idx<nElements) {StreamHelper* i=(StreamHelper*)TGenCollectionProxy::At(idx); { x ;} ++idx;} break;}
          fResize(fEnv->fObject,fEnv->fSize);
          fEnv->fIdx = 0;
@@ -430,9 +431,10 @@ void TGenCollectionStreamer::ReadObjects(int nElements, TBuffer &b, const TClass
       case ROOT::kSTLmultiset:
       case ROOT::kSTLset:
       case ROOT::kSTLunorderedset:
-      case ROOT::kSTLunorderedmultiset:
+      case ROOT::kSTLunorderedmultiset: {
 #define DOLOOP(x) {int idx=0; while(idx<nElements) {StreamHelper* i=(StreamHelper*)(((char*)itm) + fValDiff*idx); { x ;} ++idx;}}
-         fEnv->fStart = itm = (StreamHelper*)(len < sizeof(buffer) ? buffer : memory =::operator new(len));
+         auto buffer = std::make_unique<char[]>(len);
+         fEnv->fStart = itm = reinterpret_cast<StreamHelper *>(buffer.get());
          fConstruct(itm,nElements);
          switch (fVal->fCase) {
             case kIsClass:
@@ -460,11 +462,9 @@ void TGenCollectionStreamer::ReadObjects(int nElements, TBuffer &b, const TClass
          }
 #undef DOLOOP
          break;
+      }
       default:
          break;
-   }
-   if (memory) {
-      ::operator delete(memory);
    }
 }
 
@@ -475,8 +475,6 @@ void TGenCollectionStreamer::ReadPairFromMap(int nElements, TBuffer &b)
    Bool_t vsn3 = b.GetInfo() && b.GetInfo()->GetOldVersion() <= 3;
    size_t len = fValDiff * nElements;
    StreamHelper* itm = 0;
-   char   buffer[8096];
-   void*  memory = 0;
 
    TStreamerInfo *pinfo = (TStreamerInfo*)fVal->fType->GetStreamerInfo();
    R__ASSERT(pinfo);
@@ -518,6 +516,7 @@ void TGenCollectionStreamer::ReadPairFromMap(int nElements, TBuffer &b)
       case ROOT::kSTLlist:
       case ROOT::kSTLforwardlist:
       case ROOT::kSTLdeque:
+      case ROOT::kROOTRVec: // TODO could we do something faster?
 #define DOLOOP(x) {int idx=0; while(idx<nElements) {StreamHelper* i=(StreamHelper*)TGenCollectionProxy::At(idx); { x ;} ++idx;} break;}
          fResize(fEnv->fObject,fEnv->fSize);
          fEnv->fIdx = 0;
@@ -541,9 +540,10 @@ void TGenCollectionStreamer::ReadPairFromMap(int nElements, TBuffer &b)
       case ROOT::kSTLmultiset:
       case ROOT::kSTLset:
       case ROOT::kSTLunorderedset:
-      case ROOT::kSTLunorderedmultiset:
+      case ROOT::kSTLunorderedmultiset: {
 #define DOLOOP(x) {int idx=0; while(idx<nElements) {StreamHelper* i=(StreamHelper*)(((char*)itm) + fValDiff*idx); { x ;} ++idx;}}
-         fEnv->fStart = itm = (StreamHelper*)(len < sizeof(buffer) ? buffer : memory =::operator new(len));
+         auto buffer = std::make_unique<char[]>(len);
+         fEnv->fStart = itm = reinterpret_cast<StreamHelper *>(buffer.get());
          fConstruct(itm,nElements);
          switch (fVal->fCase) {
             case kIsClass:
@@ -557,11 +557,9 @@ void TGenCollectionStreamer::ReadPairFromMap(int nElements, TBuffer &b)
          }
 #undef DOLOOP
          break;
+      }
       default:
          break;
-   }
-   if (memory) {
-      ::operator delete(memory);
    }
 }
 
@@ -1002,6 +1000,7 @@ void TGenCollectionStreamer::WriteObjects(int nElements, TBuffer &b)
       case ROOT::kSTLset:
       case ROOT::kSTLunorderedset:
       case ROOT::kSTLunorderedmultiset:
+      case ROOT::kROOTRVec: // TODO could we do something faster?
 #define DOLOOP(x) {int idx=0; while(idx<nElements) {StreamHelper* i=(StreamHelper*)TGenCollectionProxy::At(idx); { x ;} ++idx;} break;}
          switch (fVal->fCase) {
             case kIsClass:
@@ -1299,6 +1298,7 @@ void TGenCollectionStreamer::ReadBufferDefault(TBuffer &b, void *obj, const TCla
             break;
       }
    }
+   // TODO Could we do something better for RVec?
    (this->*fReadBufferFunc)(b,obj,onFileClass);
 }
 
@@ -1351,6 +1351,7 @@ void TGenCollectionStreamer::ReadBufferGeneric(TBuffer &b, void *obj, const TCla
          case ROOT::kSTLset:
          case ROOT::kSTLunorderedset:
          case ROOT::kSTLunorderedmultiset:
+         case ROOT::kROOTRVec: // TODO could we do something faster?
             if (obj) {
                if (fProperties & kNeedDelete)   {
                   TGenCollectionProxy::Clear("force");
@@ -1406,6 +1407,7 @@ void TGenCollectionStreamer::Streamer(TBuffer &b)
             case ROOT::kSTLset:
             case ROOT::kSTLunorderedset:
             case ROOT::kSTLunorderedmultiset:
+            case ROOT::kROOTRVec: // TODO could we do something faster?
                switch (fVal->fCase) {
                   case kIsFundamental:  // Only handle primitives this way
                   case kIsEnum:
@@ -1440,6 +1442,7 @@ void TGenCollectionStreamer::Streamer(TBuffer &b)
             case ROOT::kSTLset:
             case ROOT::kSTLunorderedset:
             case ROOT::kSTLunorderedmultiset:
+            case ROOT::kROOTRVec: // TODO could we do something faster?
                switch (fVal->fCase) {
                   case kIsFundamental:  // Only handle primitives this way
                   case kIsEnum:
@@ -1485,6 +1488,7 @@ void TGenCollectionStreamer::StreamerAsMap(TBuffer &b)
             case ROOT::kSTLmultiset:
             case ROOT::kSTLset:
             case ROOT::kSTLunorderedset:
+            case ROOT::kROOTRVec: // TODO could we do something faster?
             case ROOT::kSTLunorderedmultiset:{
                   ReadPairFromMap(nElements, b);
                   break;

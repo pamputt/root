@@ -16,7 +16,12 @@
 #include <TAttFill.h>
 #include <TList.h>
 
+#ifdef R__LESS_INCLUDES
+class TGeoElement;
+class TGeoElementTable;
+#else
 #include "TGeoElement.h"
+#endif
 
 // forward declarations
 class TGeoExtension;
@@ -102,7 +107,8 @@ public:
    virtual Int_t            GetDefaultColor() const;
    virtual Double_t         GetDensity() const {return fDensity;}
    virtual Int_t            GetNelements() const {return 1;}
-   virtual TGeoElement     *GetElement(Int_t i=0) const;
+   TGeoElement             *GetElement() const;
+   virtual TGeoElement     *GetElement(Int_t i) const;
    virtual void             GetElementProp(Double_t &a, Double_t &z, Double_t &w, Int_t i=0);
    TGeoElement             *GetBaseElement() const {return fElement;}
    char                    *GetPointerName() const;

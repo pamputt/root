@@ -14,10 +14,7 @@
 #include "TEvePointSet.h"
 
 #include "TParticle.h"
-#include "TPolyLine3D.h"
-#include "TMarker.h"
 #include "TPolyMarker3D.h"
-#include "TColor.h"
 #include "TParticlePDG.h"
 
 // Updates
@@ -26,8 +23,7 @@
 #include "TEveTrackProjected.h"
 #include "TEveVSD.h"
 
-#include "Riostream.h"
-
+#include <iostream>
 #include <vector>
 #include <algorithm>
 #include <functional>
@@ -549,7 +545,7 @@ void TEveTrack::PrintPathMarks()
 
 void TEveTrack::SecSelected(TEveTrack* track)
 {
-   Emit("SecSelected(TEveTrack*)", (Long_t)track);
+   Emit("SecSelected(TEveTrack*)", (Longptr_t)track);
 }
 
 /** \class TEveTrackList

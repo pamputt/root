@@ -19,6 +19,14 @@
 #include "TUrl.h"
 #include "TList.h"
 
+#include <pg_config.h> // to get PG_VERSION_NUM
+
+#define pgsql_success(x) (((x) == PGRES_EMPTY_QUERY) \
+                        || ((x) == PGRES_COMMAND_OK) \
+                        || ((x) == PGRES_TUPLES_OK))
+
+#include <libpq-fe.h>
+
 ////////////////////////////////////////////////////////////////////////////////
 /// PluginManager generator function
 
@@ -37,8 +45,8 @@ ClassImp(TPgSQLServer);
 
 TPgSQLServer::TPgSQLServer(const char *db, const char *uid, const char *pw)
 {
-   fPgSQL = 0;
-   fSrvInfo="";
+   fPgSQL = nullptr;
+   fSrvInfo = "";
 
    TUrl url(db);
 
@@ -331,7 +339,7 @@ const char *TPgSQLServer::ServerInfo()
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-/// PG_VERSION_NUM conveniently only started being #defined at 8.2.3
+/// PG_VERSION_NUM conveniently only started being #%defined at 8.2.3
 /// which is the first version of libpq which explicitly supports prepared
 /// statements
 

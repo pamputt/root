@@ -1,6 +1,8 @@
 /// \file
 /// \ingroup tutorial_dataframe
 /// \notebook -draw
+/// Use RVecs to plot the transverse momentum of selected particles.
+///
 /// This tutorial shows how VecOps can be used to slim down the programming
 /// model typically adopted in HEP for analysis.
 /// In this case we have a dataset containing the kinematic properties of
@@ -12,12 +14,13 @@
 /// \macro_image
 ///
 /// \date March 2018
-/// \author Danilo Piparo, Andre Vieira Silva
+/// \authors Danilo Piparo (CERN), Andre Vieira Silva
 
 auto filename = gROOT->GetTutorialDir() + "/dataframe/df017_vecOpsHEP.root";
 auto treename = "myDataset";
-using doubles = ROOT::VecOps::RVec<double>;
-using RDF = ROOT::RDataFrame;
+
+using namespace ROOT;
+
 
 void WithTTreeReader()
 {
@@ -39,9 +42,9 @@ void WithTTreeReader()
 
 void WithRDataFrame()
 {
-  RDF f(treename, filename.Data());
-   auto CalcPt = [](doubles &px, doubles &py, doubles &E) {
-      doubles v;
+  RDataFrame f(treename, filename.Data());
+   auto CalcPt = [](RVecD &px, RVecD &py, RVecD &E) {
+      RVecD v;
       for (auto i=0U;i < px.size(); ++i) {
          if (E[i] > 100) {
             v.emplace_back(sqrt(px[i]*px[i] + py[i]*py[i]));
@@ -50,23 +53,23 @@ void WithRDataFrame()
       return v;
    };
    f.Define("pt", CalcPt, {"px", "py", "E"})
-    .Histo1D<doubles>({"pt", "pt", 16, 0, 4}, "pt")->DrawCopy();
+    .Histo1D<RVecD>({"pt", "pt", 16, 0, 4}, "pt")->DrawCopy();
 }
 
 void WithRDataFrameVecOps()
 {
-   RDF f(treename, filename.Data());
-   auto CalcPt = [](doubles &px, doubles &py, doubles &E) {
+   RDataFrame f(treename, filename.Data());
+   auto CalcPt = [](RVecD &px, RVecD &py, RVecD &E) {
       auto pt = sqrt(px*px + py*py);
       return pt[E>100];
    };
    f.Define("good_pt", CalcPt, {"px", "py", "E"})
-    .Histo1D<doubles>({"pt", "pt", 16, 0, 4}, "good_pt")->DrawCopy();
+    .Histo1D<RVecD>({"pt", "pt", 16, 0, 4}, "good_pt")->DrawCopy();
 }
 
 void WithRDataFrameVecOpsJit()
 {
-   RDF f(treename, filename.Data());
+   RDataFrame f(treename, filename.Data());
    f.Define("good_pt", "sqrt(px*px + py*py)[E>100]")
     .Histo1D({"pt", "pt", 16, 0, 4}, "good_pt")->DrawCopy();
 }

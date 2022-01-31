@@ -7,52 +7,28 @@
 # TInterpreter implementation for cling. Only in libCling; needs to resolve
 # symbols from libCore.
 
-# Register the llvm include directories after clangs. This instructs the compiler to resolve
-# headers from our builtin clang. That's an issue when we are building with bultin_llvm=Off
-# and we have installed clang headers, too.
-include_directories(SYSTEM
-  ${CLANG_INCLUDE_DIRS}
-  ${LLVM_INCLUDE_DIRS}
-  ${CLAD_INCLUDE_DIRS}
-)
-
-include_directories(
-  ../res
-  ../../clingutils/res
-  ../../foundation/res
-  ${CLING_INCLUDE_DIRS}
-)
-
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${CLING_CXXFLAGS}")
 
 if(MSVC)
   set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/TClingCallbacks.cxx COMPILE_FLAGS -GR-)
+  set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/TClingDiagnostics.cxx COMPILE_FLAGS -GR-)
   set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/TClingRdictModuleFileExtension.cxx COMPILE_FLAGS -GR-)
 else()
   set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/TClingCallbacks.cxx COMPILE_FLAGS -fno-rtti)
+  set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/TClingDiagnostics.cxx COMPILE_FLAGS -fno-rtti)
   set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/TClingRdictModuleFileExtension.cxx COMPILE_FLAGS -fno-rtti)
-endif()
-
-# This to avoid warning coming from llvm/src/tools/clang/include/clang/Sema/Lookup.h:441
-# in clang + llvm version r227800.
-if ("${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang")
-  ROOT_ADD_CXX_FLAG(CMAKE_CXX_FLAGS -Wno-conditional-uninitialized)
-endif()
-
-# This is to avoid warnings coming from GCC 7 in llvm/src/include/llvm/ADT/DenseMap.h:1010
-if ("${CMAKE_CXX_COMPILER_ID}" MATCHES "GNU")
-  ROOT_ADD_CXX_FLAG(CMAKE_CXX_FLAGS -Wno-maybe-uninitialized)
 endif()
 
 ROOT_OBJECT_LIBRARY(MetaCling
   rootclingTCling.cxx
+  TCling.cxx
   TClingBaseClassInfo.cxx
   TClingCallbacks.cxx
   TClingCallFunc.cxx
   TClingClassInfo.cxx
-  TCling.cxx
   TClingDataMemberInfo.cxx
   TClingDeclInfo.cxx
+  TClingDiagnostics.cxx
+  TClingMemberIter.cxx
   TClingMethodArgInfo.cxx
   TClingMethodInfo.cxx
   TClingRdictModuleFileExtension.cxx
@@ -60,6 +36,44 @@ ROOT_OBJECT_LIBRARY(MetaCling
   TClingTypeInfo.cxx
   TClingValue.cxx
 )
+
+# Register the llvm include directories after clangs. This instructs the compiler to resolve
+# headers from our builtin clang. That's an issue when we are building with bultin_llvm=Off
+# and we have installed clang headers, too.
+target_include_directories(MetaCling SYSTEM PRIVATE
+  ${CLANG_INCLUDE_DIRS}
+  ${LLVM_INCLUDE_DIRS}
+  ${CLAD_INCLUDE_DIRS}
+)
+
+target_include_directories(MetaCling PRIVATE
+   ${CLING_INCLUDE_DIRS}
+   ${CMAKE_SOURCE_DIR}/core/metacling/res
+   ${CMAKE_SOURCE_DIR}/core/clingutils/res
+   ${CMAKE_SOURCE_DIR}/core/foundation/res
+   ${CMAKE_SOURCE_DIR}/core/zip/inc
+   ${CMAKE_SOURCE_DIR}/core/clib/res
+   ${CMAKE_SOURCE_DIR}/core/base/inc
+   ${CMAKE_SOURCE_DIR}/core/meta/inc
+   ${CMAKE_SOURCE_DIR}/core/clib/inc
+   ${CMAKE_SOURCE_DIR}/core/foundation/inc
+   ${CMAKE_SOURCE_DIR}/core/thread/inc
+   ${CMAKE_SOURCE_DIR}/core/cont/inc
+   ${CMAKE_SOURCE_DIR}/core/gui/inc
+   ${CMAKE_SOURCE_DIR}/io/io/inc
+   ${CMAKE_BINARY_DIR}/ginclude
+)
+
+set_target_properties(MetaCling PROPERTIES
+  COMPILE_FLAGS "${CMAKE_CXX_FLAGS} ${CLING_CXXFLAGS}"
+  VISIBILITY_INLINES_HIDDEN "ON"
+)
+
+if(MSVC)
+   target_include_directories(MetaCling PRIVATE
+      ${CMAKE_SOURCE_DIR}/core/winnt/inc
+   )
+endif()
 
 add_dependencies(MetaCling CLING)
 
@@ -96,24 +110,53 @@ ROOT_LINKER_LIBRARY(Cling
         $<TARGET_OBJECTS:MetaCling>
         LIBRARIES ${CLING_LIBRARIES} ${LINK_LIBS} ${CLING_PLUGIN_LINK_LIBS})
 
+string(TOUPPER "${LLVM_BUILD_TYPE}" THE_BUILD_TYPE)
+if("${THE_BUILD_TYPE}" STREQUAL DEBUG OR "${THE_BUILD_TYPE}" STREQUAL RELWITHDEBINFO)
+  # When these two link at the same time, they can exhaust the RAM on many machines, since they both link against llvm.
+  add_dependencies(Cling rootcling_stage1)
+endif()
 
 if(MSVC)
   set_target_properties(Cling PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS TRUE)
-  set(cling_exports
+  set(cling_exports ${cling_exports}
+      ??_7type_info@@6B@
+      ?nothrow@std@@3Unothrow_t@1@B
       __std_reverse_trivially_swappable_1
       __std_reverse_trivially_swappable_2
       __std_reverse_trivially_swappable_4
       __std_reverse_trivially_swappable_8
       __std_terminate
+      cling_runtime_internal_throwIfInvalidPointer
+  )
+  if("${CMAKE_GENERATOR_PLATFORM}" MATCHES "x64")
+    set(cling_exports ${cling_exports}
+      ??2@YAPEAX_K@Z
+      ??3@YAXPEAX@Z
+      ??3@YAXPEAX_K@Z
+      ??_U@YAPEAX_K@Z
+      ??_V@YAXPEAX@Z
+      ??_V@YAXPEAX_K@Z
+      ??6?$basic_ostream@DU?$char_traits@D@std@@@std@@QEAAAEAV01@H@Z
+      ??6?$basic_ostream@DU?$char_traits@D@std@@@std@@QEAAAEAV01@M@Z
+      ??6?$basic_ostream@DU?$char_traits@D@std@@@std@@QEAAAEAV01@N@Z
+      ??6?$basic_ostream@DU?$char_traits@D@std@@@std@@QEAAAEAV01@PEBX@Z
+      ??6?$basic_ostream@DU?$char_traits@D@std@@@std@@QEAAAEAV01@P6AAEAV01@AEAV01@@Z@Z
+      ??$?6U?$char_traits@D@std@@@std@@YAAEAV?$basic_ostream@DU?$char_traits@D@std@@@0@AEAV10@D@Z
+      ??$?6U?$char_traits@D@std@@@std@@YAAEAV?$basic_ostream@DU?$char_traits@D@std@@@0@AEAV10@PEBD@Z
+      ??$endl@DU?$char_traits@D@std@@@std@@YAAEAV?$basic_ostream@DU?$char_traits@D@std@@@0@AEAV10@@Z
+      ?_Facet_Register@std@@YAXPEAV_Facet_base@1@@Z
+    )
+    if($<CONFIG:Debug>)
+       set(cling_exports ${cling_exports} ??$dyn_cast@VValueDecl@clang@@$$CBVDecl@2@@llvm@@YAPEBVValueDecl@clang@@PEBVDecl@2@@Z)
+    endif()
+  else()
+    set(cling_exports ${cling_exports}
       ??2@YAPAXI@Z
       ??3@YAXPAX@Z
       ??3@YAXPAXI@Z
       ??_U@YAPAXI@Z
       ??_V@YAXPAX@Z
       ??_V@YAXPAXI@Z
-      ??_7type_info@@6B@
-      ?__type_info_root_node@@3U__type_info_node@@A
-      ?nothrow@std@@3Unothrow_t@1@B
       ??6?$basic_ostream@DU?$char_traits@D@std@@@std@@QAEAAV01@H@Z
       ??6?$basic_ostream@DU?$char_traits@D@std@@@std@@QAEAAV01@M@Z
       ??6?$basic_ostream@DU?$char_traits@D@std@@@std@@QAEAAV01@N@Z
@@ -122,33 +165,11 @@ if(MSVC)
       ??$?6U?$char_traits@D@std@@@std@@YAAAV?$basic_ostream@DU?$char_traits@D@std@@@0@AAV10@D@Z
       ??$?6U?$char_traits@D@std@@@std@@YAAAV?$basic_ostream@DU?$char_traits@D@std@@@0@AAV10@PBD@Z
       ??$endl@DU?$char_traits@D@std@@@std@@YAAAV?$basic_ostream@DU?$char_traits@D@std@@@0@AAV10@@Z
-      cling_runtime_internal_throwIfInvalidPointer
       ?_Facet_Register@std@@YAXPAV_Facet_base@1@@Z
-      ??1Value@cling@@QAE@XZ
-      ?isValid@Value@cling@@QBE_NXZ
-      ?kEmptyCollection@valuePrinterInternal@cling@@3QBDB
-      ?AssertOnUnsupportedTypeCast@Value@cling@@IBEXXZ
-      ?setValueNoAlloc@internal@runtime@cling@@YAXPAX00D@Z
-      ?setValueNoAlloc@internal@runtime@cling@@YAXPAX00DM@Z
-      ?setValueNoAlloc@internal@runtime@cling@@YAXPAX00DN@Z
-      ?setValueNoAlloc@internal@runtime@cling@@YAXPAX00DO@Z
-      ?setValueNoAlloc@internal@runtime@cling@@YAXPAX00D_K@Z
-      ?setValueNoAlloc@internal@runtime@cling@@YAXPAX00DPBX@Z
-      ?setValueWithAlloc@internal@runtime@cling@@YAPAXPAX00D@Z
-      ?printValue@cling@@YA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@PBI@Z
-      ?printValue@cling@@YA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@PBM@Z
-      ?printValue@cling@@YA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@PBN@Z
-      ?printValue@cling@@YA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@PBH@Z
-      ?printValue@cling@@YA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@PBX@Z
-      ?printValue@cling@@YA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@PB_N@Z
-      ?printValue@cling@@YA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@PAPBX@Z
-      ?printValue@cling@@YA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@PAPBD@Z
-      ?printValue@cling@@YA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@PBV23@@Z
-      ??$toUTF8@D@cling@@YA?AV?$basic_string@DU?$char_traits@D@std@@V?$allocator@D@2@@std@@QBDID@Z
-      ?EvaluateDynamicExpression@internal@runtime@cling@@YA?AVValue@3@PAVInterpreter@3@PAVDynamicExprInfo@123@PAVDeclContext@clang@@@Z
-  )
-  if(MSVC_VERSION LESS 1914)
-    set(cling_exports ${cling_exports} ??3@YAXPAX0@Z ??_V@YAXPAX0@Z)
+    )
+    if(MSVC_VERSION LESS 1914)
+      set(cling_exports ${cling_exports} ??3@YAXPAX0@Z ??_V@YAXPAX0@Z)
+    endif()
   endif()
   foreach(sym ${cling_exports})
     set(cling_link_str "${cling_link_str} /EXPORT:${sym}")

@@ -22,14 +22,15 @@
 #include "TDataMember.h"
 #include "TDataType.h"
 #include "TObjString.h"
+#include "TObjArray.h"
 #include "TUrl.h"
 #include "TImage.h"
 #include "TVirtualMutex.h"
 #include "TRootSnifferStore.h"
 #include "THttpCallArg.h"
-#include "ROOT/RMakeUnique.hxx"
 
 #include <stdlib.h>
+#include <memory>
 #include <vector>
 #include <string.h>
 
@@ -760,8 +761,7 @@ void TRootSniffer::ScanObjectChilds(TRootSnifferScanRec &rec, TObject *obj)
    } else if (obj->InheritsFrom(TDirectory::Class())) {
       TDirectory *dir = (TDirectory *)obj;
       ScanCollection(rec, dir->GetList(), nullptr, dir->GetListOfKeys());
-   }
-   if (rec.CanExpandItem()) {
+   } else if (rec.CanExpandItem()) {
       ScanObjectMembers(rec, obj->IsA(), (char *)obj);
    }
 }
@@ -978,7 +978,7 @@ void TRootSniffer::ScanRoot(TRootSnifferScanRec &rec)
          chld.SetField(item_prop_kind, "ROOT.TStreamerInfoList");
          chld.SetField(item_prop_title, "List of streamer infos for binary I/O");
          chld.SetField(item_prop_hidden, "true", kFALSE);
-         chld.SetField("_after_request", "JSROOT.MarkAsStreamerInfo");
+         chld.SetField("_after_request", "JSROOT.markAsStreamerInfo");
       }
    }
 
@@ -1231,7 +1231,7 @@ Bool_t TRootSniffer::ExecuteCmd(const std::string &path, const std::string &opti
 
    if (item_obj) {
       method =
-         TString::Format("((%s*)%lu)->%s", item_obj->ClassName(), (long unsigned)item_obj, method.Data() + separ + 3);
+         TString::Format("((%s*)%zu)->%s", item_obj->ClassName(), (size_t)item_obj, method.Data() + separ + 3);
       if (gDebug > 2)
          Info("ExecuteCmd", "Executing %s", method.Data());
    }

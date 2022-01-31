@@ -53,12 +53,13 @@ the table of contents.
 #pragma optimize("",off)
 #endif
 
-#include <stdlib.h>
-#include <string.h>
-#include <ctype.h>
+#include <cstdlib>
+#include <cstring>
+#include <cctype>
+#include <fstream>
 
-#include "Riostream.h"
 #include "TROOT.h"
+#include "TDatime.h"
 #include "TColor.h"
 #include "TVirtualPad.h"
 #include "TPoints.h"
@@ -69,8 +70,8 @@ the table of contents.
 #include "TText.h"
 #include "zlib.h"
 #include "TObjString.h"
-#include "TClass.h"
 #include "TObjArray.h"
+#include "snprintf.h"
 
 // To scale fonts to the same size as the old TT version
 const Float_t kScale = 0.93376068;
@@ -1751,11 +1752,20 @@ void TPDF::Open(const char *fname, Int_t wtype)
    PrintStr("@");
    PrintStr("/CreationDate (");
    TDatime t;
-   char str[17];
-   snprintf(str,17,"D:%4.4d%2.2d%2.2d%2.2d%2.2d%2.2d",
-                t.GetYear()  , t.GetMonth(),
-                t.GetDay()   , t.GetHour(),
-                t.GetMinute(), t.GetSecond());
+   Int_t toff = t.Convert(kFALSE) - t.Convert(kTRUE); // time zone and dst offset
+   toff = toff/60;
+   char str[24];
+   snprintf(str,24,"D:%4.4d%2.2d%2.2d%2.2d%2.2d%2.2d%c%2.2d'%2.2d'",
+            t.GetYear()  , t.GetMonth(),
+            t.GetDay()   , t.GetHour(),
+            t.GetMinute(), t.GetSecond(),
+            toff < 0 ? '-' : '+',
+            // TMath::Abs(toff/60), TMath::Abs(toff%60)); // format-truncation warning
+            TMath::Abs(toff/60) & 0x3F, TMath::Abs(toff%60) & 0x3F); // now 2 digits
+   PrintStr(str);
+   PrintStr(")");
+   PrintStr("@");
+   PrintStr("/ModDate (");
    PrintStr(str);
    PrintStr(")");
    PrintStr("@");
@@ -1851,51 +1861,8 @@ void TPDF::PrintFast(Int_t len, const char *str)
 
 void TPDF::Range(Float_t xsize, Float_t ysize)
 {
-   Float_t xps, yps, xncm, yncm, dxwn, dywn, xwkwn, ywkwn, xymax;
-
    fXsize = xsize;
    fYsize = ysize;
-
-   xps = xsize;
-   yps = ysize;
-
-   if (xsize <= xps && ysize < yps) {
-      if ( xps > yps) xymax = xps;
-      else            xymax = yps;
-      xncm  = xsize/xymax;
-      yncm  = ysize/xymax;
-      dxwn  = ((xps/xymax)-xncm)/2;
-      dywn  = ((yps/xymax)-yncm)/2;
-   } else {
-      if (xps/yps < 1) xwkwn = xps/yps;
-      else             xwkwn = 1;
-      if (yps/xps < 1) ywkwn = yps/xps;
-      else             ywkwn = 1;
-
-      if (xsize < ysize)  {
-         xncm = ywkwn*xsize/ysize;
-         yncm = ywkwn;
-         dxwn = (xwkwn-xncm)/2;
-         dywn = 0;
-         if (dxwn < 0) {
-            xncm = xwkwn;
-            dxwn = 0;
-            yncm = xwkwn*ysize/xsize;
-            dywn = (ywkwn-yncm)/2;
-         }
-      } else {
-         xncm = xwkwn;
-         yncm = xwkwn*ysize/xsize;
-         dxwn = 0;
-         dywn = (ywkwn-yncm)/2;
-         if (dywn < 0) {
-            yncm = ywkwn;
-            dywn = 0;
-            xncm = ywkwn*xsize/ysize;
-            dxwn = (xwkwn-xncm)/2;
-         }
-      }
-   }
    fRange = kTRUE;
 }
 
@@ -1998,7 +1965,6 @@ void TPDF::SetColor(Float_t r, Float_t g, Float_t b)
 void TPDF::SetFillColor( Color_t cindex )
 {
    fFillColor = cindex;
-   if (gStyle->GetFillColor() <= 0) cindex = 0;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -2440,6 +2406,9 @@ void TPDF::WriteCompressedBuffer()
    }
 
    err = deflateEnd(&stream);
+   if (err != Z_OK) {
+      Error("WriteCompressedBuffer", "error in deflateEnd (zlib)");
+   }
 
    fStream->write(out, stream.total_out);
 

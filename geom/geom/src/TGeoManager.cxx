@@ -234,13 +234,12 @@ in order to enhance rays.
 \image html geom_random2.jpg
 */
 
-#include <stdlib.h>
-
-#include "Riostream.h"
+#include <cstdlib>
+#include <iostream>
+#include <fstream>
 
 #include "TROOT.h"
 #include "TGeoManager.h"
-#include "TSystem.h"
 #include "TStyle.h"
 #include "TVirtualPad.h"
 #include "TBrowser.h"
@@ -258,7 +257,6 @@ in order to enhance rays.
 #include "TGeoMatrix.h"
 #include "TGeoNode.h"
 #include "TGeoPhysicalNode.h"
-#include "TGeoManager.h"
 #include "TGeoPara.h"
 #include "TGeoParaboloid.h"
 #include "TGeoTube.h"
@@ -288,7 +286,7 @@ in order to enhance rays.
 
 // statics and globals
 
-TGeoManager *gGeoManager = 0;
+TGeoManager *gGeoManager = nullptr;
 
 ClassImp(TGeoManager);
 
@@ -301,8 +299,9 @@ Int_t  TGeoManager::fgMaxDaughters    = 1;
 Int_t  TGeoManager::fgMaxXtruVert     = 1;
 Int_t  TGeoManager::fgNumThreads      = 0;
 UInt_t TGeoManager::fgExportPrecision = 17;
-TGeoManager::EDefaultUnits TGeoManager::fgDefaultUnits = TGeoManager::kG4Units;
+TGeoManager::EDefaultUnits TGeoManager::fgDefaultUnits = TGeoManager::kRootUnits;
 TGeoManager::ThreadsMap_t *TGeoManager::fgThreadId = 0;
+static Bool_t gGeometryLocked = kTRUE;
 
 ////////////////////////////////////////////////////////////////////////////////
 /// Default constructor.
@@ -519,8 +518,8 @@ TGeoManager::~TGeoManager()
    if (fMaterials) {fMaterials->Delete(); SafeDelete(fMaterials);}
    SafeDelete(fElementTable);
    if (fMedia) {fMedia->Delete(); SafeDelete(fMedia);}
-   if (fHashVolumes) fHashVolumes->Clear("nodelete"); SafeDelete(fHashVolumes);
-   if (fHashGVolumes) fHashGVolumes->Clear("nodelete"); SafeDelete(fHashGVolumes);
+   if (fHashVolumes) { fHashVolumes->Clear("nodelete"); SafeDelete(fHashVolumes); }
+   if (fHashGVolumes) { fHashGVolumes->Clear("nodelete"); SafeDelete(fHashGVolumes); }
    if (fHashPNE) {fHashPNE->Delete(); SafeDelete(fHashPNE);}
    if (fArrayPNE) {delete fArrayPNE;}
    if (fVolumes) {fVolumes->Delete(); SafeDelete(fVolumes);}
@@ -1217,9 +1216,9 @@ TGeoMedium *TGeoManager::Medium(const char *name, Int_t numed, Int_t nmat, Int_t
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-/// Create a node called <name_nr> pointing to the volume called <name>
-/// as daughter of the volume called <mother> (gspos). The relative matrix is
-/// made of : a translation (x,y,z) and a rotation matrix named <matIROT>.
+/// Create a node called `<name_nr>` pointing to the volume called `<name>`
+/// as daughter of the volume called `<mother>` (gspos). The relative matrix is
+/// made of : a translation (x,y,z) and a rotation matrix named `<matIROT>`.
 /// In case npar>0, create the volume to be positioned in mother, according
 /// its actual parameters (gsposp).
 ///  - NAME   Volume name
@@ -1239,9 +1238,9 @@ void TGeoManager::Node(const char *name, Int_t nr, const char *mother,
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-/// Create a node called <name_nr> pointing to the volume called <name>
-/// as daughter of the volume called <mother> (gspos). The relative matrix is
-/// made of : a translation (x,y,z) and a rotation matrix named <matIROT>.
+/// Create a node called `<name_nr>` pointing to the volume called `<name>`
+/// as daughter of the volume called `<mother>` (gspos). The relative matrix is
+/// made of : a translation (x,y,z) and a rotation matrix named `<matIROT>`.
 /// In case npar>0, create the volume to be positioned in mother, according
 /// its actual parameters (gsposp).
 ///  - NAME   Volume name
@@ -1692,7 +1691,8 @@ void TGeoManager::AnimateTracks(Double_t tmin, Double_t tmax, Int_t nframes, Opt
    if (opt.Contains("/G")) geomanim = kTRUE;
    SetTminTmax(0,0);
    DrawTracks(opt.Data());
-   Double_t start[6], end[6];
+   Double_t start[6] = {0,0,0,0,0,0};
+   Double_t end[6] = {0,0,0,0,0,0};
    Double_t dd[6] = {0,0,0,0,0,0};
    Double_t dlat=0, dlong=0, dpsi=0;
    if (geomanim) {
@@ -4008,7 +4008,32 @@ void TGeoManager::SetUseParallelWorldNav(Bool_t flag)
    if (fParallelWorld->CloseGeometry()) fUsePWNav=kTRUE;
 }
 
+Bool_t TGeoManager::LockDefaultUnits(Bool_t new_value)    {
+  Bool_t val = gGeometryLocked;
+  gGeometryLocked = new_value;
+  return val;
+}
+
 TGeoManager::EDefaultUnits TGeoManager::GetDefaultUnits()
 {
   return fgDefaultUnits;
+}
+
+void TGeoManager::SetDefaultUnits(EDefaultUnits new_value)
+{
+   if ( fgDefaultUnits == new_value )   {
+      return;
+   }
+   else if ( gGeometryLocked )    {
+      ::Fatal("TGeoManager","The system of units may only be changed once, \n"
+          "BEFORE any elements and materials are created! \n"
+          "Alternatively unlock the default units at own risk.");
+   }
+   else if ( new_value == kG4Units )   {
+      ::Info("TGeoManager","Changing system of units to Geant4 units (mm, ns, MeV).");
+   }
+   else if ( new_value == kRootUnits )   {
+      ::Info("TGeoManager","Changing system of units to ROOT units (cm, s, GeV).");
+   }
+   fgDefaultUnits = new_value;
 }

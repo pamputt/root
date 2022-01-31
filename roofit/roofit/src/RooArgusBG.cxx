@@ -29,8 +29,7 @@ RooArgusBG is a RooAbsPdf implementation describing the ARGUS background shape.
 #include "RooRealVar.h"
 #include "RooRealConstant.h"
 #include "RooMath.h"
-#include "BatchHelpers.h"
-#include "RooVDTHeaders.h"
+#include "RooBatchCompute.h"
 
 #include "TMath.h"
 
@@ -84,56 +83,15 @@ Double_t RooArgusBG::evaluate() const {
   if(t >= 1) return 0;
 
   Double_t u= 1 - t*t;
-  //cout << "c = " << c << " result = " << m*TMath::Power(u,p)*exp(c*u) << endl ;
   return m*TMath::Power(u,p)*exp(c*u) ;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 
-namespace {
-//Author: Emmanouil Michalainas, CERN 19 AUGUST 2019  
-
-template<class Tm, class Tm0, class Tc, class Tp>
-void compute(  size_t batchSize,
-               double * __restrict output,
-               Tm M, Tm0 M0, Tc C, Tp P)
+void RooArgusBG::computeBatch(cudaStream_t* stream, double* output, size_t nEvents, RooBatchCompute::DataMap& dataMap) const
 {
-  for (size_t i=0; i<batchSize; i++) {
-    const double t = M[i]/M0[i];
-    const double u = 1 - t*t;
-    output[i] = C[i]*u + P[i]*_rf_fast_log(u);
-  }
-  for (size_t i=0; i<batchSize; i++) {
-    if (M[i] >= M0[i]) output[i] = 0.0;
-    else output[i] = M[i]*_rf_fast_exp(output[i]);
-  }
-}
-};
-
-RooSpan<double> RooArgusBG::evaluateBatch(std::size_t begin, std::size_t batchSize) const {
-  using namespace BatchHelpers;
-
-  EvaluateInfo info = getInfo( {&m, &m0, &c, &p}, begin, batchSize );
-  if (info.nBatches == 0) {
-    return {};
-  }
-  auto output = _batchData.makeWritableBatchUnInit(begin, batchSize);
-  auto mData = m.getValBatch(begin, info.size);
-
-  if (info.nBatches==1 && !mData.empty()) {
-    compute(info.size, output.data(), mData.data(),
-    BracketAdapter<double> (m0),
-    BracketAdapter<double> (c),
-    BracketAdapter<double> (p));
-  }
-  else {
-    compute(info.size, output.data(),
-    BracketAdapterWithMask (m,m.getValBatch(begin,info.size)),
-    BracketAdapterWithMask (m0,m0.getValBatch(begin,info.size)),
-    BracketAdapterWithMask (c,c.getValBatch(begin,info.size)),
-    BracketAdapterWithMask (p,p.getValBatch(begin,info.size)));
-  }
-  return output;
+  auto dispatch = stream ? RooBatchCompute::dispatchCUDA : RooBatchCompute::dispatchCPU;
+  dispatch->compute(stream, RooBatchCompute::ArgusBG, output, nEvents, dataMap, {&*m,&*m0,&*c,&*p,&*_norm});
 }
 
 ////////////////////////////////////////////////////////////////////////////////

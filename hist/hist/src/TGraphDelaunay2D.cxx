@@ -9,17 +9,14 @@
  * For the list of contributors see $ROOTSYS/README/CREDITS.             *
  *************************************************************************/
 
-#include "TMath.h"
 #include "TGraph2D.h"
 #include "TGraphDelaunay2D.h"
-
-//#include <thread>
 
 ClassImp(TGraphDelaunay2D);
 
 
 /** \class TGraphDelaunay2D
-    \ingroup Hist
+    \ingroup Graphs
 TGraphDelaunay2D generates a Delaunay triangulation of a TGraph2D. This
 triangulation code derives from an implementation done by Luke Jones
 (Royal Holloway, University of London) in April 2002 in the PAW context.

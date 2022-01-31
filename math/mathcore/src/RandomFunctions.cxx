@@ -16,7 +16,7 @@
 //
 #include "Math/RandomFunctions.h"
 
-#include "Math/DistFunc.h"
+#include "Math/DistFuncMathCore.h"
 
 #include "TMath.h"
 
@@ -347,7 +347,7 @@ void RandomFunctionsImpl<TRandomEngine>::Sphere(Double_t &x, Double_t &y, Double
 ////////////////////////////////////////////////////////////////////////////////
 /// Returns a uniform deviate on the interval  (0, x1).
 
-Double_t RandomFunctionsImpl<TRandomEngine>::Uniform(Double_t x1)
+double RandomFunctionsImpl<TRandomEngine>::Uniform(double x1)
 {
    Double_t ans = Rndm();
    return x1*ans;

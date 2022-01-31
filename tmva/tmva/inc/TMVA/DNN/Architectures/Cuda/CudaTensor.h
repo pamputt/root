@@ -25,10 +25,10 @@
 #include <cassert>
 #include <iostream>
 
-#include "RConfigure.h"
+#include "CudaMatrix.h"
 #include "TMatrixT.h"
 #include "CudaBuffers.h"
-#include "CudaMatrix.h"
+
 //#include "TMVA/RTensor.hxx"
 
 #ifdef R__HAS_CUDNN
@@ -166,6 +166,10 @@ public:
 
    TCudaTensor(const TCudaMatrix<AFloat> & m, size_t dim = 2);
 
+   TCudaTensor(const TMatrixT<AFloat> & m, size_t dim = 2) :
+      TCudaTensor( TCudaMatrix<AFloat>(m), dim)
+   {}
+
    TCudaTensor(TCudaDeviceBuffer<AFloat> buffer, size_t n, size_t m) :
          TCudaTensor( buffer, {n,m}, MemoryLayout::ColumnMajor ,0,0) {}
 
@@ -298,11 +302,12 @@ public:
 
    // Matrix conversion for tensors of shape 2
    TCudaMatrix<AFloat> GetMatrix() const  {
-      if (fNDim == 2 || (fNDim == 3 && GetFirstSize() == 1))
+      // remember TCudaMatrix is always column-major
+      if ( GetLayout() == MemoryLayout::ColumnMajor &&
+           (fNDim == 2 || (fNDim == 3 && GetFirstSize() == 1) ) )
          return TCudaMatrix<AFloat>(fElementBuffer, GetHSize(), GetWSize());
 
 
-      // remember TCudaMatrix is always column-major
       //case of N,M,1,1,..
       bool caseNM11 = true;
       for (size_t i = 2; i < fNDim; ++i)  caseNM11 &= fShape[i] == 1;
@@ -323,6 +328,12 @@ public:
       return TCudaMatrix<AFloat>();
    }
 
+   // for backeard compatibility with old tensor
+   TCudaMatrix<AFloat> operator[](size_t i) const {
+      //assert(GetLayout() == MemoryLayout::ColumnMajor );
+      return At(i).GetMatrix();
+   }
+
 
 
    static inline std::vector<std::size_t> ComputeStridesFromShape(const std::vector<std::size_t> &shape,
@@ -341,14 +352,7 @@ public:
    }
 
    TCudaTensor<AFloat> Reshape(const Shape_t & newShape) const {
-      TCudaTensor<AFloat> tmp(*this);
-      // have a new descriptor for reshaped tensor !!!
-#ifdef R__HAS_CUDNN
-      tmp.fTensorDescriptor.reset( new TensorDescriptor() );
-      // t.b.d. need to check if we delete the cudnn object
-      CUDNNCHECK(cudnnCreateTensorDescriptor(&(tmp.fTensorDescriptor->fCudnnDesc)));
-#endif
-      tmp.ReshapeInPlace(newShape);
+      TCudaTensor<AFloat> tmp(this->GetDeviceBuffer(), newShape, this->GetLayout(), fDevice, fStreamIndx);
       return tmp;
    }
 
@@ -416,9 +420,6 @@ public:
 
       return TCudaDeviceReference<AFloat>(elementPointer);
    }
-
-
-
 
 private:
 

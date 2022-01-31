@@ -20,7 +20,8 @@
 #include <atomic>
 #include <string>
 #include <map>
-#include <stdlib.h>
+#include <cstdlib>
+#include <vector>
 
 class TObjArray;
 class TCollectionProxyFactory;
@@ -335,9 +336,6 @@ protected:
    // Allow to check function pointers.
    void CheckFunctions()  const;
 
-   // Set pointer to the TClass representing the content.
-   virtual void UpdateValueClass(const TClass *oldcl, TClass *newcl);
-
 private:
    TGenCollectionProxy(); // not implemented on purpose.
 
@@ -431,7 +429,7 @@ public:
    virtual TStreamerInfoActions::TActionSequence *GetReadMemberWiseActions(Int_t version);
    virtual TStreamerInfoActions::TActionSequence *GetWriteMemberWiseActions();
 
-   // Set of functions to iterate easily throught the collection
+   // Set of functions to iterate easily through the collection
 
    virtual CreateIterators_t GetFunctionCreateIterators(Bool_t read = kTRUE);
    // typedef void (*CreateIterators_t)(void *collection, void **begin_arena, void **end_arena);

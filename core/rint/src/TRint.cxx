@@ -22,7 +22,6 @@
 #include "TClass.h"
 #include "TClassEdit.h"
 #include "TVirtualX.h"
-#include "TStyle.h"
 #include "TObjectTable.h"
 #include "TClassTable.h"
 #include "TStopwatch.h"
@@ -36,16 +35,20 @@
 #include "TException.h"
 #include "TInterpreter.h"
 #include "TObjString.h"
+#include "TObjArray.h"
 #include "TStorage.h" // ROOT::Internal::gMmallocDesc
+#include "ThreadLocalStorage.h"
 #include "TTabCom.h"
-#include "TError.h"
-#include <stdlib.h>
+#include <cstdlib>
 #include <algorithm>
-
+#include <iostream>
 #include "Getline.h"
+#include "strlcpy.h"
+#include "snprintf.h"
 
 #ifdef R__UNIX
 #include <signal.h>
+#include <unistd.h>
 #endif
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -133,17 +136,50 @@ Bool_t TTermInputHandler::Notify()
 
 ClassImp(TRint);
 
+
+namespace {
+static int SetExtraClingArgsBeforeTAppCtor(Int_t *argc, char **argv)
+{
+   bool forcePtrCheck = false;
+   for (int iarg = 1; iarg < *argc; ++iarg) {
+      if (!strcmp(argv[iarg], "--ptrcheck")) {
+         // Hide this, by moving all other args one down...
+         for (int jarg = iarg + 1; jarg < *argc; ++jarg)
+            argv[jarg - 1] = argv[jarg];
+         // ... and updating argc accordingly.
+         --*argc;
+         forcePtrCheck = true;
+         break;
+      }
+   }
+#ifdef R__UNIX
+   if (forcePtrCheck || isatty(0) || isatty(1))
+#endif
+         TROOT::AddExtraInterpreterArgs({"--ptrcheck"});
+      return 0;
+}
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 /// Create an application environment. The TRint environment provides an
 /// interface to the WM manager functionality and eventloop via inheritance
 /// of TApplication and in addition provides interactive access to
 /// the Cling C++ interpreter via the command line.
 
-TRint::TRint(const char *appClassName, Int_t *argc, char **argv, void *options,
-             Int_t numOptions, Bool_t noLogo):
-   TApplication(appClassName, argc, argv, options, numOptions),
-   fCaughtSignal(-1)
+TRint::TRint(const char *appClassName, Int_t *argc, char **argv, void *options, Int_t numOptions, Bool_t noLogo)
+   : TApplication(appClassName, argc, argv, options, numOptions + SetExtraClingArgsBeforeTAppCtor(argc, argv)),
+     fCaughtSignal(-1)
 {
+
+   if (*argc > 1) {
+      // Early exit if there are remaining unrecognized options
+      for (auto n = 1; n < *argc; n++) {
+         std::cerr << "root: unrecognized option '" << argv[n] << "'\n";
+      }
+      std::cerr << "Try 'root --help' for more information.\n";
+      TApplication::Terminate(0);
+   }
+
    fNcmd          = 0;
    fDefaultPrompt = "root [%d] ";
    fInterrupt     = kFALSE;
@@ -348,7 +384,7 @@ void TRint::Run(Bool_t retrn)
       Getlinem(kInit, GetPrompt());
    }
 
-   Long_t retval = 0;
+   Longptr_t retval = 0;
    Int_t  error = 0;
    volatile Bool_t needGetlinemInit = kFALSE;
 
@@ -478,7 +514,7 @@ void TRint::PrintLogo(Bool_t lite)
       // Here, %%s results in %s after TString::Format():
       lines.emplace_back(TString::Format("Welcome to ROOT %s%%shttps://root.cern",
                                          gROOT->GetVersion()));
-      lines.emplace_back(TString::Format("(c) 1995-2019, The ROOT Team; conception: R. Brun, F. Rademakers%%s"));
+      lines.emplace_back(TString::Format("(c) 1995-2021, The ROOT Team; conception: R. Brun, F. Rademakers%%s"));
       lines.emplace_back(TString::Format("Built for %s on %s%%s", gSystem->GetBuildArch(), gROOT->GetGitDate()));
       if (!strcmp(gROOT->GetGitBranch(), gROOT->GetGitCommit())) {
          static const char *months[] = {"January","February","March","April","May",
@@ -499,6 +535,8 @@ void TRint::PrintLogo(Bool_t lite)
                                             gROOT->GetGitBranch(),
                                             gROOT->GetGitCommit()));
       }
+      lines.emplace_back(TString::Format("With %s %%s",
+                                         gSystem->GetBuildCompilerVersionStr()));
       lines.emplace_back(TString("Try '.help', '.demo', '.license', '.credits', '.quit'/'.q'%s"));
 
       // Find the longest line and its length:
@@ -715,9 +753,9 @@ void TRint::SetEchoMode(Bool_t mode)
 /// The last argument 'script' allows to specify an alternative script to
 /// be executed remotely to startup the session.
 
-Long_t TRint::ProcessRemote(const char *line, Int_t *)
+Longptr_t TRint::ProcessRemote(const char *line, Int_t *)
 {
-   Long_t ret = TApplication::ProcessRemote(line);
+   Longptr_t ret = TApplication::ProcessRemote(line);
 
    if (ret == 1) {
       if (fAppRemote) {
@@ -733,18 +771,21 @@ Long_t TRint::ProcessRemote(const char *line, Int_t *)
 
 
 ////////////////////////////////////////////////////////////////////////////////
-/// Calls ProcessLine() possibly prepending a #line directive for
+/// Calls TRint::ProcessLine() possibly prepending a `#line` directive for
 /// better diagnostics. Must be called after fNcmd has been increased for
 /// the next line.
 
-Long_t  TRint::ProcessLineNr(const char* filestem, const char *line, Int_t *error /*= 0*/)
+Longptr_t  TRint::ProcessLineNr(const char* filestem, const char *line, Int_t *error /*= 0*/)
 {
    Int_t err;
    if (!error)
       error = &err;
    if (line && line[0] != '.') {
-      TString lineWithNr = TString::Format("#line 1 \"%s%d\"\n", filestem, fNcmd - 1);
-      int res = ProcessLine(lineWithNr + line, kFALSE, error);
+      TString input;
+      if (!fBackslashContinue)
+         input += TString::Format("#line 1 \"%s%d\"\n", filestem, fNcmd - 1);
+      input += line;
+      int res = ProcessLine(input, kFALSE, error);
       if (*error == TInterpreter::kProcessing) {
          if (!fNonContinuePrompt.Length())
             fNonContinuePrompt = fDefaultPrompt;
@@ -753,6 +794,10 @@ Long_t  TRint::ProcessLineNr(const char* filestem, const char *line, Int_t *erro
          SetPrompt(fNonContinuePrompt);
          fNonContinuePrompt.Clear();
       }
+      std::string_view sv(line);
+      auto lastNonSpace = sv.find_last_not_of(" \t");
+      fBackslashContinue = (lastNonSpace != std::string_view::npos
+                            && sv[lastNonSpace] == '\\');
       return res;
    }
    if (line && line[0] == '.' && line[1] == '@') {

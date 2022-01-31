@@ -20,20 +20,21 @@
 
 **************************************************************************/
 
-//////////////////////////////////////////////////////////////////////////
-//                                                                      //
-// TGStatusBar                                                          //
-//                                                                      //
-// Provides a StatusBar widget.                                         //
-//                                                                      //
-//////////////////////////////////////////////////////////////////////////
+
+/** \class TGStatusBar
+    \ingroup guiwidgets
+
+Provides a StatusBar widget.
+
+*/
+
 
 #include "TGStatusBar.h"
 #include "TGResourcePool.h"
 #include "TList.h"
-#include "Riostream.h"
 #include "TVirtualX.h"
 
+#include <iostream>
 
 const TGFont  *TGStatusBar::fgDefaultFont = nullptr;
 TGGC          *TGStatusBar::fgDefaultGC = nullptr;
@@ -97,7 +98,7 @@ ClassImp(TGStatusBar);
 /// Multiple parts can be created using SetParts().
 
 TGStatusBar::TGStatusBar(const TGWindow *p, UInt_t w, UInt_t h,
-                         UInt_t options, ULong_t back) :
+                         UInt_t options, Pixel_t back) :
    TGHorizontalFrame(p, w, h, options, back)
 {
    fBorderWidth   = 2;

@@ -13,6 +13,7 @@
 #define ROOT_TGDMLWRITE
 
 #include "TGeoMatrix.h"
+#include "TGeoElement.h"
 #include "TXMLEngine.h"
 #include "TGeoVolume.h"
 #include "TGeoParaboloid.h"
@@ -27,7 +28,6 @@
 #include "TGeoTorus.h"
 #include "TGeoPgon.h"
 #include "TGeoXtru.h"
-#include "TGeoPgon.h"
 #include "TGeoEltu.h"
 #include "TGeoHype.h"
 #include "TGeoBoolNode.h"
@@ -124,6 +124,7 @@ private:
    Int_t  fgNamingSpeed;                                   //input option for volume and solid naming
    Bool_t fgG4Compatibility;                               //input option for Geant4 compatibility
    XMLDocPointer_t  fGdmlFile;                             //pointer storing xml file
+   TString fDefault_lunit;                                 //Default unit of length (depends on ROOT unit system)
    TString fTopVolumeName;                                 //name of top volume
    TXMLEngine *fGdmlE;                                     //xml engine pointer
 

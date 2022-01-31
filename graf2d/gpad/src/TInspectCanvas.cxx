@@ -10,6 +10,7 @@
  *************************************************************************/
 
 #include "TROOT.h"
+#include "TDatime.h"
 #include "TGuiFactory.h"
 #include "TInspectCanvas.h"
 #include "TButton.h"
@@ -19,7 +20,8 @@
 #include "TDataMember.h"
 #include "TDataType.h"
 #include "TRealData.h"
-#include "TLatex.h"
+#include "strlcpy.h"
+#include "snprintf.h"
 
 ClassImp(TInspectCanvas);
 
@@ -305,7 +307,7 @@ void TInspectCanvas::InspectObject(TObject *obj)
                strlcpy(&line[kvalue], membertype->AsString(pointer),kline-kvalue);
             }
          else
-            snprintf(&line[kvalue],kline-kvalue,"->%lx ", (Long_t)pointer);
+            snprintf(&line[kvalue],kline-kvalue,"->%zx ", (size_t)pointer);
 
          // Encode data member title
          Int_t ltit = 0;

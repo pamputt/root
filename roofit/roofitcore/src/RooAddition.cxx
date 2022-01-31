@@ -21,8 +21,7 @@
 
 RooAddition calculates the sum of a set of RooAbsReal terms, or
 when constructed with two sets, it sums the product of the terms
-in the two sets. This class does not (yet) do any smart handling of integrals, 
-i.e. all integrals of the product are handled numerically.
+in the two sets.
 **/
 
 
@@ -36,6 +35,7 @@ i.e. all integrals of the product are handled numerically.
 #include "RooArgSet.h"
 #include "RooNameReg.h"
 #include "RooNLLVar.h"
+#include "RooNLLVarNew.h"
 #include "RooChi2Var.h"
 #include "RooMsgService.h"
 
@@ -50,7 +50,7 @@ ClassImp(RooAddition);
 
 ////////////////////////////////////////////////////////////////////////////////
 /// Empty constructor
-RooAddition::RooAddition()
+RooAddition::RooAddition() : _cacheMgr(this,10)
 {
 }
 
@@ -199,7 +199,7 @@ Double_t RooAddition::defaultErrorLevel() const
   RooArgSet* comps = getComponents() ;
   TIterator* iter = comps->createIterator() ;
   while((arg=(RooAbsArg*)iter->Next())) {
-    if (dynamic_cast<RooNLLVar*>(arg)) {
+    if (dynamic_cast<RooNLLVar*>(arg) || dynamic_cast<ROOT::Experimental::RooNLLVarNew*>(arg)) {
       nllArg = (RooAbsReal*)arg ;
     }
     if (dynamic_cast<RooChi2Var*>(arg)) {
@@ -304,9 +304,9 @@ Double_t RooAddition::analyticalIntegral(Int_t code, const char* rangeName) cons
   if (cache==0) {
     // cache got sterilized, trigger repopulation of this slot, then try again...
     std::unique_ptr<RooArgSet> vars( getParameters(RooArgSet()) );
-    std::unique_ptr<RooArgSet> iset(  _cacheMgr.nameSet2ByIndex(code-1)->select(*vars) );
+    RooArgSet iset = _cacheMgr.selectFromSet2(*vars, code-1);
     RooArgSet dummy;
-    Int_t code2 = getAnalyticalIntegral(*iset,dummy,rangeName);
+    Int_t code2 = getAnalyticalIntegral(iset,dummy,rangeName);
     assert(code==code2); // must have revived the right (sterilized) slot...
     return analyticalIntegral(code2,rangeName);
   }

@@ -8,9 +8,12 @@
 # CMakeLists.txt file for building ROOT graf2d/win32gdk package
 # @author Pere Mato, CERN
 ############################################################################
-include_directories(${FREETYPE_INCLUDE_DIRS} ${CMAKE_CURRENT_SOURCE_DIR}/gdk/src 
-					${CMAKE_CURRENT_SOURCE_DIR}/gdk/src/gdk
-					${CMAKE_CURRENT_SOURCE_DIR}/gdk/src/glib)
+
+# use relative paths to avoid filtering in dictionary generator
+include_directories(${FREETYPE_INCLUDE_DIRS}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/gdk/src
+                    ${CMAKE_CURRENT_SOURCE_DIR}/gdk/src/gdk
+                    ${CMAKE_CURRENT_SOURCE_DIR}/gdk/src/glib)
 
 set(iconvlib  ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/iconv-1.3.lib)
 set(iconvdll  ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/iconv-1.3.dll)
@@ -28,12 +31,13 @@ set(gdkliba  ${CMAKE_CURRENT_BINARY_DIR}/gdk/src/gdk/gdk-1.3.lib)
 set(gdkdlla  ${CMAKE_CURRENT_BINARY_DIR}/gdk/src/gdk/gdk-1.3.dll)
 
 if(winrtdebug)
-  set(nmcxxflags "${CMAKE_CXX_FLAGS}" DEBUG=1)
+  set(nmcxxflags "${CMAKE_CXX_FLAGS_DEBUG}" DEBUG=1)
 else()
-  set(nmcxxflags "${CMAKE_CXX_FLAGS}")
+  set(nmcxxflags "${CMAKE_CXX_FLAGS_RELEASE}")
 endif()
-
-string(REPLACE "-std=c++14" "" nmcxxflags "${nmcxxflags}")
+if("${CMAKE_GENERATOR_PLATFORM}" MATCHES "x64")
+  set(nmcxxflags "${nmcxxflags} -D_WIN64")
+endif()
 
 # Build iconv
 
@@ -111,7 +115,6 @@ ROOT_STANDARD_LIBRARY_PACKAGE(Win32gdk
     Glu32.lib
     Opengl32.lib
   DEPENDENCIES
-    Cling
     Core
     Graf
   BUILTINS

@@ -1,17 +1,19 @@
 /// \file
 /// \ingroup tutorial_roofit
 /// \notebook -js
-/// Organisation and simultaneous fits: using simultaneous p.d.f.s to describe simultaneous fits to multiple datasets
+/// Organisation and simultaneous fits: using simultaneous pdfs to describe simultaneous
+/// fits to multiple datasets
 ///
 /// \macro_image
 /// \macro_output
 /// \macro_code
-/// \author 07/2008 - Wouter Verkerke
+///
+/// \date July 2008
+/// \author Wouter Verkerke
 
 #include "RooRealVar.h"
 #include "RooDataSet.h"
 #include "RooGaussian.h"
-#include "RooConstVar.h"
 #include "RooChebychev.h"
 #include "RooAddPdf.h"
 #include "RooSimultaneous.h"
@@ -76,8 +78,8 @@ void rf501_simultaneouspdf()
    sample.defineType("control");
 
    // Construct combined dataset in (x,sample)
-   RooDataSet combData("combData", "combined data", x, Index(sample), Import("physics", *data),
-                       Import("control", *data_ctl));
+   RooDataSet combData("combData", "combined data", x, Index(sample),
+                       Import({{"physics", data}, {"control", data_ctl}}));
 
    // C o n s t r u c t   a   s i m u l t a n e o u s   p d f   i n   ( x , s a m p l e )
    // -----------------------------------------------------------------------------------
@@ -107,7 +109,10 @@ void rf501_simultaneouspdf()
    // Plot "physics" slice of simultaneous pdf.
    // NBL You _must_ project the sample index category with data using ProjWData
    // as a RooSimultaneous makes no prediction on the shape in the index category
-   // and can thus not be integrated
+   // and can thus not be integrated.
+   // In other words: Since the PDF doesn't know the number of events in the different
+   // category states, it doesn't know how much of each component it has to project out.
+   // This information is read from the data.
    simPdf.plotOn(frame1, Slice(sample, "physics"), ProjWData(sample, combData));
    simPdf.plotOn(frame1, Slice(sample, "physics"), Components("px"), ProjWData(sample, combData), LineStyle(kDashed));
 

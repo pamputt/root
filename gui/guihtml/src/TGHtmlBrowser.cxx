@@ -10,11 +10,9 @@
  *************************************************************************/
 
 #include "TROOT.h"
-#include "TApplication.h"
 #include "TSystem.h"
 #include "TGMenu.h"
 #include "TGComboBox.h"
-#include "TGFrame.h"
 #include "TGButton.h"
 #include "TGTextBuffer.h"
 #include "TGTextEntry.h"
@@ -26,11 +24,11 @@
 #include "TString.h"
 #include "TUrl.h"
 #include "TSocket.h"
-#include "Riostream.h"
 #include "TGHtmlBrowser.h"
 #include "TGText.h"
 #include "TError.h"
 #include "TVirtualX.h"
+#include "snprintf.h"
 #ifdef R__SSL
 #include "TSSLSocket.h"
 #endif
@@ -38,14 +36,15 @@
 #include "TWin32SplashThread.h"
 #endif
 
-#include <stdlib.h>
+#include <cstdlib>
 
-//_____________________________________________________________________________
-//
-// TGHtmlBrowser
-//
-// A very simple HTML browser.
-//_____________________________________________________________________________
+/** \class TGHtmlBrowser
+    \ingroup guihtml
+
+A very simple HTML browser.
+
+*/
+
 
 ClassImp(TGHtmlBrowser);
 
@@ -604,7 +603,7 @@ void TGHtmlBrowser::MouseDown(const char *url)
 ////////////////////////////////////////////////////////////////////////////////
 /// Process Events.
 
-Bool_t TGHtmlBrowser::ProcessMessage(Long_t msg, Long_t parm1, Long_t)
+Bool_t TGHtmlBrowser::ProcessMessage(Longptr_t msg, Longptr_t parm1, Longptr_t)
 {
    switch (GET_MSG(msg)) {
    case kC_COMMAND:

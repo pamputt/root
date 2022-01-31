@@ -27,6 +27,7 @@
 #include "TPRegexp.h"
 #include "TROOT.h"
 #include "TSystem.h"
+#include "TObjString.h"
 #include "TVirtualMutex.h"
 #include <string>
 
@@ -902,7 +903,7 @@ void  TDocParser::DeleteDirectiveOutput() const
 /// Input: line - line containing the CPP statement,
 ///        pos  - position of '#'
 ///
-///  NOTE: Looks for the #include statements and
+///  NOTE: Looks for the `#include` statements and
 ///        creates link to the corresponding file
 ///        if such file exists
 ///

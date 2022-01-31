@@ -46,6 +46,7 @@
 #pragma link C++ class TLeafI+;
 #pragma link C++ class TLeafS+;
 #pragma link C++ class TLeafL+;
+#pragma link C++ class TLeafG+;
 #pragma link C++ class TLeafO+;
 #pragma link C++ class TNtuple-;
 #pragma link C++ class TNtupleD-;
@@ -90,5 +91,7 @@
 
 #pragma read sourceClass="TTree" targetClass="TTree" version="[-16]" source="" target="fDefaultEntryOffsetLen" code="{ fDefaultEntryOffsetLen = 1000; }"
 #pragma read sourceClass="TTree" targetClass="TTree" version="[-18]" source="" target="fNClusterRange" code="{ fNClusterRange = 0; }"
+
+#pragma link C++ namespace ROOT::Internal::TreeUtils;
 
 #endif

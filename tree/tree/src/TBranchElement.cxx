@@ -53,12 +53,14 @@ ClassImp(TBranchElement);
 ////////////////////////////////////////////////////////////////////////////////
 
 namespace {
-   void RemovePrefix(TString& str, const char* prefix) {
+   void RemovePrefix(TString& str, const TString &prefix) {
       // -- Remove a prefix from a string.
-      if (str.Length() && prefix && strlen(prefix)) {
-         if (!str.Index(prefix)) {
-            str.Remove(0, strlen(prefix));
-         }
+      // -- Require a '.' after the prefix.
+      if (prefix.Length() && prefix.Length() <= str.Length()
+          && (str.Data()[prefix.Length()] == '.' || (prefix[prefix.Length()-1]=='.')))
+      {
+         if (!str.Index(prefix))
+            str.Remove(0, prefix.Length());
       }
    }
    struct R__PushCache {
@@ -447,7 +449,7 @@ void TBranchElement::Init(TTree *tree, TBranch *parent,const char* bname, TStrea
                // which happens when we are a child branch of a top-level
                // branch whose name does not end in a dot and also has no
                // internal dots, elide the branch name, and keep the branch
-               // heirarchy rooted at the ultimate parent, this keeps the base
+               // hierarchy rooted at the ultimate parent, this keeps the base
                // class part of the branch name from propagating downwards.
                // FIXME: We are eliding the base class here, creating a break in the branch hierarchy.
                // Note: We can use parent class (cltop) != branch class (elemClass) to detection elision.
@@ -458,7 +460,7 @@ void TBranchElement::Init(TTree *tree, TBranch *parent,const char* bname, TStrea
             }
             // If the branch's name is not the same as the base class name,
             // keep the branch name as a prefix (i.e., continue the branch
-            // heirarchy), but start a new class heirarchy at the base class.
+            // hierarchy), but start a new class hierarchy at the base class.
             //
             // Note: If the parent branch was created by the branch constructor
             //       which takes a folder as a parameter, then this case will
@@ -487,8 +489,9 @@ void TBranchElement::Init(TTree *tree, TBranch *parent,const char* bname, TStrea
             }
             if (nbranches == fBranches.GetEntriesFast()) {
                // -- We did not add any branches in the Unroll, finalize our name to be the base class name, because Unroll did not do it for us.
-               if (strlen(bname)) {
-                  name.Form("%s.%s", bname, clOfElement->GetName());
+               const auto bnamelen = strlen(bname);
+               if (bnamelen) {
+                  name.Form("%s%s%s", bname, bname[bnamelen-1]=='.' ? "" : ".", clOfElement->GetName());
                } else {
                   name.Form("%s", clOfElement->GetName());
                }
@@ -540,6 +543,8 @@ void TBranchElement::Init(TTree *tree, TBranch *parent,const char* bname, TStrea
                element->SetTitle(atitle.Data());
             }
             TString branchname( name );
+            if (branchname.EndsWith("."))
+               branchname.Remove(branchname.Length()-1);
             branchname += "_";
             SetTitle(branchname);
             leaf->SetName(branchname);
@@ -592,6 +597,8 @@ void TBranchElement::Init(TTree *tree, TBranch *parent,const char* bname, TStrea
                   element->SetTitle(atitle.Data());
                }
                TString branchname (name);
+               if (branchname.EndsWith("."))
+                  branchname.Remove(branchname.Length()-1);
                branchname += "_";
                SetTitle(branchname);
                leaf->SetName(branchname);
@@ -733,6 +740,7 @@ void TBranchElement::Init(TTree *tree, TBranch *parent, const char* bname, TClon
 
    SetName(bname);
    const char* name = GetName();
+
    SetTitle(name);
    //fClassName = fInfo->GetName();
    fCompress = compress;
@@ -773,10 +781,14 @@ void TBranchElement::Init(TTree *tree, TBranch *parent, const char* bname, TClon
       // ===> create sub branches for each data member of a TClonesArray
       fClonesName = clonesClass->GetName();
       fClonesClass = clonesClass;
-      std::string branchname = name + std::string("_");
-      SetTitle(branchname.c_str());
-      leaf->SetName(branchname.c_str());
-      leaf->SetTitle(branchname.c_str());
+      TString branchname( name );
+      if (branchname[branchname.Length()-1]=='.') {
+         branchname.Remove(branchname.Length()-1);
+      }
+      branchname += "_";
+      SetTitle(branchname);
+      leaf->SetName(branchname);
+      leaf->SetTitle(branchname);
       Unroll(name, clonesClass, clonesClass, 0, basketsize, splitlevel, 31);
       BuildTitle(name);
       SetReadLeavesPtr();
@@ -1090,7 +1102,7 @@ void TBranchElement::Browse(TBrowser* b)
                // We do not know for sure whether the mother's name is
                // already preprended.  So we need to check:
                //    a) it is prepended
-               //    b) it is NOT the name of a daugher (i.e. mothername.mothername exist)
+               //    b) it is NOT the name of a daughter (i.e. mothername.mothername exist)
                TString doublename = mothername;
                doublename.Append(".");
                Int_t isthere = (name.Index(doublename) == 0);
@@ -1133,10 +1145,18 @@ void TBranchElement::BuildTitle(const char* name)
 {
    TString branchname;
 
-   Int_t nbranches = fBranches.GetEntries();
+   Int_t nbranches = fBranches.GetEntriesFast();
+
+   TString indexname(name);
+   if (indexname[indexname.Length()-1]=='.') {
+      indexname.Remove(indexname.Length()-1);
+   }
+   indexname += "_";
 
    for (Int_t i = 0; i < nbranches; ++i) {
       TBranchElement* bre = (TBranchElement*) fBranches.At(i);
+      if (!bre)
+         continue;
       if (fType == 3) {
          bre->SetType(31);
       } else if (fType == 4) {
@@ -1160,7 +1180,7 @@ void TBranchElement::BuildTitle(const char* name)
       if (dim>=0) {
          branchname.Remove(dim);
       }
-      branchname += TString::Format("[%s_]",name);
+      branchname += TString::Format("[%s]", indexname.Data());
       bre->SetTitle(branchname);
       if (lf) {
          lf->SetTitle(branchname);
@@ -1221,7 +1241,7 @@ Int_t TBranchElement::FillImpl(ROOT::Internal::TBranchIMTHelper *imtHelper)
 
    if (fID < 0) {
       if (!fObject) {
-         Error("Fill", "attempt to fill branch %s while addresss is not set", GetName());
+         Error("Fill", "attempt to fill branch %s while address is not set", GetName());
          return 0;
       }
    }
@@ -2040,7 +2060,7 @@ static void GatherArtificialElements(const TObjArray &branches, TStreamerInfoAct
          TVirtualArray *onfileObject = nullptr;
          for(auto subbe : TRangeDynCast<TBranchElement>( *search )) {
 
-            if (elementClass == subbe->GetInfo()->GetClass()) { // Use GetInfo to provoke its creation.
+            if (elementClass == subbe->GetInfo()->GetClass() && subbe->GetOnfileObject()) { // Use GetInfo to provoke its creation.
                nextinfo = subbe->GetInfo();
                onfileObject = subbe->GetOnfileObject();
                break;
@@ -2118,7 +2138,7 @@ void TBranchElement::SetupInfo()
             TBranchElement *parent = (TBranchElement*)GetMother()->GetSubBranch(this);
             if (parent && parent != this && !parent->GetClass()->IsLoaded() ) {
                // Our parent's class is emulated and we represent an abstract class.
-               // and the target class has not been set explicilty.
+               // and the target class has not been set explicitly.
                TString target = cl->GetName();
                target += "@@emulated";
                fTargetClass.SetName(target);
@@ -2147,7 +2167,7 @@ void TBranchElement::SetupInfo()
 
          TStreamerInfo* info;
          if( targetClass != cl )
-            info = (TStreamerInfo*)targetClass->GetConversionStreamerInfo( cl, fCheckSum );
+            info = (TStreamerInfo*)targetClass->FindConversionStreamerInfo( cl, fCheckSum );
          else {
             info = (TStreamerInfo*)cl->FindStreamerInfo( fCheckSum );
             if (info) {
@@ -2210,6 +2230,11 @@ void TBranchElement::InitInfo()
             Bool_t seenExisting = kFALSE;
 
             fOnfileObject = new TVirtualArray( info->GetElement(0)->GetClassPointer(), arrlen );
+            if (fType == 31 || fType == 41) {
+               TBranchElement *parent = (TBranchElement*)GetMother()->GetSubBranch(this);
+               if (parent && parent->fOnfileObject == nullptr)
+                  parent->fOnfileObject = fOnfileObject;
+            }
             // Propage this to all the other branch of this type.
             TObjArray *branches = toplevel ? GetListOfBranches() : GetMother()->GetSubBranch(this)->GetListOfBranches();
             Int_t nbranches = branches->GetEntriesFast();
@@ -2332,7 +2357,7 @@ void TBranchElement::InitInfo()
                      break;
                   }
                   // Add all (and only) the Artificial Elements that follows this StreamerInfo.
-                  // fprintf(stderr,"%s/%d[%zu] passing trhough %zu %s\n",GetName(),fID,fIDs.size(),i,nextel->GetName());
+                  // fprintf(stderr,"%s/%d[%zu] passing through %zu %s\n",GetName(),fID,fIDs.size(),i,nextel->GetName());
                   if (fType==31||fType==41) {
                      // The nested objects are unfolded and their branch can not be used to
                      // execute StreamerElements of this StreamerInfo.
@@ -2345,7 +2370,7 @@ void TBranchElement::InitInfo()
                   }
                   if (nextel->GetOffset() ==  TStreamerInfo::kMissing) {
                      // This element will be 'skipped', it's TBranchElement's fObject will null
-                     // and thus can not be used to execute the artifical StreamerElements
+                     // and thus can not be used to execute the artificial StreamerElements
                      continue;
                   }
                   if (nextel->IsA() != TStreamerArtificial::Class()
@@ -2382,7 +2407,7 @@ void TBranchElement::InitInfo()
             }
          }
          if (fType == 3 || fType == 4 || (fType == 0 && fID == -2)) {
-            // Need to add the rule targetting transient members.
+            // Need to add the rule targeting transient members.
             TStreamerInfo *localInfo = fInfo;
             if (fType == 3 || fType == 4) {
                // Don't we have real version information?
@@ -2717,7 +2742,7 @@ Int_t TBranchElement::GetExpectedType(TClass *&expectedClass,EDataType &expected
       expectedClass = fBranchClass;
    } else {
       // Case of an object data member.  Here we allow for the
-      // variable name to be ommitted.  Eg, for Event.root with split
+      // variable name to be omitted.  Eg, for Event.root with split
       // level 1 or above  Draw("GetXaxis") is the same as Draw("fH.GetXaxis()")
       TStreamerElement* element = GetInfoImp()->GetElement(fID);
       if (element) {
@@ -2737,6 +2762,23 @@ Int_t TBranchElement::GetExpectedType(TClass *&expectedClass,EDataType &expected
       }
    }
    return 0;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+/// Return the 'full' name of the branch.  In particular prefix  the mother's name
+/// when it does not end in a trailing dot and thus is not part of the branch name
+TString TBranchElement::GetFullName() const
+{
+   TBranchElement* mother = static_cast<TBranchElement*>(GetMother());
+   if (!mother || mother==this || mother->GetType() == 3 || mother->GetType() == 4) {
+      // The parent's name is already included in the name for split TClonesArray and STL collections
+      return fName;
+   }
+   TString motherName(mother->GetName());
+   if (motherName.Length() && (motherName[motherName.Length()-1] == '.')) {
+      return fName;
+   }
+   return motherName + "." + fName;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -3015,7 +3057,7 @@ void* TBranchElement::GetValuePointer() const
 /// Note: The offsets are zero for data members so that when
 ///       SetAddress recursively sets their address, they will get the
 ///       same address as their containing class because i/o is based
-///       on streamer info offsets from the addresss of the containing
+///       on streamer info offsets from the address of the containing
 ///       class.
 ///
 ///       Offsets are non-zero for base-class sub-branches that are
@@ -3037,7 +3079,7 @@ void TBranchElement::InitializeOffsets()
    // As of commit 4f8b237849, removing this lock does not lead to
    // a visible failure in test.  This might be due to the underlying
    // problem (missing lock or ?) being solved somewhere else or some
-   // other pertubation reducing the failure rate.
+   // other perturbation reducing the failure rate.
    // Having the lock here is not too costly as InitializeOffsets is
    // one called once in the lifetime of the TBranch.
    R__LOCKGUARD(gInterpreterMutex);
@@ -3132,7 +3174,7 @@ void TBranchElement::InitializeOffsets()
       {
          TBranch *br = GetMother()->GetSubBranch( this );
          stlParentName = br->GetName();
-         stlParentName.Strip( TString::kTrailing, '.' );
+         stlParentName = stlParentName.Strip( TString::kTrailing, '.' );
 
          // We may ourself contain the 'Mother' branch name.
          // To avoid code duplication, we delegate the removal
@@ -3208,7 +3250,7 @@ void TBranchElement::InitializeOffsets()
          {
             Int_t streamerType = subBranchElement->GetType();
             if (streamerType > TStreamerInfo::kObject
-                && subBranch->GetListOfBranches()->GetEntries()==0
+                && subBranch->GetListOfBranches()->GetEntriesFast()==0
                 && CanSelfReference(subBranchElement->GetClass()))
             {
                subBranch->SetBit(kBranchAny);
@@ -3293,7 +3335,7 @@ void TBranchElement::InitializeOffsets()
             // Note: We are in the case where our mother was created
             //       by the branch constructor which takes a folder
             //       as an argument.  The mother branch has internal
-            //       dots in its name to represent the folder heirarchy.
+            //       dots in its name to represent the folder hierarchy.
             //       The TTree::Bronch() routine has handled us as a
             //       special case, we must compensate.
             if ((fID < 0) && (subBranchElement->IsA() == TStreamerBase::Class())) {
@@ -3352,7 +3394,7 @@ void TBranchElement::InitializeOffsets()
             // Note: We are in the case where our mother was created
             //       by the branch constructor which takes a folder
             //       as an argument.  The mother branch has internal
-            //       dots in its name to represent the folder heirarchy.
+            //       dots in its name to represent the folder hierarchy.
             //       The TTree::Bronch() routine has handled us as a
             //       special case, we must compensate.
             if ((fID > -1) && (mother == mother->GetSubBranch(this)) && (branchElem->IsA() == TStreamerBase::Class())) {
@@ -3448,7 +3490,7 @@ void TBranchElement::InitializeOffsets()
                      TBranchElement *parent = (TBranchElement*)GetMother()->GetSubBranch(this);
                      if (parent && parent != this && !parent->GetClass()->IsLoaded() ) {
                         // Our parent's class is emulated and we represent an abstract class.
-                        // and the target class has not been set explicilty.
+                        // and the target class has not been set explicitly.
                         TString target = pClass->GetName();
                         target += "@@emulated";
 
@@ -3476,7 +3518,7 @@ void TBranchElement::InitializeOffsets()
                }
                if (fBranchCount && fBranchCount->fCollProxy && fBranchCount->fCollProxy->GetValueClass()) {
                   pClass = fBranchCount->fCollProxy->GetValueClass();
-                  Warning("InitializeOffsets", "subBranch: '%s' has no parent class!  Assuming parent class is: '%s'.", subBranch->GetName(), pClass ? pClass->GetName() : "unknowned class");
+                  Warning("InitializeOffsets", "subBranch: '%s' has no parent class!  Assuming parent class is: '%s'.", subBranch->GetName(), pClass ? pClass->GetName() : "unknown class");
                }
                if (!pClass) {
                   // -- Still no parent class, assume our parent class is our parent branch's class.
@@ -3716,7 +3758,6 @@ static void PrintElements(const TStreamerInfo *info, const TStreamerInfoActions:
             Error("TBranchElement::Print", "Element for id #%d not found in StreamerInfo for %s",
                   id, info->GetName());
             info->ls();
-            TClass::GetClass("PFTauWith")->GetStreamerInfos()->ls();
          }
       } else if (cursor.fNestedIDs) {
          Printf("      Within subobject of type %s offset = %d", cursor.fNestedIDs->fInfo->GetName(), cursor.fNestedIDs->fOffset);
@@ -3740,8 +3781,8 @@ void TBranchElement::Print(Option_t* option) const
       Int_t ind = parent ? parent->GetListOfBranches()->IndexOf(this) : -1;
       TVirtualStreamerInfo *info = ((TBranchElement*)this)->GetInfoImp();
 
-      Printf("%-16s %2d %4d %-16s %-16s %8x %8x %s\n",
-             info ? info->GetName() : "StreamerInfo unvailable", GetID(), GetType(),
+      Printf("%-16s %2d %4d %-16s %-16s %8x %8x %p\n",
+             info ? info->GetName() : "StreamerInfo unavailable", GetID(), GetType(),
              GetClassName(), GetParentName(),
              (fBranchOffset&&parent && ind>=0) ? parent->fBranchOffset[ind] : 0,
              GetOffset(), GetObject());
@@ -4716,7 +4757,7 @@ void TBranchElement::ResetDeleteObject()
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-/// \brief Reset offset and StremerInfo information from this branch.
+/// \brief Reset offset and StreamerInfo information from this branch.
 /// \param[in] recurse When true call ResetInitInfo on all subbranches.
 ///
 
@@ -4853,6 +4894,14 @@ void TBranchElement::ResetInitInfo(Bool_t recurse)
 
 void TBranchElement::SetAddress(void* addr)
 {
+   SetAddressImpl(addr, (addr == nullptr));
+}
+
+/// See TBranchElement::SetAddress.
+/// If implied is true, we do not over-ride existing address for
+/// sub-branches.
+void TBranchElement::SetAddressImpl(void* addr, bool implied)
+{
    //
    //  Don't bother if we are disabled.
    //
@@ -4873,12 +4922,13 @@ void TBranchElement::SetAddress(void* addr)
    //  Special case when called from code generated by TTree::MakeClass.
    //
 
-   if (Long_t(addr) == -1) {
+   if (Longptr_t(addr) == -1) {
       // FIXME: Do we have to release an object here?
       // ReleaseObject();
       fAddress = (char*) -1;
       fObject = (char*) -1;
       ResetBit(kDeleteObject);
+      ResetBit(kAddressSet);
       return;
    }
 
@@ -4921,6 +4971,7 @@ void TBranchElement::SetAddress(void* addr)
       fObject = 0;
    }
    ResetBit(kDeleteObject);
+   SetBit(kAddressSet);
 
    //
    //  Do special stuff if we got called from a MakeClass class.
@@ -4995,6 +5046,7 @@ void TBranchElement::SetAddress(void* addr)
          } else {
             // FIXME: Must maintain fObject here as well.
             fAddress = 0;
+            ResetBit(kAddressSet);
          }
       }
    } else if (fType == 4) {
@@ -5074,6 +5126,7 @@ void TBranchElement::SetAddress(void* addr)
                      GetName(),oldProxy->GetCollectionClass()->GetName(),newType->GetName());
                fAddress = 0;
                fObject = 0;
+               ResetBit(kAddressSet);
                return;
             }
          }
@@ -5125,6 +5178,7 @@ void TBranchElement::SetAddress(void* addr)
             // FIXME: We must maintain fObject here as well.
             Error("SetAddress","For %s can not convert %s into %s\n",GetName(),GetCurrentClass()->GetName(),newType->GetName());
             fAddress = 0;
+            ResetBit(kAddressSet);
             return;
          }
       } else {
@@ -5242,7 +5296,9 @@ void TBranchElement::SetAddress(void* addr)
             // We are either a top-level branch or subbranch which is a pointer to an STL container.
             // Streamer type should be -1 (for a top-level branch) or kSTLp here.
             if ((fStreamerType != -1) && (fStreamerType != TVirtualStreamerInfo::kSTLp)) {
-               Error("SetAddress", "STL container with fStreamerType: %d", fStreamerType);
+               Error("SetAddress",
+                     "Branch %s is a split STL container (fStreamerType is: %d), the address can not be set directly.",
+                     GetName(), fStreamerType);
             } else if (fStreamerType == -1) {
                // -- We are a top-level branch.
                void** pp = (void**) fAddress;
@@ -5255,6 +5311,7 @@ void TBranchElement::SetAddress(void* addr)
                      //        fAddress to be zero if no fObject, but is
                      //        that a good thing?
                      fAddress = 0;
+                     ResetBit(kAddressSet);
                   }
                }
                fObject = (char*) *pp;
@@ -5272,6 +5329,7 @@ void TBranchElement::SetAddress(void* addr)
                      //        fAddress to be zero if no fObject, but is
                      //        that a good thing?
                      fAddress = 0;
+                     ResetBit(kAddressSet);
                   }
                }
                fObject = (char*) *pp;
@@ -5291,7 +5349,9 @@ void TBranchElement::SetAddress(void* addr)
             // We are either a top-level branch or sub-branch which is a pointer to an STL container.
             // Streamer type should be -1 (for a top-level branch) or kSTLp here.
             if ((fStreamerType != -1) && (fStreamerType != TVirtualStreamerInfo::kSTLp)) {
-               Error("SetAddress", "STL container with fStreamerType: %d", fStreamerType);
+               Error("SetAddress",
+                     "Branch %s is a split STL container (fStreamerType is: %d), the address can not be set directly.",
+                     GetName(), fStreamerType);
             } else if (fStreamerType == -1) {
                // -- We are a top-level branch, allocate.
                SetBit(kDeleteObject);
@@ -5304,6 +5364,7 @@ void TBranchElement::SetAddress(void* addr)
                   //        fAddress to be zero if no fObject, but is
                   //        that a good thing?
                   fAddress = 0;
+                  ResetBit(kAddressSet);
                }
             } else {
                // -- We are a sub-branch which is a pointer to an STL container.
@@ -5365,11 +5426,13 @@ void TBranchElement::SetAddress(void* addr)
    // FIXME: This is a tail recursion, we burn stack.
    Int_t nbranches = fBranches.GetEntriesFast();
    for (Int_t i = 0; i < nbranches; ++i) {
-      TBranch* abranch = (TBranch*) fBranches.UncheckedAt(i);
+      TBranch *abranch = (TBranch*) fBranches.UncheckedAt(i);
       // FIXME: This is a tail recursion!
-      if (fBranchOffset[i] != TStreamerInfo::kMissing) {
-         abranch->SetAddress(fObject + fBranchOffset[i]);
+      if (fBranchOffset[i] != TStreamerInfo::kMissing && !(implied && abranch->TestBit(kAddressSet))) {
+         abranch->SetAddressImpl(fObject + fBranchOffset[i], implied);
          abranch->SetBit(kAddressSet);
+         if (TestBit(kDecomposedObj) != abranch->TestBit(kDecomposedObj))
+            abranch->SetMakeClass(TestBit(kDecomposedObj));
       } else {
          // When the member is missing, just leave the address alone
          // (since setting explicitly to 0 would trigger error/warning
@@ -5602,7 +5665,7 @@ void TBranchElement::SetReadLeavesPtr()
       fReadLeaves = (ReadLeaves_t)&TBranchElement::ReadLeavesCustomStreamer;
    } else if (fType == 0 && fID == -1) {
       // top-level branch.
-      Bool_t hasCustomStreamer = !fBranchClass.GetClass()->GetCollectionProxy() && (fBranchClass.GetClass()->GetStreamer() != 0 || fBranchClass.GetClass()->TestBit(TClass::kHasCustomStreamerMember));
+      Bool_t hasCustomStreamer = fBranchClass.GetClass() && !fBranchClass.GetClass()->GetCollectionProxy() && (fBranchClass.GetClass()->GetStreamer() != 0 || fBranchClass.GetClass()->TestBit(TClass::kHasCustomStreamerMember));
       if (hasCustomStreamer) {
          // We are in the case where the object did *not* have a custom
          // Streamer when the TTree was written but now *does* have a custom
@@ -6060,7 +6123,7 @@ void TBranchElement::Unroll(const char *name, TClass *cl, TStreamerInfo *sinfo, 
 /// Note: We do *not* create sub-branches for data members which
 ///       have a class type and which we are splitting.
 ///
-/// Note: The above rules imply that the branch heirarchy increases
+/// Note: The above rules imply that the branch hierarchy increases
 ///       in depth only for base classes of cl (unless we are inside
 ///       of a TClonesArray or STL container, in which case the depth
 ///       does *not* increase, the base class is elided) and for
@@ -6104,6 +6167,9 @@ Int_t TBranchElement::Unroll(const char* name, TClass* clParent, TClass* cl, cha
       return 0;
    }
 
+   const auto namelen = strlen(name);
+   Bool_t dotlast = (namelen && (name[namelen-1] == '.'));
+
    Int_t ndata = sinfo->GetNelement();
 
    if ((ndata == 1) && cl->GetCollectionProxy() && !strcmp(sinfo->GetElement(0)->GetName(), "This")) {
@@ -6139,11 +6205,11 @@ Int_t TBranchElement::Unroll(const char* name, TClass* clParent, TClass* cl, cha
             // -- Elide the base-class sub-branches of a split TClonesArray or STL container.
             //
             // Note: We are eliding the base class here, that is, we never
-            //       create a branch for it, so the branch heirarchy is not
+            //       create a branch for it, so the branch hierarchy is not
             //       complete.
             // Note: The clParent parameter is the value class of the
             //       container which we are splitting.  It does not
-            //       appear in the branch heirarchy either.
+            //       appear in the branch hierarchy either.
             // Note: We can use parent class (clParent) != branch class (elemClass) to detection elision.
             Int_t unroll = -1;
             if (!elem->CannotSplit() || clOfBase == TObject::Class()) {
@@ -6151,8 +6217,8 @@ Int_t TBranchElement::Unroll(const char* name, TClass* clParent, TClass* cl, cha
             }
             if (unroll < 0) {
                // FIXME: We could not split because we are abstract, should we be doing this?
-               if (strlen(name)) {
-                  branchname.Form("%s.%s", name, elem->GetFullName());
+               if (namelen) {
+                  branchname.Form("%s%s%s", name, dotlast ? "" : ".", elem->GetFullName());
                } else {
                   branchname.Form("%s", elem->GetFullName());
                }
@@ -6162,11 +6228,11 @@ Int_t TBranchElement::Unroll(const char* name, TClass* clParent, TClass* cl, cha
             }
          } else if (clOfBase->GetListOfRealData()->GetSize()) {
             // -- Create a branch for a non-empty base class.
-            if (strlen(name)) {
-               branchname.Form("%s.%s", name, elem->GetFullName());
+            if (namelen) {
+               branchname.Form("%s%s%s", name, dotlast ? "" : ".", elem->GetFullName());
                // Elide the base class name when creating the sub-branches.
                // Note: The branch names for sub-branches of a base class branch
-               //       do not represent the full class heirarchy because we do
+               //       do not represent the full class hierarchy because we do
                //       this, however it does keep the branch names for the
                //       inherited data members simple.
                TBranchElement* branch = new TBranchElement(this, name, sinfo, elemID, ptr + offset, basketsize, splitlevel+splitSTLP, btype);
@@ -6184,8 +6250,8 @@ Int_t TBranchElement::Unroll(const char* name, TClass* clParent, TClass* cl, cha
          }
       } else {
          // -- This is a data member of cl.
-         if (strlen(name)) {
-            branchname.Form("%s.%s", name, elem->GetFullName());
+         if (namelen) {
+            branchname.Form("%s%s%s", name, dotlast ? "" : ".", elem->GetFullName());
          } else {
             branchname.Form("%s", elem->GetFullName());
          }
@@ -6218,7 +6284,7 @@ Int_t TBranchElement::Unroll(const char* name, TClass* clParent, TClass* cl, cha
                // Splitting a normal class.
                // FIXME: We are eliding the class we are splitting here,
                //        i.e., we do not create a branch for it, so the
-               //        branch heirarchy does not match the class heirarchy.
+               //        branch hierarchy does not match the class hierarchy.
                // Note: clParent is the class which contains a data member of
                //       the class type which we are splitting.
                // Note: We can use parent class (clParent) != branch class (elemClass) to detection elision.

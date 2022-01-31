@@ -1,6 +1,6 @@
+#include <ROOT/TestSupport.hxx>
 #include <ROOT/RConfig.hxx>
 #include <ROOT/RDataFrame.hxx>
-#include <ROOT/RMakeUnique.hxx>
 #include <ROOT/RSqliteDS.hxx>
 #include <ROOT/TSeq.hxx>
 
@@ -10,7 +10,6 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
-#include <memory>
 
 using namespace ROOT::RDF;
 
@@ -113,7 +112,7 @@ TEST(RSqliteDS, DuplicateColumns)
    EXPECT_EQ("Long64_t", rds.GetTypeName("fint"));
    EXPECT_EQ("double", rds.GetTypeName("freal"));
    auto vals = rds.GetColumnReaders<Long64_t>("fint");
-   rds.Initialise();
+   rds.Initialize();
    auto ranges = rds.GetEntryRanges();
    ASSERT_EQ(1U, ranges.size());
    EXPECT_TRUE(rds.SetEntry(0, ranges[0].first));
@@ -125,9 +124,11 @@ TEST(RSqliteDS, ColumnReaders)
 {
    RSqliteDS rds(fileName0, query0);
    const auto nSlots = 2U;
-   rds.SetNSlots(nSlots);
+   ROOT_EXPECT_WARNING(rds.SetNSlots(nSlots), "SetNSlots",
+                       "Currently the SQlite data source faces performance degradation in multi-threaded mode. "
+                       "Consider turning off IMT.");
    auto vals = rds.GetColumnReaders<Long64_t>("fint");
-   rds.Initialise();
+   rds.Initialize();
    auto ranges = rds.GetEntryRanges();
    EXPECT_EQ(1U, ranges.size());
    for (auto i : ROOT::TSeq<unsigned>(0, nSlots)) {
@@ -142,7 +143,7 @@ TEST(RSqliteDS, ColumnReaders)
 TEST(RSqliteDS, GetEntryRanges)
 {
    RSqliteDS rds(fileName0, query0);
-   rds.Initialise();
+   rds.Initialize();
    auto ranges = rds.GetEntryRanges();
    ASSERT_EQ(1U, ranges.size());
    EXPECT_EQ(0U, ranges[0].first);
@@ -155,7 +156,7 @@ TEST(RSqliteDS, GetEntryRanges)
    EXPECT_EQ(0U, ranges.size());
 
    // New event loop
-   rds.Initialise();
+   rds.Initialize();
    ranges = rds.GetEntryRanges();
    EXPECT_EQ(1U, ranges.size());
    EXPECT_EQ(0U, ranges[0].first);
@@ -172,7 +173,7 @@ TEST(RSqliteDS, SetEntry)
    auto vblob = rds.GetColumnReaders<std::vector<unsigned char>>("fblob");
    auto vnull = rds.GetColumnReaders<void *>("fnull");
 
-   rds.Initialise();
+   rds.Initialize();
 
    rds.GetEntryRanges();
    EXPECT_TRUE(rds.SetEntry(0, 0));
@@ -201,6 +202,7 @@ TEST(RSqliteDS, IMT)
    const auto nSlots = 4U;
    ROOT::EnableImplicitMT(nSlots);
 
+   ROOT::TestSupport::CheckDiagsRAII diagRAII{kWarning, "SetNSlots", "Currently the SQlite data source faces performance degradation in multi-threaded mode. Consider turning off IMT."};
    auto rdf = MakeSqliteDataFrame(fileName0, query0);
    EXPECT_EQ(3, *rdf.Sum("fint"));
    EXPECT_NEAR(3.0, *rdf.Sum("freal"), epsilon);
@@ -226,6 +228,7 @@ TEST(RSqliteDS, IMT)
 
 TEST(RSqliteDS, Davix)
 {
+   (void)url1; // silence -Wunused-const-variable
 #ifdef R__HAS_DAVIX
    auto rdf = MakeSqliteDataFrame(url0, query0);
    EXPECT_EQ(1, *rdf.Min("fint"));

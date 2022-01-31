@@ -29,6 +29,7 @@ It contains information on the real remote object as:
 #include "TSystemDirectory.h"
 #include "TApplication.h"
 #include "TROOT.h"
+#include "TBuffer.h"
 #include "TBrowser.h"
 #include "TList.h"
 #include "TClass.h"
@@ -59,7 +60,7 @@ TRemoteObject::TRemoteObject(const char *name, const char *title,
        !strcmp(classname, "TSystemFile")) {
       gSystem->GetPathInfo(name, fFileStat);
    }
-   Long_t raddr = (Long_t) this;
+   Long64_t raddr = (Long64_t) this;
    fRemoteAddress = raddr;
 }
 
@@ -91,7 +92,7 @@ void TRemoteObject::Browse(TBrowser *b)
       TObject *obj = (TObject *)gROOT->ProcessLine(Form("((TApplicationServer *)gApplication)->BrowseKey(\"%s\");", GetName()));
       if (obj) {
          if (obj->IsA()->GetMethodWithPrototype("SetDirectory", "TDirectory*"))
-            gROOT->ProcessLine(Form("((%s *)0x%lx)->SetDirectory(0);", obj->ClassName(), (ULong_t)obj));
+            gROOT->ProcessLine(Form("((%s *)0x%zx)->SetDirectory(0);", obj->ClassName(), (size_t)obj));
          obj->Browse(b);
          b->SetRefreshFlag(kTRUE);
       }

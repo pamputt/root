@@ -33,8 +33,9 @@ the network structure.
 #include "TVirtualPad.h"
 #include "TRegexp.h"
 #include "TMath.h"
-#include "Riostream.h"
-#include <stdlib.h>
+#include "snprintf.h"
+#include <iostream>
+#include <cstdlib>
 
 ClassImp(TMLPAnalyzer);
 
@@ -186,13 +187,13 @@ void TMLPAnalyzer::GatherInformations()
       formula = GetNeuronFormula(i);
       pos = re.Index(formula,&len);
       if(pos==-1 || len<3) {
-         formulas[i] = new TTreeFormula(Form("NF%lu",(ULong_t)this),formula,data);
+         formulas[i] = new TTreeFormula(Form("NF%zu",(size_t)this),formula,data);
          index[i] = 0;
       }
       else {
          TString newformula(formula,pos);
          TString val = formula(pos+1,len-2);
-         formulas[i] = new TTreeFormula(Form("NF%lu",(ULong_t)this),newformula,data);
+         formulas[i] = new TTreeFormula(Form("NF%zu",(size_t)this),newformula,data);
          formula = newformula;
          index[i] = val.Atoi();
       }

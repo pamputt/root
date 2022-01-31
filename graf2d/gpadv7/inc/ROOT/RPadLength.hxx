@@ -18,6 +18,7 @@
 
 #include <vector>
 #include <string>
+#include <cmath>
 
 namespace ROOT {
 namespace Experimental {
@@ -113,6 +114,9 @@ public:
    /// Constructor from a `Normal` coordinate.
    RPadLength(Normal normal): RPadLength() { SetNormal(normal.fVal); }
 
+   /// By default all numeric values are normal values
+   RPadLength(double normal): RPadLength() { SetNormal(normal); }
+
    /// Constructor from a `Pixel` coordinate.
    RPadLength(Pixel px): RPadLength() { SetPixel(px.fVal); }
 
@@ -125,6 +129,9 @@ public:
    /// Constructor for normal, pixel and user coordinate.
    RPadLength(Normal normal, Pixel px, User user): RPadLength() { SetUser(user.fVal); SetPixel(px.fVal); SetNormal(normal.fVal);  }
 
+   /// Constructor from string representation
+   RPadLength(const std::string &csscode) : RPadLength() { if (!csscode.empty()) ParseString(csscode); }
+
    bool HasNormal() const { return fArr.size() > 0; }
    bool HasPixel() const { return fArr.size() > 1; }
    bool HasUser() const { return fArr.size() > 2; }
@@ -136,6 +143,7 @@ public:
       fArr[0] = v;
       return *this;
    }
+
    RPadLength &SetPixel(double v)
    {
       if (fArr.size() < 2)
@@ -143,6 +151,7 @@ public:
       fArr[1] = v;
       return *this;
    }
+
    RPadLength &SetUser(double v)
    {
       if (fArr.size() < 3)
@@ -169,7 +178,7 @@ public:
 
    void Clear() { fArr.clear(); }
 
-   bool Empty() const { return fArr.size() == 0; }
+   bool Empty() const { return fArr.empty(); }
 
    /// Add two `RPadLength`s.
    friend RPadLength operator+(RPadLength lhs, const RPadLength &rhs)
@@ -217,7 +226,7 @@ public:
       if (HasNormal() || rhs.HasNormal())
          SetNormal(GetNormal() + rhs.GetNormal());
       return *this;
-   };
+   }
 
    /// Subtract a `RPadLength`.
    RPadLength &operator-=(const RPadLength &rhs)
@@ -229,8 +238,9 @@ public:
       if (HasNormal() || rhs.HasNormal())
          SetNormal(GetNormal() - rhs.GetNormal());
       return *this;
-   };
+   }
 
+   /// Multiply a `RPadLength`.
    RPadLength &operator*=(double scale)
    {
       if (HasUser()) SetUser(scale*GetUser());
@@ -238,6 +248,19 @@ public:
       if (HasNormal()) SetNormal(scale*GetNormal());
       return *this;
    }
+
+   /// Compare a `RPadLength`.
+   bool operator==(const RPadLength &rhs) const
+   {
+      if ((HasUser() != rhs.HasUser()) ||
+          (HasUser() && std::fabs(GetUser() - rhs.GetUser()) > 1e-30)) return false;
+
+      if(std::fabs(GetPixel() - rhs.GetPixel()) > 1e-4) return false;
+
+      if (std::fabs(GetNormal() - rhs.GetNormal()) > 1e-6) return false;
+
+      return true;
+   };
 
    std::string AsString() const;
 

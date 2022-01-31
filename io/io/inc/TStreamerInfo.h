@@ -13,18 +13,14 @@
 #define ROOT_TStreamerInfo
 
 #include <atomic>
+#include <vector>
 
 #include "TVirtualStreamerInfo.h"
 
-#include "ThreadLocalStorage.h"
-
 #include "TVirtualCollectionProxy.h"
 
-/**
-\class TStreamerInfo
-\ingroup IO
-Describe Streamer information for one class version
-*/
+#include "TObjArray.h"
+
 
 class TFile;
 class TClass;
@@ -53,7 +49,7 @@ class TStreamerInfo : public TVirtualStreamerInfo {
       Int_t             fOffset;
       Int_t             fLength;
       TStreamerElement *fElem;     ///< Not Owned
-      ULong_t           fMethod;
+      ULongptr_t        fMethod;
       TClass           *fClass;    ///< Not Owned
       TClass           *fNewClass; ///< Not Owned
       TString           fClassName;
@@ -96,7 +92,7 @@ private:
    Int_t             fSize;              ///<!size of the persistent class
    Int_t             fNdata;             ///<!number of optimized elements
    Int_t             fNfulldata;         ///<!number of elements
-   Int_t             fNslots;            ///<!total numbrer of slots in fComp.
+   Int_t             fNslots;            ///<!total number of slots in fComp.
    TCompInfo        *fComp;              ///<![fNslots with less than fElements->GetEntries()*1.5 used] Compiled info
    TCompInfo       **fCompOpt;           ///<![fNdata]
    TCompInfo       **fCompFull;          ///<![fElements->GetEntries()]
@@ -105,7 +101,6 @@ private:
    Version_t         fOldVersion;        ///<! Version of the TStreamerInfo object read from the file
    Int_t             fNVirtualInfoLoc;   ///<! Number of virtual info location to update.
    ULong_t          *fVirtualInfoLoc;    ///<![fNVirtualInfoLoc] Location of the pointer to the TStreamerInfo inside the object (when emulated)
-   std::atomic<ULong_t> fLiveCount;      ///<! Number of outstanding pointer to this StreamerInfo.
    TStreamerInfoActions::TActionSequence *fReadObjectWise;        ///<! List of read action resulting from the compilation.
    TStreamerInfoActions::TActionSequence *fReadMemberWise;        ///<! List of read action resulting from the compilation for use in member wise streaming.
    TStreamerInfoActions::TActionSequence *fReadMemberWiseVecPtr;  ///<! List of read action resulting from the compilation for use in member wise streaming.
@@ -187,8 +182,8 @@ public:
    TStreamerInfo();
    TStreamerInfo(TClass *cl);
    virtual            ~TStreamerInfo();
-   void                Build();
-   void                BuildCheck(TFile *file = 0);
+   void                Build(Bool_t isTransient = kFALSE);
+   void                BuildCheck(TFile *file = 0, Bool_t load = kTRUE);
    void                BuildEmulated(TFile *file);
    void                BuildOld();
    virtual Bool_t      BuildFor( const TClass *cl );
@@ -217,10 +212,10 @@ public:
    TStreamerInfoActions::TActionSequence *GetWriteObjectWiseActions() { return fWriteObjectWise; }
    TStreamerInfoActions::TActionSequence *GetWriteTextActions() { return fWriteText; }
    Int_t               GetNdata()   const {return fNdata;}
-   Int_t               GetNelement() const { return fElements->GetEntries(); }
+   Int_t               GetNelement() const { return fElements->GetEntriesFast(); }
    Int_t               GetNumber()  const {return fNumber;}
    Int_t               GetLength(Int_t id) const {return fComp[id].fLength;}
-   ULong_t             GetMethod(Int_t id) const {return fComp[id].fMethod;}
+   ULongptr_t          GetMethod(Int_t id) const {return fComp[id].fMethod;}
    Int_t               GetNewType(Int_t id) const {return fComp[id].fNewType;}
    Int_t               GetOffset(const char *) const;
    Int_t               GetOffset(Int_t id) const {return fComp[id].fOffset;}
@@ -262,7 +257,7 @@ public:
    Int_t               ReadBufferClones(TBuffer &b, TClonesArray *clones, Int_t nc, Int_t first, Int_t eoffset);
    Int_t               ReadBufferSTL(TBuffer &b, TVirtualCollectionProxy *cont, Int_t nc, Int_t eoffset, Bool_t v7 = kTRUE );
    void                SetCheckSum(UInt_t checksum) {fCheckSum = checksum;}
-   void                SetClass(TClass *cl) {fClass = cl;}
+   void                SetClass(TClass *cl);
    void                SetClassVersion(Int_t vers) {fClassVersion=vers;}
    void                SetOnFileClassVersion(Int_t vers) {fOnFileClassVersion=vers;}
    void                TagFile(TFile *fFile);
@@ -274,6 +269,15 @@ private:
    Int_t               WriteBufferSTLPtrs( TBuffer &b, TVirtualCollectionProxy *cont, Int_t nc, Int_t first, Int_t eoffset);
 public:
    virtual void        Update(const TClass *oldClass, TClass *newClass);
+
+   /// \brief Generate the TClass and TStreamerInfo for the requested pair.
+   /// This creates a TVirtualStreamerInfo for the pair and trigger the BuildCheck/Old to
+   /// provokes the creation of the corresponding TClass.  This relies on the dictionary for
+   /// std::pair<const int, int> to already exist (or the interpreter information being available)
+   /// as it is used as a template.
+   /// \note The returned object is owned by the caller.
+   virtual TVirtualStreamerInfo *GenerateInfoForPair(const std::string &pairclassname, bool silent, size_t hint_pair_offset, size_t hint_pair_size);
+   virtual TVirtualStreamerInfo *GenerateInfoForPair(const std::string &firstname, const std::string &secondname, bool silent, size_t hint_pair_offset, size_t hint_pair_size);
 
    virtual TVirtualCollectionProxy *GenEmulatedProxy(const char* class_name, Bool_t silent);
    virtual TClassStreamer *GenEmulatedClassStreamer(const char* class_name, Bool_t silent);

@@ -8,7 +8,7 @@ sap.ui.define([
    "sap/m/Text",
    "sap/m/Button",
    "sap/ui/layout/SplitterLayoutData",
-   "rootui5/eve7/controller/Ged.controller",
+   "rootui5/eve7/controller/Ged.controller"
 ], function(Controller, JSONModel, XMLView, CustomTreeItem,
             FlexBox, mCheckBox, mText, mButton, SplitterLayoutData, GedController) {
 
@@ -122,7 +122,7 @@ sap.ui.define([
          this.selected = {}; // container of selected objects
       },
 
-      OnEveManagerInit: function() {
+      onEveManagerInit: function() {
          var model = this.getView().getModel("treeModel");
          model.setData(this.createModel());
          model.refresh();
@@ -169,7 +169,7 @@ sap.ui.define([
          }
 
          // FIXME: provide more generic code which should
-         this.mgr.SendMIR("NewElementPicked(" + objid + ",false,false)",
+         this.mgr.SendMIR("NewElementPickedStr(" + objid + ",false,false)",
                           this.mgr.global_highlight_id, "ROOT::Experimental::REveSelection");
       },
 
@@ -198,7 +198,9 @@ sap.ui.define([
          if (item) {
             var color = this.GetSelectionColor(selection_obj);
             item.$().css("background-color", color);
+            if (this.ged && (this.mgr.global_selection_id == selection_obj.fElementId)) this.ged.getController().updateSecondarySelectionGED(element_id, sec_idcs);
          }
+
       },
 
       UnselectElement: function (selection_obj, element_id) {
@@ -208,6 +210,7 @@ sap.ui.define([
             var cc = item.$().css("background-color");
             if (cc == color)
                item.$().css("background-color", "");
+             if (this.ged && (this.mgr.global_selection_id == selection_obj.fElementId)) this.ged.getController().updateSecondarySelectionGED();
          }
       },
 
@@ -275,14 +278,23 @@ sap.ui.define([
             }
 
             if (elem.fMainColor) {
-               newelem.fMainColor = JSROOT.Painter.root_colors[elem.fMainColor];
+               newelem.fMainColor = JSROOT.Painter.getColor(elem.fMainColor);
             }
          }
       },
 
       createModel: function() {
          this.summaryElements = {};
-         return this.createSummaryModel([], this.mgr.childs, "/");
+
+         /*
+         var src = this.mgr.childs[0].childs[2].childs;
+         for (var i = 0; i < src.length; i++) {
+            if (src[i].fName == "Collections")
+               src = src[i].childs;
+         }
+         */
+         let src = this.mgr.childs;
+         return this.createSummaryModel([], src, "/");
       },
 
       createSummaryModel: function(tgt, src, path) {

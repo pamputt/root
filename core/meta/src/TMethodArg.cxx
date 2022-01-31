@@ -10,7 +10,6 @@
  *************************************************************************/
 
 #include "TMethodArg.h"
-#include "TROOT.h"
 #include "TInterpreter.h"
 #include "Strlen.h"
 #include "TMethod.h"
@@ -35,7 +34,7 @@ ClassImp(TMethodArg);
 
 TMethodArg::TMethodArg(MethodArgInfo_t *info, TFunction *method) : TDictionary()
 {
-   fDataMember = 0;
+   fDataMember = nullptr;
    fInfo       = info;
    fMethod     = method;
    if (fInfo) {
@@ -102,7 +101,7 @@ Long_t TMethodArg::Property() const
 
 TList *TMethodArg::GetOptions() const
 {
-   return (TList*)(fDataMember ? fDataMember->GetOptions() : 0);
+   return (TList*)(fDataMember ? fDataMember->GetOptions() : nullptr);
 }
 
 ////////////////////////////////////////////////////////////////////////////////

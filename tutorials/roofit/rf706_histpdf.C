@@ -1,17 +1,18 @@
 /// \file
 /// \ingroup tutorial_roofit
 /// \notebook -js
-/// Special p.d.f.'s: histogram-based p.d.f.s and functions
+/// Special pdf's: histogram-based pdfs and functions
 ///
 /// \macro_image
 /// \macro_output
 /// \macro_code
-/// \author 07/2008 - Wouter Verkerke
+///
+/// \date July 2008
+/// \author Wouter Verkerke
 
 #include "RooRealVar.h"
 #include "RooDataSet.h"
 #include "RooGaussian.h"
-#include "RooConstVar.h"
 #include "RooPolynomial.h"
 #include "RooHistPdf.h"
 #include "TCanvas.h"
@@ -25,7 +26,7 @@ void rf706_histpdf()
    // ---------------------------------------------
 
    RooRealVar x("x", "x", 0, 20);
-   RooPolynomial p("p", "p", x, RooArgList(RooConst(0.01), RooConst(-0.01), RooConst(0.0004)));
+   RooPolynomial p("p", "p", x, RooArgList(0.01, -0.01, 0.0004));
 
    // C r e a t e   l o w   s t a t s   h i s t o g r a m
    // ---------------------------------------------------

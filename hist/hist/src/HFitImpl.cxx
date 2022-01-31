@@ -3,7 +3,6 @@
 
 
 #include "TH1.h"
-#include "TH2.h"
 #include "TF1.h"
 #include "TF2.h"
 #include "TF3.h"
@@ -244,7 +243,7 @@ TFitResultPtr HFit::Fit(FitObject * h1, TF1 *f1 , Foption_t & fitOption , const 
 
    // error normalization in case of zero error in the data
    if (fitdata->GetErrorType() == ROOT::Fit::BinData::kNoError) fitConfig.SetNormErrors(true);
-   // error normalization also in case of W1 option (weights = 1)
+   // error normalization also in case of W or WW options (weights = 1)
    if (fitdata->Opt().fErrors1)  fitConfig.SetNormErrors(true);
    // normalize errors also in case you are fitting a Ndim histo with a N-1 function
    if (int(fitdata->NDim())  == hdim -1 ) fitConfig.SetNormErrors(true);
@@ -659,7 +658,7 @@ void HFit::StoreAndDrawFitFunction(FitObject * h1, TF1 * f1, const ROOT::Fit::Da
          funcList->Add(fnew3);
       }
       else {
-         fnew2 = dynamic_cast<TF3*>(f1);
+         fnew3 = dynamic_cast<TF3*>(f1);
          R__ASSERT(fnew3);
       }
       fnew3->SetRange(xmin,ymin,zmin,xmax,ymax,zmax);
@@ -686,7 +685,7 @@ void ROOT::Fit::FitOptionsMake(EFitObjectType type, const char *option, Foption_
    //   - Decode list of options into fitOption (used by both TGraph and TH1)
    //  works for both histograms and graph depending on the enum FitObjectType defined in HFit
    if(ROOT::IsImplicitMTEnabled()) {
-      fitOption.ExecPolicy = ROOT::Fit::ExecutionPolicy::kMultithread;
+      fitOption.ExecPolicy = ROOT::EExecutionPolicy::kMultiThread;
    }
 
    if (option == 0) return;
@@ -716,12 +715,12 @@ void ROOT::Fit::FitOptionsMake(EFitObjectType type, const char *option, Foption_
       // }
 
       if (opt.Contains("SERIAL")) {
-         fitOption.ExecPolicy = ROOT::Fit::ExecutionPolicy::kSerial;
+         fitOption.ExecPolicy = ROOT::EExecutionPolicy::kSequential;
          opt.ReplaceAll("SERIAL","");
       }
 
       if (opt.Contains("MULTITHREAD")) {
-         fitOption.ExecPolicy = ROOT::Fit::ExecutionPolicy::kMultithread;
+         fitOption.ExecPolicy = ROOT::EExecutionPolicy::kMultiThread;
          opt.ReplaceAll("MULTITHREAD","");
       }
 
@@ -781,6 +780,10 @@ void ROOT::Fit::FitOptionsMake(EFitObjectType type, const char *option, Foption_
       if (opt.Contains("W")) fitOption.W1     = 1; // all non-empty bins have weight =1 (for chi2 fit)
    }
 
+   if (fitOption.PChi2 && fitOption.W1) {
+      Warning("FitOptionsMake", "Ignore option W or WW when used together with option P (Pearson chi2)");
+      fitOption.W1 = 0; // with Pearson chi2 W option is ignored
+   }
 
    if (opt.Contains("E")) fitOption.Errors  = 1;
    if (opt.Contains("R")) fitOption.Range   = 1;

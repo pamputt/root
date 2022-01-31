@@ -1,3 +1,11 @@
+/*************************************************************************
+ * Copyright (C) 1995-2021, Rene Brun and Fons Rademakers.               *
+ * All rights reserved.                                                  *
+ *                                                                       *
+ * For the licensing terms see $ROOTSYS/LICENSE.                         *
+ * For the list of contributors see $ROOTSYS/README/CREDITS.             *
+ *************************************************************************/
+
 #ifndef ROOT_RARROWTDS
 #define ROOT_RARROWTDS
 
@@ -40,14 +48,12 @@ public:
    bool SetEntry(unsigned int slot, ULong64_t entry) override;
    void InitSlot(unsigned int slot, ULong64_t firstEntry) override;
    void SetNSlots(unsigned int nSlots) override;
-   void Initialise() override;
+   void Initialize() override;
    std::string GetLabel() override;
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
-/// \brief Factory method to create a Apache Arrow RDataFrame.
-/// \param[in] table an apache::arrow table to use as a source.
-RDataFrame MakeArrowDataFrame(std::shared_ptr<arrow::Table> table, std::vector<std::string> const &columns);
+RDataFrame MakeArrowDataFrame(std::shared_ptr<arrow::Table> table, std::vector<std::string> const &columnNames);
 
 } // namespace RDF
 

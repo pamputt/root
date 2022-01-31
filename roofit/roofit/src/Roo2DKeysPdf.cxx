@@ -25,7 +25,6 @@ Two-dimensional kernel estimation PDF.
 #include "RooFit.h"
 
 #include "Roo2DKeysPdf.h"
-#include "Roo2DKeysPdf.h"
 #include "RooRealVar.h"
 #include "TTree.h"
 #include "TH2.h"
@@ -183,7 +182,7 @@ Int_t Roo2DKeysPdf::loadDataSet(RooDataSet& data, TString options)
   }
   if(bad)
   {
-    cout << "Roo2DKeysPdf::Roo2DKeysPdf Unable to initilize object; incompatible RooDataSet doesn't contain"<<endl;
+    cout << "Roo2DKeysPdf::Roo2DKeysPdf Unable to initialize object; incompatible RooDataSet doesn't contain"<<endl;
     cout << "                           all of the RooAbsReal arguments"<<endl;
     return 1;
   }

@@ -11,6 +11,13 @@ using namespace ROOT::RDF;
 
 auto fileName0 = "RCsvDS_test_headers.csv";
 auto fileName1 = "RCsvDS_test_noheaders.csv";
+auto fileName2 = "RCsvDS_test_empty.csv";
+auto fileName3 = "RCsvDS_test_win.csv";
+
+// must use http: we cannot use https on macOS until we upgrade to the newest Davix
+// and turn on the macOS SecureTransport layer.
+auto url0 = "http://root.cern/files/dataframe_test_datasource.csv";
+
 
 TEST(RCsvDS, ColTypeNames)
 {
@@ -47,11 +54,19 @@ TEST(RCsvDS, ColNamesNoHeaders)
    EXPECT_STREQ("Col3", colNames[3].c_str());
 }
 
+TEST(RCsvDS, EmptyFile)
+{
+   // Cannot read headers
+   EXPECT_THROW(RCsvDS{fileName2}, std::runtime_error);
+   // Cannot infer column types
+   EXPECT_THROW(RCsvDS(fileName2, false), std::runtime_error);
+}
+
 TEST(RCsvDS, EntryRanges)
 {
    RCsvDS tds(fileName0);
    tds.SetNSlots(3U);
-   tds.Initialise();
+   tds.Initialize();
 
    // Still dividing in equal parts...
    auto ranges = tds.GetEntryRanges();
@@ -71,7 +86,7 @@ TEST(RCsvDS, ColumnReaders)
    const auto nSlots = 3U;
    tds.SetNSlots(nSlots);
    auto vals = tds.GetColumnReaders<Long64_t>("Age");
-   tds.Initialise();
+   tds.Initialize();
    auto ranges = tds.GetEntryRanges();
    auto slot = 0U;
    std::vector<Long64_t> ages = {60, 50, 40, 30, 1, -1};
@@ -119,7 +134,7 @@ TEST(RCsvDS, ColumnReadersString)
    const auto nSlots = 3U;
    tds.SetNSlots(nSlots);
    auto vals = tds.GetColumnReaders<std::string>("Name");
-   tds.Initialise();
+   tds.Initialize();
    auto ranges = tds.GetEntryRanges();
    auto slot = 0U;
    std::vector<std::string> names = {"Harry", "Bob,Bob", "\"Joe\"", "Tom", " John  ", " Mary Ann "};
@@ -141,7 +156,7 @@ TEST(RCsvDS, ProgressiveReadingEntryRanges)
    const auto nSlots = 3U;
    tds.SetNSlots(nSlots);
    auto vals = tds.GetColumnReaders<std::string>("Name");
-   tds.Initialise();
+   tds.Initialize();
 
    std::vector<std::string> names = {"Harry", "Bob,Bob", "\"Joe\"", "Tom", " John  ", " Mary Ann "};
    auto ranges = tds.GetEntryRanges();
@@ -228,6 +243,23 @@ TEST(RCsvDS, MultipleEventLoops)
    EXPECT_EQ(6U, *tdf.Count());
    EXPECT_EQ(6U, *tdf.Count());
    EXPECT_EQ(6U, *tdf.Count());
+}
+
+TEST(RCsvDS, WindowsLinebreaks)
+{
+   auto tdf = ROOT::RDF::MakeCsvDataFrame(fileName3);
+   EXPECT_EQ(6U, *tdf.Count());
+}
+
+TEST(RCsvDS, Remote)
+{
+   (void)url0; // silence -Wunused-const-variable
+#ifdef R__HAS_DAVIX
+   auto tdf = ROOT::RDF::MakeCsvDataFrame(url0, false);
+   EXPECT_EQ(1U, *tdf.Count());
+#else
+   EXPECT_THROW(ROOT::RDF::MakeCsvDataFrame(url0, false), std::runtime_error);
+#endif
 }
 
 // NOW MT!-------------

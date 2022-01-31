@@ -176,7 +176,8 @@ or :
 
 #include "RConfigure.h"
 
-#include "Riostream.h"
+#include <iostream>
+#include <fstream>
 #include "TTreeViewer.h"
 #include "HelpText.h"
 #include "HelpTextTV.h"
@@ -190,6 +191,7 @@ or :
 #include "TContextMenu.h"
 #include "TInterpreter.h"
 #include "TLeaf.h"
+#include "TBranch.h"
 #include "TRootHelpDialog.h"
 #include "TSystem.h"
 #include "TApplication.h"
@@ -198,8 +200,7 @@ or :
 #include "TKey.h"
 #include "TFile.h"
 #include "TGMenu.h"
-#include "TGFrame.h"
-#include "TCanvas.h"
+#include "TVirtualPad.h"
 #include "TH1.h"
 #include "TFriendElement.h"
 #include "TObjArray.h"
@@ -222,6 +223,8 @@ or :
 #include "TGFileDialog.h"
 #include "TGProgressBar.h"
 #include "TSpider.h"
+#include "strlcpy.h"
+#include "snprintf.h"
 
 #ifdef WIN32
 #include "TWin32SplashThread.h"
@@ -327,7 +330,7 @@ TTreeViewer::TTreeViewer(const char* treeName) :
                        TFile *tv__tree_file = 0;\n\
                        #define GTV_DEFINED\n\
                        #endif");
-   snprintf(command,128, "gTV = (TTreeViewer*)0x%lx", (ULong_t)this);
+   snprintf(command,128, "gTV = (TTreeViewer*)0x%zx", (size_t)this);
    gROOT->ProcessLine(command);
    fTreeList = new TList;
    gROOT->ProcessLine("tv__tree_list = new TList;");
@@ -357,7 +360,7 @@ TTreeViewer::TTreeViewer(const TTree *tree) :
                        TFile *tv__tree_file = 0;\n\
                        #define GTV_DEFINED\n\
                        #endif");
-   snprintf(command,128, "gTV = (TTreeViewer*)0x%lx", (ULong_t)this);
+   snprintf(command,128, "gTV = (TTreeViewer*)0x%zx", (size_t)this);
    gROOT->ProcessLine(command);
    if (!tree) return;
    fTreeList = new TList;
@@ -417,7 +420,7 @@ void TTreeViewer::AppendTree(TTree *tree)
       char command[100];
       command[0] = 0;
       // define a global "tree" variable for the same tree
-      snprintf(command,100, "tv__tree = (TTree *)0x%lx;", (ULong_t)tree);
+      snprintf(command,100, "tv__tree = (TTree *)0x%zx;", (size_t)tree);
       ExecuteCommand(command);
    }
    //--- add the tree to the list if it is not already in
@@ -481,7 +484,7 @@ void TTreeViewer::SetTree(TTree *tree)
       fTree = tree;
       // load the tree via the interpreter
       // define a global "tree" variable for the same tree
-      TString command = TString::Format("tv__tree = (TTree *)0x%lx;", (ULong_t)tree);
+      TString command = TString::Format("tv__tree = (TTree *)0x%zx;", (size_t)tree);
       ExecuteCommand(command.Data());
    }
    //--- add the tree to the list if it is not already in
@@ -1139,11 +1142,11 @@ void TTreeViewer::BuildInterface()
    // map the tree if it was supplied in the constructor
 
    if (!fTree) {
-      fSlider->SetRange(0,1000000);
-      fSlider->SetPosition(0,1000000);
+      fSlider->SetRange(0LL,1000000LL);
+      fSlider->SetPosition(0LL,1000000LL);
    } else {
-      fSlider->SetRange(0,fTree->GetEntries()-1);
-      fSlider->SetPosition(0,fTree->GetEntries()-1);
+      fSlider->SetRange(0LL,fTree->GetEntries()-1);
+      fSlider->SetPosition(0LL,fTree->GetEntries()-1);
    }
    PrintEntries();
    fProgressBar->SetPosition(0);
@@ -1436,7 +1439,7 @@ void TTreeViewer::ExecuteDraw()
       varexp += fBarHist->GetText();
    }
    // find canvas/pad where to draw
-   TPad *pad = (TPad*)gROOT->GetSelectedPad();
+   auto pad = gROOT->GetSelectedPad();
    if (pad) pad->cd();
    // find graphics option
    const char* gopt = fBarOption->GetText();
@@ -1447,9 +1450,9 @@ void TTreeViewer::ExecuteDraw()
    if (fEnableCut) cut = Cut();
 
    // get entries to be processed
-   Long64_t nentries = (Long64_t)(fSlider->GetMaxPosition() -
-                            fSlider->GetMinPosition() + 1);
-   Long64_t firstentry =(Long64_t) fSlider->GetMinPosition();
+   Long64_t nentries = (Long64_t)(fSlider->GetMaxPositionD() -
+                            fSlider->GetMinPositionD() + 1);
+   Long64_t firstentry = fSlider->GetMinPositionL();
 //printf("firstentry=%lld, nentries=%lld\n",firstentry,nentries);
    // check if Scan is checked and if there is something in the box
    if (fScanMode) {
@@ -1603,7 +1606,7 @@ void TTreeViewer::ExecuteSpider()
    // find ListOut
    if (strlen(fBarListOut->GetText())) varexp = TString::Format(">>%s", fBarListOut->GetText());
    // find canvas/pad where to draw
-   TPad *pad = (TPad*)gROOT->GetSelectedPad();
+   auto pad = gROOT->GetSelectedPad();
    if (pad) pad->cd();
    // find graphics option
    const char* gopt = fBarOption->GetText();
@@ -1614,9 +1617,9 @@ void TTreeViewer::ExecuteSpider()
    if (fEnableCut) cut = Cut();
 
    // get entries to be processed
-   Long64_t nentries = (Long64_t)(fSlider->GetMaxPosition() -
-                            fSlider->GetMinPosition() + 1);
-   Long64_t firstentry =(Long64_t) fSlider->GetMinPosition();
+   Long64_t nentries = (Long64_t)(fSlider->GetMaxPositionD() -
+                            fSlider->GetMinPositionD() + 1);
+   Long64_t firstentry = fSlider->GetMinPositionL();
 
    // create the spider plot
 
@@ -1772,10 +1775,10 @@ void TTreeViewer::RemoveLastRecord()
 Bool_t TTreeViewer::HandleTimer(TTimer *timer)
 {
    if (fCounting) {
-      Float_t first = fSlider->GetMinPosition();
-      Float_t last  = fSlider->GetMaxPosition();
-      Float_t current = (Float_t)fTree->GetReadEntry();
-      Float_t percent = (current-first+1)/(last-first+1);
+      Double_t first = fSlider->GetMinPositionD();
+      Double_t last  = fSlider->GetMaxPositionD();
+      Double_t current = (Double_t)fTree->GetReadEntry();
+      Double_t percent = (current-first+1)/(last-first+1);
       fProgressBar->SetPosition(100.*percent);
       fProgressBar->ShowPosition();
    }
@@ -1786,7 +1789,7 @@ Bool_t TTreeViewer::HandleTimer(TTimer *timer)
 ////////////////////////////////////////////////////////////////////////////////
 /// Handle menu and other commands generated.
 
-Bool_t TTreeViewer::ProcessMessage(Long_t msg, Long_t parm1, Long_t parm2)
+Bool_t TTreeViewer::ProcessMessage(Longptr_t msg, Longptr_t parm1, Longptr_t parm2)
 {
    TRootHelpDialog *hd;
    TTVRecord *record;
@@ -2026,7 +2029,7 @@ Bool_t TTreeViewer::ProcessMessage(Long_t msg, Long_t parm1, Long_t parm2)
                         if (!gInterpreter->IsLoaded(info.fFilename)) gInterpreter->LoadMacro(info.fFilename);
                         char command[1024];
                         command[0] = 0;
-                        snprintf(command,1024,"open_session((void*)0x%lx);", (Long_t)this);
+                        snprintf(command,1024,"open_session((void*)0x%zx);", (size_t)this);
                         ExecuteCommand(command);
                      }
                      break;
@@ -2425,7 +2428,7 @@ void TTreeViewer::MapTree(TTree *tree, TGListTreeItem *parent, Bool_t listIt)
       fStopMapping = kFALSE;
    }
    //Map branches of friend Trees (if any)
-   //Look at tree->GetTree() to insure we see both the friendss of a chain
+   //Look at tree->GetTree() to insure we see both the friends of a chain
    //and the friends of the chain members
    TIter nextf( tree->GetTree()->GetListOfFriends() );
    TFriendElement *fr;
@@ -2699,7 +2702,7 @@ void TTreeViewer::PrintEntries()
    if (!fTree) return;
    char * msg = new char[100];
    snprintf(msg,100, "First entry : %lld Last entry : %lld",
-           (Long64_t)fSlider->GetMinPosition(), (Long64_t)fSlider->GetMaxPosition());
+           fSlider->GetMinPositionL(), fSlider->GetMaxPositionL());
    Message(msg);
    delete[] msg;
 }
@@ -2833,8 +2836,8 @@ Bool_t TTreeViewer::SwitchTree(Int_t index)
    }
 
    fTree = tree;
-   fSlider->SetRange(0,fTree->GetEntries()-1);
-   fSlider->SetPosition(0,fTree->GetEntries()-1);
+   fSlider->SetRange(0LL,fTree->GetEntries()-1);
+   fSlider->SetPosition(0LL,fTree->GetEntries()-1);
    command = "Current Tree : ";
    command += fTree->GetName();
    fLbl2->SetText(new TGString(command.c_str()));
@@ -2912,8 +2915,8 @@ void TTreeViewer::UpdateRecord(const char *name)
 void TTreeViewer::DoRefresh()
 {
    fTree->Refresh();
-   Float_t min = fSlider->GetMinPosition();
-   Float_t max = (Float_t)fTree->GetEntries()-1;
+   Double_t min = fSlider->GetMinPositionD();
+   Double_t max = (Double_t)fTree->GetEntries()-1;
    fSlider->SetRange(min,max);
    fSlider->SetPosition(min,max);
    ExecuteDraw();

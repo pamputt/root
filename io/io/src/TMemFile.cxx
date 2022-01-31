@@ -22,6 +22,7 @@ only from memory.
 #include "TError.h"
 #include "TSystem.h"
 #include "TROOT.h"
+#include "TObjArray.h"
 #include "TArrayC.h"
 #include "TKey.h"
 #include "TClass.h"
@@ -398,7 +399,7 @@ void TMemFile::ResetObjects(TDirectoryFile *directory, TFileMergeInfo *info) con
    }
 
    TString listHargs;
-   listHargs.Form("(TFileMergeInfo*)0x%lx",(ULong_t)info);
+   listHargs.Form("(TFileMergeInfo*)0x%zx",(size_t)info);
 
    TIter   next(directory->GetList());
    TObject *idcur;

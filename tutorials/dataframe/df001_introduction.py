@@ -1,6 +1,8 @@
 ## \file
 ## \ingroup tutorial_dataframe
 ## \notebook -nodraw
+## Basic usage of RDataFrame from python.
+##
 ## This tutorial illustrates the basic features of the RDataFrame class,
 ## a utility which allows to interact with data stored in TTrees following
 ## a functional-chain like approach.
@@ -9,15 +11,15 @@
 ## \macro_output
 ##
 ## \date May 2017
-## \author Danilo Piparo
+## \author Danilo Piparo (CERN)
 
 import ROOT
 
 # A simple helper function to fill a test tree: this makes the example stand-alone.
 def fill_tree(treeName, fileName):
-    tdf = ROOT.ROOT.RDataFrame(10)
-    tdf.Define("b1", "(double) tdfentry_")\
-       .Define("b2", "(int) tdfentry_ * tdfentry_").Snapshot(treeName, fileName)
+    df = ROOT.RDataFrame(10)
+    df.Define("b1", "(double) rdfentry_")\
+      .Define("b2", "(int) rdfentry_ * rdfentry_").Snapshot(treeName, fileName)
 
 # We prepare an input tree to run on
 fileName = "df001_introduction_py.root"
@@ -27,8 +29,7 @@ fill_tree(treeName, fileName)
 
 # We read the tree from the file and create a RDataFrame, a class that
 # allows us to interact with the data contained in the tree.
-RDF = ROOT.ROOT.RDataFrame
-d = RDF(treeName, fileName)
+d = ROOT.RDataFrame(treeName, fileName)
 
 # Operations on the dataframe
 # We now review some *actions* which can be performed on the data frame.
@@ -50,10 +51,10 @@ entries1 = d.Filter(cutb1) \
             .Filter(cutb1b2) \
             .Count();
 
-print("%s entries passed all filters" %entries1.GetValue())
+print('{} entries passed all filters'.format(entries1.GetValue()))
 
 entries2 = d.Filter("b1 < 5.").Count();
-print("%s entries passed all filters" %entries2.GetValue())
+print('{} entries passed all filters'.format(entries2.GetValue()))
 
 # `Min`, `Max` and `Mean` actions
 # These actions allow to retrieve statistical information about the entries
@@ -63,7 +64,7 @@ minVal = b1b2_cut.Min('b1')
 maxVal = b1b2_cut.Max('b1')
 meanVal = b1b2_cut.Mean('b1')
 nonDefmeanVal = b1b2_cut.Mean("b2")
-print("The mean is always included between the min and the max: %s <= %s <= %s" %(minVal.GetValue(), meanVal.GetValue(), maxVal.GetValue()))
+print('The mean is always included between the min and the max: {0} <= {1} <= {2}'.format(minVal.GetValue(), meanVal.GetValue(), maxVal.GetValue()))
 
 # `Histo1D` action
 # The `Histo1D` action allows to fill an histogram. It returns a TH1F filled
@@ -71,7 +72,7 @@ print("The mean is always included between the min and the max: %s <= %s <= %s" 
 # types, the type of the values stored in the column is automatically
 # guessed.
 hist = d.Filter(cutb1).Histo1D('b1')
-print("Filled h %s times, mean: %s" %(hist.GetEntries(), hist.GetMean()))
+print('Filled h {0} times, mean: {1}'.format(hist.GetEntries(), hist.GetMean()))
 
 # Express your chain of operations with clarity!
 # We are discussing an example here but it is not hard to imagine much more
@@ -89,15 +90,15 @@ evts_cutb1_result = cutb1_result.Count()
 evts_cutb1b2_result = cutb1b2_result.Count()
 evts_cutb1_cutb1b2_result = cutb1_cutb1b2_result.Count()
 
-print("Events passing cutb1: %s" %evts_cutb1_result.GetValue())
-print("Events passing cutb1b2: %s" %evts_cutb1b2_result.GetValue())
-print("Events passing both: %s" %evts_cutb1_cutb1b2_result.GetValue())
+print('Events passing cutb1: {}'.format(evts_cutb1_result.GetValue()))
+print('Events passing cutb1b2: {}'.format(evts_cutb1b2_result.GetValue()))
+print('Events passing both: {}'.format(evts_cutb1_cutb1b2_result.GetValue()))
 
 # Calculating quantities starting from existing columns
 # Often, operations need to be carried out on quantities calculated starting
 # from the ones present in the columns. We'll create in this example a third
 # column the values of which are the sum of the *b1* and *b2* ones, entry by
-# entry. The way in which the new quantity is defined is via a runable.
+# entry. The way in which the new quantity is defined is via a callable.
 # It is important to note two aspects at this point:
 # - The value is created on the fly only if the entry passed the existing
 # filters.

@@ -33,19 +33,27 @@
 #include "TAttFill.h"
 #include "TAttLine.h"
 #include "TAttMarker.h"
-#include "TBranch.h"
-#include "TBuffer.h"
 #include "TClass.h"
 #include "TDataType.h"
 #include "TDirectory.h"
 #include "TObjArray.h"
 #include "TVirtualTreePlayer.h"
 
+#ifdef R__LESS_INCLUDES
+class TBranch;
+class TList;
+#else
+#include "TBranch.h"
+// #include "TBuffer.h"
+#include "TList.h"
+#endif
+
 #include <array>
 #include <atomic>
+#include <vector>
+#include <utility>
 
-
-class TBranch;
+class TBuffer;
 class TBrowser;
 class TFile;
 class TLeaf;
@@ -54,7 +62,6 @@ class TTreeFormula;
 class TPolyMarker;
 class TEventList;
 class TEntryList;
-class TList;
 class TSQLResult;
 class TSelector;
 class TPrincipal;
@@ -154,6 +161,7 @@ private:
    void             SortBranchesByTime();
    Int_t            FlushBasketsImpl() const;
    void             MarkEventCluster();
+   Long64_t         GetMedianClusterSize();
 
 protected:
    virtual void     KeepCircular();
@@ -168,7 +176,7 @@ protected:
    Int_t    SetBranchAddressImp(TBranch *branch, void* addr, TBranch** ptr);
    virtual TLeaf   *GetLeafImpl(const char* branchname, const char* leafname);
 
-   Long64_t         GetCacheAutoSize(Bool_t withDefault = kFALSE) const;
+   Long64_t         GetCacheAutoSize(Bool_t withDefault = kFALSE);
    char             GetNewlineValue(std::istream &inputStream);
    void             ImportClusterRanges(TTree *fromtree);
    void             MoveReadCache(TFile *src, TDirectory *dir);
@@ -229,16 +237,25 @@ public:
       kMatchConversionCollection = 2,
       kMakeClass = 3,
       kVoidPtr = 4,
-      kNoCheck = 5
+      kNoCheck = 5,
+      kNeedEnableDecomposedObj = BIT(29),   // DecomposedObj is the newer name of MakeClass mode
+      kNeedDisableDecomposedObj = BIT(30),
+      kDecomposedObjMask = kNeedEnableDecomposedObj | kNeedDisableDecomposedObj
    };
 
    // TTree status bits
    enum EStatusBits {
       kForceRead = BIT(11),
       kCircular = BIT(12),
-      kOnlyFlushAtCluster = BIT(14) // If set, the branch's buffers will grow until an event cluster boundary is hit,
-      // guaranteeing a basket per cluster.  This mode does not provide any guarantee on the
-      // memory bounds in the case of extremely large events.
+      /// If set, the branch's buffers will grow until an event cluster boundary is hit,
+      /// guaranteeing a basket per cluster.  This mode does not provide any guarantee on the
+      /// memory bounds in the case of extremely large events.
+      kOnlyFlushAtCluster = BIT(14),
+      /// If set, signals that this TTree is the output of the processing of another TTree, and
+      /// the entries are reshuffled w.r.t. to the original TTree. As a safety measure, a TTree
+      /// with this bit set cannot add friends nor can be added as a friend. If you know what
+      /// you are doing, you can manually unset this bit with `ResetBit(EStatusBits::kEntriesReshuffled)`.
+      kEntriesReshuffled = BIT(19) // bits 15-18 are used by TChain
    };
 
    // Split level modifier
@@ -341,7 +358,7 @@ public:
    /// possible, unless e.g. type conversions are needed.
    ///
    /// \param[in] name Name of the branch to be created.
-   /// \param[in] obj Array of the objects to be added. When calling Fill(), the current value of the type/object will be saved.
+   /// \param[in] addobj Array of the objects to be added. When calling Fill(), the current value of the type/object will be saved.
    /// \param[in] bufsize he buffer size in bytes for this branch. When the buffer is full, it is compressed and written to disc.
    /// The default value of 32000 bytes and should be ok for most simple types. Larger buffers (e.g. 256000) if your Tree is not split and each entry is large (Megabytes).
    /// A small value for bufsize is beneficial if entries in the Tree are accessed randomly and the Tree is in split mode.
@@ -361,7 +378,7 @@ public:
       // Overload to avoid confusion between this signature and the template instance.
       return Branch(name,(void*)address,leaflist,bufsize);
    }
-   TBranch        *Branch(const char* name, Long_t address, const char* leaflist, Int_t bufsize = 32000)
+   TBranch        *Branch(const char* name, Longptr_t address, const char* leaflist, Int_t bufsize = 32000)
    {
       // Overload to avoid confusion between this signature and the template instance.
       return Branch(name,(void*)address,leaflist,bufsize);
@@ -369,7 +386,7 @@ public:
    TBranch        *Branch(const char* name, int address, const char* leaflist, Int_t bufsize = 32000)
    {
       // Overload to avoid confusion between this signature and the template instance.
-      return Branch(name,(void*)(Long_t)address,leaflist,bufsize);
+      return Branch(name,(void*)(Longptr_t)address,leaflist,bufsize);
    }
    virtual TBranch        *Branch(const char* name, const char* classname, void* addobj, Int_t bufsize = 32000, Int_t splitlevel = 99);
    template <class T> TBranch *Branch(const char* name, const char* classname, T* obj, Int_t bufsize = 32000, Int_t splitlevel = 99)
@@ -402,7 +419,7 @@ public:
    virtual TFile          *ChangeFile(TFile* file);
    virtual TTree          *CloneTree(Long64_t nentries = -1, Option_t* option = "");
    virtual void            CopyAddresses(TTree*,Bool_t undo = kFALSE);
-   virtual Long64_t        CopyEntries(TTree* tree, Long64_t nentries = -1, Option_t *option = "");
+   virtual Long64_t        CopyEntries(TTree* tree, Long64_t nentries = -1, Option_t *option = "", Bool_t needCopyAddresses = false);
    virtual TTree          *CopyTree(const char* selection, Option_t* option = "", Long64_t nentries = kMaxEntries, Long64_t firstentry = 0);
    virtual TBasket        *CreateBasket(TBranch*);
    virtual void            DirectoryAutoAdd(TDirectory *);
@@ -444,8 +461,8 @@ public:
    virtual Long64_t        GetEntriesFast() const   { return fEntries; }
    virtual Long64_t        GetEntriesFriend() const;
    virtual Long64_t        GetEstimate() const { return fEstimate; }
-   virtual Int_t           GetEntry(Long64_t entry = 0, Int_t getall = 0);
-           Int_t           GetEvent(Long64_t entry = 0, Int_t getall = 0) { return GetEntry(entry, getall); }
+   virtual Int_t           GetEntry(Long64_t entry, Int_t getall = 0);
+           Int_t           GetEvent(Long64_t entry, Int_t getall = 0) { return GetEntry(entry, getall); }
    virtual Int_t           GetEntryWithIndex(Int_t major, Int_t minor = 0);
    virtual Long64_t        GetEntryNumberWithBestIndex(Long64_t major, Long64_t minor = 0) const;
    virtual Long64_t        GetEntryNumberWithIndex(Long64_t major, Long64_t minor = 0) const;
@@ -524,6 +541,7 @@ public:
    virtual Long64_t        GetZipBytes() const { return fZipBytes; }
    virtual void            IncrementTotalBuffers(Int_t nbytes) { fTotalBuffers += nbytes; }
    Bool_t                  IsFolder() const { return kTRUE; }
+   virtual Bool_t          InPlaceClone(TDirectory *newdirectory, const char *options = "");
    virtual Int_t           LoadBaskets(Long64_t maxmemory = 2000000000);
    virtual Long64_t        LoadTree(Long64_t entry);
    virtual Long64_t        LoadTreeFriend(Long64_t entry, TTree* T);
@@ -548,7 +566,7 @@ public:
    virtual Long64_t        ReadStream(std::istream& inputStream, const char* branchDescriptor = "", char delimiter = ' ');
    virtual void            Refresh();
    virtual void            RegisterExternalFriend(TFriendElement *);
-   virtual void            RemoveExternalFriend(TFriendElement *fe) { if (fExternalFriends) fExternalFriends->Remove((TObject*)fe); }
+   virtual void            RemoveExternalFriend(TFriendElement *);
    virtual void            RemoveFriend(TTree*);
    virtual void            RecursiveRemove(TObject *obj);
    virtual void            Reset(Option_t* option = "");

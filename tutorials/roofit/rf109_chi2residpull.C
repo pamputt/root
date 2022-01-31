@@ -1,13 +1,15 @@
 /// \file
 /// \ingroup tutorial_roofit
 /// \notebook -js
-/// Basic functionality: Calculating chi^2 from histograms and curves in RooPlots, making histogram of residual and pull
-/// distributions
+/// Basic functionality: Calculating chi^2 from histograms and curves in RooPlots, making
+/// histogram of residual and pull distributions
 ///
 /// \macro_image
 /// \macro_output
 /// \macro_code
-/// \author 07/2008 - Wouter Verkerke
+///
+/// \date July 2008
+/// \author Wouter Verkerke
 
 #include "RooRealVar.h"
 #include "RooDataSet.h"
@@ -37,7 +39,7 @@ void rf109_chi2residpull()
    RooDataSet *data = gauss.generate(x, 10000);
 
    // Change sigma to 3.15
-   sigma = 3.15;
+   sigma.setVal(3.15);
 
    // P l o t   d a t a   a n d   s l i g h t l y   d i s t o r t e d   m o d e l
    // ---------------------------------------------------------------------------

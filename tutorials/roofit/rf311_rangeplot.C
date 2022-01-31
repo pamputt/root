@@ -1,12 +1,14 @@
 /// \file
 /// \ingroup tutorial_roofit
 /// \notebook -js
-/// Multidimensional models: projecting p.d.f and data ranges in continuous observables
+/// Multidimensional models: projecting pdf and data ranges in continuous observables
 ///
 /// \macro_image
 /// \macro_output
 /// \macro_code
-/// \author 07/2008 - Wouter Verkerke
+///
+/// \date July 2008
+/// \author Wouter Verkerke
 
 #include "RooRealVar.h"
 #include "RooDataSet.h"
@@ -38,8 +40,8 @@ void rf311_rangeplot()
    RooProdPdf sig("sig", "sig", RooArgSet(gx, gy, gz));
 
    // Create background pdf poly(x)*poly(y)*poly(z)
-   RooPolynomial px("px", "px", x, RooArgSet(RooConst(-0.1), RooConst(0.004)));
-   RooPolynomial py("py", "py", y, RooArgSet(RooConst(0.1), RooConst(-0.004)));
+   RooPolynomial px("px", "px", x, RooArgSet(-0.1, 0.004));
+   RooPolynomial py("py", "py", y, RooArgSet(0.1, -0.004));
    RooPolynomial pz("pz", "pz", z);
    RooProdPdf bkg("bkg", "bkg", RooArgSet(px, py, pz));
 

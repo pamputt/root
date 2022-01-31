@@ -36,6 +36,7 @@ occur.
 #include "TSAXParser.h"
 #include "TXMLAttr.h"
 #include "Varargs.h"
+#include "strlcpy.h"
 #include "TList.h"
 #include "TClass.h"
 
@@ -170,7 +171,10 @@ void TSAXParser::OnWarning(const char *text)
 
 Int_t TSAXParser::OnError(const char *text)
 {
-   Emit("OnError(const char *)", text);
+   TString errmsg;
+   errmsg.Form("Source line: %d  %s", fContext->input->line, text);
+
+   Emit("OnError(const char *)", errmsg.Data());
    return -3;
 }
 
@@ -180,7 +184,10 @@ Int_t TSAXParser::OnError(const char *text)
 
 Int_t TSAXParser::OnFatalError(const char *text)
 {
-   Emit("OnFatalError(const char *)", text);
+   TString errmsg;
+   errmsg.Form("Source line: %d  %s", fContext->input->line, text);
+
+   Emit("OnFatalError(const char *)", errmsg.Data());
    return -4;
 }
 
@@ -432,7 +439,7 @@ void TSAXParserCallback::CdataBlock(void *fParser, const xmlChar *value,
 /// with the user-define SAX Handler, whose functions has to be exactly the
 /// same as in TSAXParser.
 ///
-/// \param[in] handler Name User-defined SAX Handler class name
+/// \param[in] handlerName User-defined SAX Handler class name
 /// \param[in] handler Pointer to the user-defined SAX Handler
 ///
 /// See SAXHandler.C tutorial.

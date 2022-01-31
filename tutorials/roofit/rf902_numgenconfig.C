@@ -1,16 +1,17 @@
 /// \file
 /// \ingroup tutorial_roofit
 /// \notebook -nodraw
-/// Numeric algorithm tuning: configuration and customization of how MC sampling algorithms on specific p.d.f.s are
+/// Numeric algorithm tuning: configuration and customization of how MC sampling algorithms on specific pdfs are
 /// executed
 ///
 /// \macro_output
 /// \macro_code
-/// \author 07/2008 - Wouter Verkerke
+///
+/// \date July 2008
+/// \author Wouter Verkerke
 
 #include "RooRealVar.h"
 #include "RooDataSet.h"
-#include "RooConstVar.h"
 #include "RooChebychev.h"
 #include "TCanvas.h"
 #include "TAxis.h"
@@ -26,9 +27,9 @@ void rf902_numgenconfig()
    // A d j u s t   g l o b a l   MC   s a m p l i n g   s t r a t e g y
    // ------------------------------------------------------------------
 
-   // Example p.d.f. for use below
+   // Example pdf for use below
    RooRealVar x("x", "x", 0, 10);
-   RooChebychev model("model", "model", x, RooArgList(RooConst(0), RooConst(0.5), RooConst(-0.1)));
+   RooChebychev model("model", "model", x, RooArgList(0, 0.5, -0.1));
 
    // Change global strategy for 1D sampling problems without conditional observable
    // (1st kFALSE) and without discrete observable (2nd kFALSE) from RooFoamGenerator,

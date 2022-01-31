@@ -17,10 +17,9 @@
 #include <ROOT/REveClient.hxx>
 #include <ROOT/RWebWindow.hxx>
 
-#include "json.hpp"
-
 #include <cassert>
 
+#include <nlohmann/json.hpp>
 
 using namespace ROOT::Experimental;
 namespace REX = ROOT::Experimental;
@@ -80,11 +79,30 @@ void REveScene::RemoveSubscriber(unsigned id)
    fSubscribers.erase(std::remove_if(fSubscribers.begin(), fSubscribers.end(), pred), fSubscribers.end());
 }
 
+// Add Button in client gui with this command
+void REveScene::AddCommand(const std::string &name, const std::string &icon, const REveElement *element, const std::string &action)
+{
+   static const REveException eh("REveScene::AddCommand ");
+   if (element->GetElementId() && element->IsA())
+   {
+      fCommands.emplace_back(name, icon, element, action);
+   }
+   else
+   {
+      throw eh + "Element id and dictionary has to be defined";
+   }
+}
+
 void REveScene::BeginAcceptingChanges()
 {
    if (fAcceptingChanges) return;
 
-   if (HasSubscribers()) fAcceptingChanges = kTRUE;
+   if (HasSubscribers()) {
+      fAcceptingChanges = kTRUE;
+      for (auto &&client : fSubscribers) {
+         REX::gEve->SceneSubscriberProcessingChanges(client->fId);
+      }
+   }
 }
 
 void REveScene::SceneElementChanged(REveElement* element)
@@ -317,6 +335,7 @@ void REveScene::SendChangesToSubscribers()
             printf("   sending binary, len = %d --> to conn_id = %d\n", fTotalBinarySize, client->fId);
          client->fWebWindow->SendBinary(client->fId, &fOutputBinary[0], fTotalBinarySize);
       }
+      REX::gEve->SceneSubscriberWaitingResponse(client->fId);
    }
 }
 
@@ -535,6 +554,17 @@ void REveSceneList::DestroyElementRenderers(REveElement* element)
 }
 
 */
+
+bool REveSceneList::AnyChanges() const
+{
+   for (auto &el : fChildren)
+   {
+      if (((REveScene*) el)->IsChanged())
+      return true;
+   }
+   return false;
+}
+
 
 ////////////////////////////////////////////////////////////////////////////////
 //

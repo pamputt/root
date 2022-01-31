@@ -12,12 +12,8 @@
 #include "TGButtonGroup.h"
 #include "TString.h"
 #include "TGLabel.h"
-#include "TClass.h"
-#include "TGCanvas.h"
-#include "TGTab.h"
 #include "TGSlider.h"
 #include "TGNumberEntry.h"
-#include "TGButtonGroup.h"
 #include "TROOT.h"
 #include "TVirtualMutex.h"
 
@@ -518,7 +514,7 @@ namespace {
 void TGLPShapeObjEditor::DrawSphere()const
 {
    if (!gVirtualX->IsCmdThread()) {
-      gROOT->ProcessLineFast(Form("((TGLPShapeObjEditor *)0x%lx)->DrawSphere()", (ULong_t)this));
+      gROOT->ProcessLineFast(Form("((TGLPShapeObjEditor *)0x%zx)->DrawSphere()", (size_t)this));
       return;
    }
 

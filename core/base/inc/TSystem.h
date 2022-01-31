@@ -23,10 +23,10 @@
 //////////////////////////////////////////////////////////////////////////
 
 #ifndef __CINT__
-#include <stdio.h>
-#include <ctype.h>
+#include <cstdio>
+#include <cctype>
 #include <fcntl.h>
-#ifndef WIN32
+#ifndef _WIN32
 #include <unistd.h>
 #endif
 #endif
@@ -34,7 +34,7 @@
 #include "TNamed.h"
 #include "TInetAddress.h"
 #include "TTimer.h"
-#include "ThreadLocalStorage.h"
+#include <string>
 
 class TSeqCollection;
 class TFdSet;
@@ -235,7 +235,7 @@ enum ESendRecvOptions {
 #ifdef __CINT__
 typedef void *Func_t;
 #else
-typedef void ((*Func_t)());
+typedef void (*Func_t)();
 #endif
 
 R__EXTERN const char  *gRootDir;
@@ -283,7 +283,7 @@ protected:
    Int_t            fSigcnt{0};                 //Number of pending signals
    TString          fWdpath;                    //Working directory
    TString          fHostname;                  //Hostname
-   Bool_t           fInsideNotify{kFALSE};      //Used by DispatchTimers()
+   std::atomic<Bool_t> fInsideNotify{kFALSE};   //Used by DispatchTimers()
    Int_t            fBeepFreq{0};               //Used by Beep()
    Int_t            fBeepDuration{0};           //Used by Beep()
 
@@ -291,7 +291,7 @@ protected:
    Bool_t           fDone{kFALSE};              //True if eventloop should be finished
    Int_t            fLevel{0};                  //Level of nested eventloops
 
-   TSeqCollection  *fTimers{nullptr};           //List of timers
+   TList           *fTimers{nullptr};           //List of timers
    TSeqCollection  *fSignalHandler{nullptr};    //List of signal handlers
    TSeqCollection  *fFileHandler{nullptr};      //List of file handlers
    TSeqCollection  *fStdExceptionHandler{nullptr}; //List of std::exception handlers
@@ -300,8 +300,9 @@ protected:
    TString          fListLibs;                  //List shared libraries, cache used by GetLibraries
 
    TString          fBuildArch;                 //Architecture for which ROOT was built (passed to ./configure)
-   TString          fBuildCompiler;             // Compiler used to build this ROOT
+   TString          fBuildCompiler;             //Compiler used to build this ROOT
    TString          fBuildCompilerVersion;      //Compiler version used to build this ROOT
+   TString          fBuildCompilerVersionStr;   //Compiler version identifier string used to build this ROOT
    TString          fBuildNode;                 //Detailed information where ROOT was built
    TString          fBuildDir;                  //Location where to build ACLiC shared library and use as scratch area.
    TString          fFlagsDebug;                //Flags for debug compilation
@@ -333,8 +334,8 @@ protected:
    static const char     *StripOffProto(const char *path, const char *proto);
 
 private:
-   TSystem(const TSystem&) = delete;              // not implemented
-   TSystem& operator=(const TSystem&) = delete;   // not implemented
+   TSystem(const TSystem&) = delete;
+   TSystem& operator=(const TSystem&) = delete;
    Bool_t ExpandFileName(const char *fname, char *xname, const int kBufSize);
 
 public:
@@ -388,7 +389,7 @@ public:
 
    //---- Time & Date
    virtual TTime           Now();
-   virtual TSeqCollection *GetListOfTimers() const { return fTimers; }
+   virtual TList          *GetListOfTimers() const { return fTimers; }
    virtual void            AddTimer(TTimer *t);
    virtual TTimer         *RemoveTimer(TTimer *t);
    virtual void            ResetTimer(TTimer *) { }
@@ -525,6 +526,7 @@ public:
    virtual const char     *GetBuildArch() const;
    virtual const char     *GetBuildCompiler() const;
    virtual const char     *GetBuildCompilerVersion() const;
+   virtual const char     *GetBuildCompilerVersionStr() const;
    virtual const char     *GetBuildNode() const;
    virtual const char     *GetBuildDir() const;
    virtual const char     *GetFlagsDebug() const;

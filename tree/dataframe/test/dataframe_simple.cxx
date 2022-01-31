@@ -1,7 +1,9 @@
 /****** Run RDataFrame tests both with and without IMT enabled *******/
 #include <gtest/gtest.h>
+#include <ROOT/TestSupport.hxx>
 #include <ROOT/RDataFrame.hxx>
 #include <ROOT/TSeq.hxx>
+#include <TChain.h>
 #include <TFile.h>
 #include <TGraph.h>
 #include <TInterpreter.h>
@@ -17,6 +19,9 @@
 #include <set>
 #include <random>
 
+#include "MaxSlotHelper.h"
+#include "SimpleFiller.h"
+
 using namespace ROOT;
 using namespace ROOT::RDF;
 using namespace ROOT::VecOps;
@@ -24,7 +29,7 @@ using namespace ROOT::VecOps;
 // Fixture for all tests in this file. If parameter is true, run with implicit MT, else run sequentially
 class RDFSimpleTests : public ::testing::TestWithParam<bool> {
 protected:
-   RDFSimpleTests() : NSLOTS(GetParam() ? 4u : 1u)
+   RDFSimpleTests() : NSLOTS(GetParam() ? std::min(4u, std::thread::hardware_concurrency()) : 1u)
    {
       if (GetParam())
          ROOT::EnableImplicitMT(NSLOTS);
@@ -38,7 +43,6 @@ protected:
 };
 
 // Create file `filename` containing a test tree `treeName` with `nevents` events
-// TODO: create just one file at the beginning of the test execution, delete the file at test exit
 void FillTree(const char *filename, const char *treeName, int nevents = 0)
 {
    TFile f(filename, "RECREATE");
@@ -184,8 +188,7 @@ TEST_P(RDFSimpleTests, Define_jitted_type_unknown_to_interpreter)
    auto d = tdf.Define("foo", [](){return RFoo();});
    auto d2 = tdf.Define("foo2", [](){return std::array<RFoo, 2>();});
 
-   // We check that the if nothing is done with RFoo in jitted strings
-   // everything works fine
+   // We check that if nothing is done with RFoo in jitted strings everything works fine
    EXPECT_EQ(10U, *d.Count());
 
    EXPECT_ANY_THROW(d.Define("foo3", "foo*2"));
@@ -599,35 +602,26 @@ TEST_P(RDFSimpleTests, Graph)
    }
 }
 
-class MaxSlotHelper : public ROOT::Detail::RDF::RActionImpl<MaxSlotHelper> {
-   const std::shared_ptr<unsigned int> fMaxSlot; // final result
-   std::vector<unsigned int> fMaxSlots;          // per-thread partial results
-public:
-   MaxSlotHelper(unsigned int nSlots)
-      : fMaxSlot(std::make_shared<unsigned int>(std::numeric_limits<unsigned int>::lowest())),
-        fMaxSlots(nSlots, std::numeric_limits<unsigned int>::lowest())
-   {
-   }
-   MaxSlotHelper(MaxSlotHelper &&) = default;
-   MaxSlotHelper(const MaxSlotHelper &) = delete;
-   using Result_t = unsigned int;
-   std::shared_ptr<unsigned int> GetResultPtr() const { return fMaxSlot; }
-   void Initialize() {}
-   void InitTask(TTreeReader *, unsigned int) {}
-   void Exec(unsigned int slot, unsigned int /*slot2*/) { fMaxSlots[slot] = std::max(fMaxSlots[slot], slot); }
-   void Finalize() { *fMaxSlot = *std::max_element(fMaxSlots.begin(), fMaxSlots.end()); }
-
-   std::string GetActionName() { return "MaxSlot"; }
-};
-
 TEST_P(RDFSimpleTests, BookCustomAction)
 {
    RDataFrame d(1);
-   const auto nWorkers = std::max(1u, ROOT::GetImplicitMTPoolSize());
+   const auto nWorkers = std::max(1u, ROOT::GetThreadPoolSize());
    const auto expected = nWorkers-1;
 
    auto maxSlot0 = d.Book<unsigned int>(MaxSlotHelper(nWorkers), {"tdfslot_"});
    auto maxSlot1 = d.Book<unsigned int>(MaxSlotHelper(nWorkers), {"rdfslot_"});
+   EXPECT_EQ(*maxSlot0, expected);
+   EXPECT_EQ(*maxSlot1, expected);
+}
+
+TEST_P(RDFSimpleTests, BookCustomActionJitted)
+{
+   RDataFrame d(1);
+   const auto nWorkers = std::max(1u, ROOT::GetThreadPoolSize());
+   const auto expected = nWorkers-1;
+
+   auto maxSlot0 = d.Book(MaxSlotHelper(nWorkers), {"tdfslot_"});
+   auto maxSlot1 = d.Book(MaxSlotHelper(nWorkers), {"rdfslot_"});
    EXPECT_EQ(*maxSlot0, expected);
    EXPECT_EQ(*maxSlot1, expected);
 }
@@ -831,12 +825,49 @@ TEST_P(RDFSimpleTests, ManyRangesPerWorker)
 }
 
 // ROOT-9736
-TEST(RDFSimpleTests, NonExistingFile)
+TEST_P(RDFSimpleTests, NonExistingFile)
 {
    ROOT::RDataFrame r("myTree", "nonexistingfile.root");
 
+   TString expecteddiag;
+   expecteddiag.Form("file %s/nonexistingfile.root does not exist", gSystem->pwd());
+
    // We try to use the tree for jitting: an exception is thrown
-   EXPECT_ANY_THROW(r.Filter("inventedVar > 0"));
+   ROOT_EXPECT_ERROR(EXPECT_ANY_THROW(r.Filter("inventedVar > 0")), "TFile::TFile", expecteddiag.Data());
+}
+
+// ROOT-10549: check we throw if a file is unreadable
+TEST_P(RDFSimpleTests, NonExistingFileInChain)
+{
+   const auto filename = "rdf_nonexistingfileinchain.root";
+   ROOT::RDataFrame(1).Define("x", [] { return 10; }).Snapshot<int>("t", filename, {"x"});
+
+   ROOT::RDataFrame df("t", {filename, "doesnotexist.root"});
+
+   const auto errmsg = "file %s/doesnotexist.root does not exist";
+   TString expecteddiag;
+   expecteddiag.Form(errmsg, gSystem->pwd());
+   ROOT::TestSupport::CheckDiagsRAII diagRAII{kError, "TFile::TFile", expecteddiag.Data()};
+   // in the single-thread case the error happens when TTreeReader is calling LoadTree the first time
+   // otherwise we notice the file does not exist beforehand, e.g. in TTreeProcessorMT
+   if (!ROOT::IsImplicitMTEnabled())
+      diagRAII.requiredDiag(kWarning, "TTreeReader::SetEntryBase()", "There was an issue opening the last file associated "
+                                                                     "to the TChain being processed.");
+
+   bool exceptionCaught = false;
+   try {
+      df.Count().GetValue();
+   } catch (const std::exception &e) {
+      const std::string expected_msg =
+         ROOT::IsImplicitMTEnabled()
+            ? "TTreeProcessorMT::Process: an error occurred while opening file \"doesnotexist.root\""
+            : "An error was encountered while processing the data. TTreeReader status code is: 5";
+      EXPECT_EQ(e.what(), expected_msg);
+      exceptionCaught = true;
+   }
+   EXPECT_TRUE(exceptionCaught);
+
+   gSystem->Unlink(filename);
 }
 
 TEST_P(RDFSimpleTests, Stats)
@@ -903,10 +934,54 @@ TEST(RDFSimpleTests, ScalarValuesCollectionWeights)
    EXPECT_ANY_THROW(*h);
 }
 
+TEST_P(RDFSimpleTests, ChainWithDifferentTreeNames)
+{
+   const auto fname1 = "test_chainwithdifferenttreenames_1.root";
+   const auto fname2 = "test_chainwithdifferenttreenames_2.root";
+   {
+      ROOT::RDataFrame(10).Define("x", [] { return 1; }).Snapshot<int>("t1", fname1, {"x"});
+      ROOT::RDataFrame(10).Define("x", [] { return 3; }).Snapshot<int>("t2", fname2, {"x"});
+   }
+
+   // add trees to chain
+   TChain c("t1");
+   c.Add(fname1);
+   c.Add((std::string(fname2) + "/t2").c_str());
+
+   // pass chain to RDF and process trees with different names
+   ROOT::RDataFrame df2(c);
+   EXPECT_DOUBLE_EQ(*df2.Mean("x"), 2);
+
+   gSystem->Unlink(fname1);
+   gSystem->Unlink(fname2);
+}
+
+TEST_P(RDFSimpleTests, WritingToFundamentalType)
+{
+   EXPECT_THROW(ROOT::RDataFrame(1).Define("x", [] { return 1; }).Filter("x = 42"), std::runtime_error);
+}
+
+TEST_P(RDFSimpleTests, FillWithCustomClass)
+{
+   SimpleFiller sf; // defined as a variable to exercise passing lvalues into `Fill`
+   auto simplefilled = ROOT::RDataFrame(10).Define("x", [] { return 42.; }).Fill<double>(sf, {"x"});
+   auto &h = simplefilled->GetHisto();
+   EXPECT_DOUBLE_EQ(h.GetMean(), 42.);
+   EXPECT_EQ(h.GetEntries(), 10);
+}
+
+TEST_P(RDFSimpleTests, FillWithCustomClassJitted)
+{
+   auto simplefilled = ROOT::RDataFrame(10).Define("x", [] { return 42.; }).Fill(SimpleFiller{}, {"x"});
+   auto &h = simplefilled->GetHisto();
+   EXPECT_DOUBLE_EQ(h.GetMean(), 42.);
+   EXPECT_EQ(h.GetEntries(), 10);
+}
+
 // run single-thread tests
-INSTANTIATE_TEST_CASE_P(Seq, RDFSimpleTests, ::testing::Values(false));
+INSTANTIATE_TEST_SUITE_P(Seq, RDFSimpleTests, ::testing::Values(false));
 
 // run multi-thread tests
 #ifdef R__USE_IMT
-   INSTANTIATE_TEST_CASE_P(MT, RDFSimpleTests, ::testing::Values(true));
+   INSTANTIATE_TEST_SUITE_P(MT, RDFSimpleTests, ::testing::Values(true));
 #endif

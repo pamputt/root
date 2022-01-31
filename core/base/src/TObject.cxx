@@ -25,17 +25,20 @@ reserved as  global bits while bits 14 - 23 can be used in different
 class hierarchies (watch out for overlaps).
 */
 
-#include <string.h>
+#include <cstring>
 #if !defined(WIN32) && !defined(__MWERKS__) && !defined(R__SOLARIS)
 #include <strings.h>
 #endif
-#include <stdlib.h>
-#include <stdio.h>
+#include <cstdlib>
+#include <cstdio>
 #include <sstream>
+#include <fstream>
+#include <iostream>
 
 #include "Varargs.h"
-#include "Riostream.h"
+#include "snprintf.h"
 #include "TObject.h"
+#include "TBuffer.h"
 #include "TClass.h"
 #include "TGuiFactory.h"
 #include "TMethod.h"
@@ -48,7 +51,7 @@ class hierarchies (watch out for overlaps).
 #include "TRefTable.h"
 #include "TProcessID.h"
 
-Long_t TObject::fgDtorOnly = 0;
+Longptr_t TObject::fgDtorOnly = 0;
 Bool_t TObject::fgObjectStat = kTRUE;
 
 ClassImp(TObject);
@@ -222,7 +225,7 @@ TObject *TObject::DrawClone(Option_t *option) const
    if (pad) pad->cd();
 
    TObject *newobj = Clone();
-   if (!newobj) return 0;
+   if (!newobj) return nullptr;
    if (pad) {
       if (strlen(option)) pad->GetListOfPrimitives()->Add(newobj,option);
       else                pad->GetListOfPrimitives()->Add(newobj,GetDrawOption());
@@ -319,7 +322,7 @@ void TObject::ExecuteEvent(Int_t, Int_t, Int_t)
 
 TObject *TObject::FindObject(const char *) const
 {
-   return 0;
+   return nullptr;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -329,7 +332,7 @@ TObject *TObject::FindObject(const char *) const
 
 TObject *TObject::FindObject(const TObject *) const
 {
-   return 0;
+   return nullptr;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -365,7 +368,7 @@ const char *TObject::GetName() const
 
 const char *TObject::GetIconName() const
 {
-   return 0;
+   return nullptr;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -493,7 +496,7 @@ void TObject::ls(Option_t *option) const
    TROOT::IndentLevel();
    std::cout <<"OBJ: " << IsA()->GetName() << "\t" << GetName() << "\t" << GetTitle() << " : ";
    std::cout << Int_t(TestBit(kCanDelete));
-   if (option && strstr(option,"noaddr")==0) {
+   if (option && strstr(option,"noaddr")==nullptr) {
       std::cout <<" at: "<< this ;
    }
    std::cout << std::endl;
@@ -750,6 +753,14 @@ void TObject::UseCurrentStyle()
 ///  Using the kWriteDelete option a previous key with the same name is
 ///  deleted only after the new object has been written. This option
 ///  is safer than kOverwrite but it is slower.
+///  NOTE: Neither kOverwrite nor kWriteDelete reduces the size of a TFile--
+///  the space is simply freed up to be overwritten; in the case of a TTree,
+///  it is more complicated. If one opens a TTree, appends some entries,
+///  then writes it out, the behaviour is effectively the same. If, however,
+///  one creates a new TTree and writes it out in this way,
+///  only the metadata is replaced, effectively making the old data invisible
+///  without deleting it. TTree::Delete() can be used to mark all disk space
+///  occupied by a TTree as free before overwriting its metadata this way.
 ///  The kSingleKey option is only used by TCollection::Write() to write
 ///  a container with a single key instead of each object in the container
 ///  with its own key.
@@ -762,6 +773,9 @@ void TObject::UseCurrentStyle()
 
 Int_t TObject::Write(const char *name, Int_t option, Int_t bufsize) const
 {
+   if (R__unlikely(option & kOnlyPrepStep))
+      return 0;
+
    TString opt = "";
    if (option & kSingleKey)   opt += "SingleKey";
    if (option & kOverwrite)   opt += "OverWrite";
@@ -965,7 +979,7 @@ void TObject::SetObjectStat(Bool_t stat)
 ////////////////////////////////////////////////////////////////////////////////
 /// Return destructor only flag
 
-Long_t TObject::GetDtorOnly()
+Longptr_t TObject::GetDtorOnly()
 {
    return fgDtorOnly;
 }
@@ -975,7 +989,7 @@ Long_t TObject::GetDtorOnly()
 
 void TObject::SetDtorOnly(void *obj)
 {
-   fgDtorOnly = (Long_t) obj;
+   fgDtorOnly = (Longptr_t) obj;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -983,7 +997,7 @@ void TObject::SetDtorOnly(void *obj)
 
 void TObject::operator delete(void *ptr)
 {
-   if ((Long_t) ptr != fgDtorOnly)
+   if ((Longptr_t) ptr != fgDtorOnly)
       TStorage::ObjectDealloc(ptr);
    else
       fgDtorOnly = 0;
@@ -994,7 +1008,7 @@ void TObject::operator delete(void *ptr)
 
 void TObject::operator delete[](void *ptr)
 {
-   if ((Long_t) ptr != fgDtorOnly)
+   if ((Longptr_t) ptr != fgDtorOnly)
       TStorage::ObjectDealloc(ptr);
    else
       fgDtorOnly = 0;
@@ -1006,7 +1020,7 @@ void TObject::operator delete[](void *ptr)
 
 void TObject::operator delete(void *ptr, size_t size)
 {
-   if ((Long_t) ptr != fgDtorOnly)
+   if ((Longptr_t) ptr != fgDtorOnly)
       TStorage::ObjectDealloc(ptr, size);
    else
       fgDtorOnly = 0;
@@ -1017,7 +1031,7 @@ void TObject::operator delete(void *ptr, size_t size)
 
 void TObject::operator delete[](void *ptr, size_t size)
 {
-   if ((Long_t) ptr != fgDtorOnly)
+   if ((Longptr_t) ptr != fgDtorOnly)
       TStorage::ObjectDealloc(ptr, size);
    else
       fgDtorOnly = 0;

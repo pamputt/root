@@ -122,15 +122,12 @@ non-linear methods must be applied.
 #include "TMVA/Types.h"
 #include "TMVA/VariableInfo.h"
 
-#include "TMatrixD.h"
 #include "TVector.h"
 #include "TMath.h"
 #include "TFile.h"
-#include "TKey.h"
 #include "TH1.h"
-#include "TClass.h"
-#include "Riostream.h"
 
+#include <iostream>
 #include <iomanip>
 #include <vector>
 #include <cstdlib>
@@ -241,7 +238,7 @@ void TMVA::MethodLikelihood::Init( void )
 ////////////////////////////////////////////////////////////////////////////////
 /// define the options (their key words) that can be set in the option string
 ///
-/// TransformOutput   <bool>   transform (often strongly peaked) likelihood output through sigmoid inversion
+/// TransformOutput   `<bool>`   transform (often strongly peaked) likelihood output through sigmoid inversion
 
 void TMVA::MethodLikelihood::DeclareOptions()
 {

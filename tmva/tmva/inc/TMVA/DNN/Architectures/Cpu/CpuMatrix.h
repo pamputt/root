@@ -27,7 +27,6 @@
 #include "TMatrix.h"
 #include "TMVA/Config.h"
 #include "CpuBuffer.h"
-#include <TMVA/Config.h>
 
 // #define DEBUG_TMVA_TCPUMATRIX
 #if defined(DEBUG_TMVA_TCPUMATRIX)
@@ -104,7 +103,9 @@ public:
 
    TCpuBuffer<AFloat>& GetBuffer() {return fBuffer;}
    const TCpuBuffer<AFloat>& GetBuffer() const {return fBuffer;}
-
+   // for compatible API with Tensor and Matrix in Cuda
+   TCpuBuffer<AFloat> &GetDeviceBuffer() { return fBuffer; }
+   const TCpuBuffer<AFloat> &GetDeviceBuffer() const { return fBuffer; }
 
    static const AFloat *GetOnePointer() { return fOnes.data(); }
 
@@ -122,6 +123,9 @@ public:
    /** Construct a m-times-n matrix from the given buffer. The size must of
     *  course match. */
    TCpuMatrix(const TCpuBuffer<AFloat> &buffer, size_t m, size_t n);
+
+   /** copy from a TMAtrixT . Deep copy without re-creating a new buffer */
+   TCpuMatrix<AFloat> &operator=(const TMatrixT<AFloat> &);
 
    // N.B the default copy constructor does a shallow copy (NOT a deep one) !
    TCpuMatrix(const TCpuMatrix &) = default;

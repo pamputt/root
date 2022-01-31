@@ -22,35 +22,21 @@
 #include "TGFileBrowser.h"
 #include "TBrowser.h"
 
-#include <Riostream.h>
-
 #include "TClass.h"
 #include "TROOT.h"
-#include "TStyle.h"
 #include "TSystem.h"
-#include "TRint.h"
 #include "TVirtualX.h"
 
-#include "TApplication.h"
-#include "TFile.h"
 #include "TClassMenuItem.h"
 
 #include "TColor.h"
 
 #include "TGCanvas.h"
-#include "TGSplitter.h"
-#include "TGStatusBar.h"
 #include "TGMenu.h"
-#include "TGPicture.h"
-#include "TGToolBar.h"
-#include "TGLabel.h"
-#include "TGXYLayout.h"
-#include "TGNumberEntry.h"
-#include <KeySymbols.h>
-
-#include "TGLSAViewer.h"
-#include "TGLSAFrame.h"
+#include "TGSplitter.h"
 #include "TGTab.h"
+#include <KeySymbols.h>
+#include "TGLSAViewer.h"
 
 #include "TGeoVolume.h"
 #include "TGeoNode.h"
@@ -415,7 +401,7 @@ void TEveGListTreeEditorFrame::ItemDblClicked(TGListTreeItem* item, Int_t btn)
 ////////////////////////////////////////////////////////////////////////////////
 /// A key has been pressed for an item.
 ///
-/// Only <Delete>, <Enter> and <Return> keys are handled here,
+/// Only `<Delete>`, `<Enter>` and `<Return>` keys are handled here,
 /// otherwise the control is passed back to TGListTree.
 
 void TEveGListTreeEditorFrame::ItemKeyPress(TGListTreeItem *entry, UInt_t keysym, UInt_t mask)
@@ -640,7 +626,7 @@ void TEveBrowser::EveMenu(Int_t id)
       }
       case kNewTextEditor: {
          StartEmbedding(1);
-         gROOT->ProcessLineFast(Form("new TGTextEditor((const char *)0, (const TGWindow *)0x%lx)", (ULong_t)gClient->GetRoot()));
+         gROOT->ProcessLineFast(Form("new TGTextEditor((const char *)0, (const TGWindow *)0x%zx)", (size_t)gClient->GetRoot()));
          StopEmbedding();
          SetTabTitle("Editor", 1);
          break;
@@ -651,7 +637,7 @@ void TEveBrowser::EveMenu(Int_t id)
          {
             StartEmbedding(1);
             gROOT->ProcessLine(Form("new TGHtmlBrowser(\"http://root.cern.ch/root/html/ClassIndex.html\", \
-                              (const TGWindow *)0x%lx)", (ULong_t)gClient->GetRoot()));
+                              (const TGWindow *)0x%zx)", (size_t)gClient->GetRoot()));
             StopEmbedding();
             SetTabTitle("HTML", 1);
          }

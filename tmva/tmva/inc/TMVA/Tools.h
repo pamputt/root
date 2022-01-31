@@ -38,20 +38,16 @@
 //////////////////////////////////////////////////////////////////////////
 
 #include <vector>
+#include <string>
 #include <sstream>
 #include <iostream>
-#include <iomanip>
-#if __cplusplus > 199711L
 #include <atomic>
-#endif
 
 #include "TXMLEngine.h"
 
 #include "TMatrixDSymfwd.h"
 
 #include "TMatrixDfwd.h"
-
-#include "TVectorDfwd.h"
 
 #include "TVectorDfwd.h"
 
@@ -230,11 +226,7 @@ namespace TMVA {
       const TString fRegexp;
       mutable MsgLogger*    fLogger;
       MsgLogger& Log() const { return *fLogger; }
-#if __cplusplus > 199711L
       static std::atomic<Tools*> fgTools;
-#else
-      static Tools* fgTools;
-#endif
 
       // xml tools
 

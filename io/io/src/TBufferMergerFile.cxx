@@ -14,7 +14,6 @@
 #include "TBufferFile.h"
 
 namespace ROOT {
-namespace Experimental {
 
 TBufferMergerFile::TBufferMergerFile(TBufferMerger &m)
    : TMemFile(m.fMerger.GetOutputFile()->GetName(), "RECREATE", "",
@@ -29,7 +28,24 @@ TBufferMergerFile::~TBufferMergerFile()
 
 Int_t TBufferMergerFile::Write(const char *name, Int_t opt, Int_t bufsize)
 {
+   // Make sure the compression of the basket is done in the unlocked thread and
+   // not in the locked section.
+   if (!fMerger.GetNotrees())
+      TMemFile::Write(name, opt | TObject::kOnlyPrepStep, bufsize);
+
+   // Instead of Writing the TTree, doing a memcpy, Pushing to the queue
+   // then Reading and then deleting, let's see if we can just merge using
+   // the live TTree.
+   if (fMerger.TryMerge(this)) {
+      ResetAfterMerge(0);
+      return 0;
+   }
+
+   auto oldCompLevel = GetCompressionLevel();
+   if (!fMerger.GetCompressTemporaryKeys())
+      SetCompressionLevel(0);
    Int_t nbytes = TMemFile::Write(name, opt, bufsize);
+   SetCompressionLevel(oldCompLevel);
 
    if (nbytes) {
       TBufferFile *buffer = new TBufferFile(TBuffer::kWrite, GetSize());
@@ -41,5 +57,4 @@ Int_t TBufferMergerFile::Write(const char *name, Int_t opt, Int_t bufsize)
    return nbytes;
 }
 
-} // namespace Experimental
 } // namespace ROOT

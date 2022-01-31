@@ -92,12 +92,12 @@ int TMVACrossValidationApplication()
                       " splitExpr?" << std::endl;
          exit(0);
       }
-      
+
    }
    {
       TString methodName = "Fisher";
       TString weightfile = TString("dataset/weights/") + jobname + "_" + methodName + TString(".weights.xml");
-      
+
       Bool_t weightfileExists = (gSystem->AccessPathName(weightfile) == kFALSE);
       if (weightfileExists) {
          reader->BookMVA(methodName, weightfile);
@@ -140,6 +140,15 @@ int TMVACrossValidationApplication()
    tree->ResetBranchAddresses();
    delete tree;
 
+   if (!gROOT->IsBatch()) {
+      auto c = new TCanvas();
+      c->Divide(2,1);
+      c->cd(1);
+      histBDTG.DrawClone();
+      c->cd(2);
+      histFisher.DrawClone();
+   }
+   else
    { // Write histograms to output file
       TFile *target = new TFile("TMVACrossEvaluationApp.root", "RECREATE");
       histBDTG.Write();

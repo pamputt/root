@@ -13,7 +13,6 @@
 #include "TEveProjectionManager.h"
 #include "TEveGValuators.h"
 
-#include "TGNumberEntry.h"
 #include "TGComboBox.h"
 #include "TGLabel.h"
 
@@ -50,8 +49,12 @@ TEveProjectionManagerEditor::TEveProjectionManagerEditor(const TGWindow *p,
       TGLabel* lab = new TGLabel(f, "Type");
       f->AddFrame(lab, new TGLayoutHints(kLHintsLeft|kLHintsBottom, 1, 31, 1, 2));
       fType = new TGComboBox(f);
-      fType->AddEntry("RPhi", TEveProjection::kPT_RPhi);
       fType->AddEntry("RhoZ", TEveProjection::kPT_RhoZ);
+      fType->AddEntry("RPhi", TEveProjection::kPT_RPhi);
+      fType->AddEntry("XZ",   TEveProjection::kPT_XZ);
+      fType->AddEntry("YZ",   TEveProjection::kPT_YZ);
+      fType->AddEntry("ZX",   TEveProjection::kPT_ZX);
+      fType->AddEntry("ZY",   TEveProjection::kPT_ZY);
       fType->AddEntry("3D",   TEveProjection::kPT_3D);
       TGListBox* lb = fType->GetListBox();
       lb->Resize(lb->GetWidth(), 2*18);

@@ -44,39 +44,16 @@
 #include <iosfwd>
 
 
-
-
-//doxygen tag
-
 /**
-   @defgroup SMatrixGroup SMatrix
-   @ingroup  Math
+\defgroup SMatrixSVector Matrix and Vector classes
+\ingroup SMatrixGroup
 
-   \ref SMatrixPage  for high performance vector and matrix computations.
-   Classes representing Matrices and Vectors of arbitrary type and dimension and related functions.
-   For a detailed description and usage examples see:
-   <ul>
-    <li>\ref SMatrixPage home page
-    <li>\ref SVectorDoc
-    <li>\ref SMatrixDoc
-    <li>\ref MatVecFunctions
-   </ul>
+Classes representing Matrices and Vectors of arbitrary type and dimension.
+For a detailed description and usage examples see:
 
-
-*/
-
-/**
-   @defgroup SMatrixSVector Matrix and Vector classes
-
-   @ingroup SMatrixGroup
-
-   Classes representing Matrices and Vectors of arbitrary type and dimension.
-   For a detailed description and usage examples see:
-   <ul>
-    <li>\ref SVectorDoc
-    <li>\ref SMatrixDoc
-    <li>\ref MatVecFunctions
-   </ul>
+  - \ref SVectorDoc
+  - \ref SMatrixDoc
+  - \ref MatVecFunctions
 
 */
 
@@ -611,7 +588,7 @@ public:
 
    /**
       return a slice of therow as a vector starting at the colum value col0 until col0+N,
-      where N is the size of the vector (SubVector::kSize )
+      where N is the size of the vector (SVector::kSize )
       Condition  col0+N <= D2
    */
    template <class SubVector>
@@ -619,7 +596,7 @@ public:
 
    /**
       return a slice of the column as a vector starting at the row value row0 until row0+Dsub.
-      where N is the size of the vector (SubVector::kSize )
+      where N is the size of the vector (SVector::kSize )
       Condition  row0+N <= D1
    */
    template <class SubVector>
@@ -641,7 +618,7 @@ public:
 
    /**
       Set the diagonal elements from a Vector
-      Require that vector implements ::kSize since a check (statically) is done on
+      Require that vector implements SVector::kSize since a check (statically) is done on
       diagonal size == vector size
    */
    template <class Vector>

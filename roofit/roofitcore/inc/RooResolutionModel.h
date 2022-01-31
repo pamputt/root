@@ -17,7 +17,7 @@
 #define ROO_RESOLUTION_MODEL
 
 #include "RooAbsPdf.h"
-#include "RooProxy.h"
+#include "RooTemplateProxy.h"
 #include "RooRealVar.h"
 #include "RooFormulaVar.h"
 
@@ -38,11 +38,15 @@ public:
                                             Bool_t) const { return 0; }
 
   Double_t getValV(const RooArgSet* nset=0) const ;
+
+  // If used as regular PDF, it also has to be normalized. If this resolution
+  // model is used in a convolution, return unnormalized value regardless of
+  // specified normalization set.
+  bool selfNormalized() const { return isConvolved() ; }
+
   virtual RooResolutionModel* convolution(RooFormulaVar* basis, RooAbsArg* owner) const ;
   /// Return the convolution variable of the resolution model.
-  const RooAbsRealLValue& convVar() const {return *x;}
-  /// Return the convolution variable of the resolution model.
-  RooAbsRealLValue& convVar() {return *x;}
+  RooAbsRealLValue& convVar() const {return *x;}
   const RooRealVar& basisConvVar() const ;
 
   inline Bool_t isBasisSupported(const char* name) const { return basisCode(name)?kTRUE:kFALSE ; }
@@ -52,7 +56,7 @@ public:
   Double_t getNorm(const RooArgSet* nset=0) const ;
 
   inline const RooFormulaVar& basis() const { return _basis?*_basis:*identity() ; }
-  Bool_t isConvolved() { return _basis ? kTRUE : kFALSE ; }
+  Bool_t isConvolved() const { return _basis ? true : false ; }
 
   virtual void printMultiline(std::ostream& os, Int_t content, Bool_t verbose=kFALSE, TString indent="") const ;
 
@@ -64,7 +68,7 @@ protected:
 
   friend class RooConvGenContext ;
   friend class RooAddModel ;
-  RooProxy<RooAbsRealLValue> x;                   // Dependent/convolution variable
+  RooTemplateProxy<RooAbsRealLValue> x;                   // Dependent/convolution variable
 
   virtual Bool_t redirectServersHook(const RooAbsCollection& newServerList, Bool_t mustReplaceAll, Bool_t nameChange, Bool_t isRecursive) ;
 //  Bool_t traceEvalHook(Double_t value) const ;

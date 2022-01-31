@@ -14,20 +14,17 @@
 
 #include "TSQLStatement.h"
 
-#if !defined(__CINT__)
-#include <occi.h>
-#ifdef CONST
-#undef CONST
-#endif
-#else
-namespace oracle { namespace occi {
-class Environment;
-class Connection;
-class Statement;
-class ResultSet;
-class MetaData;
-   }}
-#endif
+#include <vector>
+
+namespace oracle {
+namespace occi {
+   class Environment;
+   class Connection;
+   class Statement;
+   class ResultSet;
+   struct MetaData;
+}
+}
 
 class TOracleStatement : public TSQLStatement {
 
@@ -57,15 +54,15 @@ protected:
    void        SetBufferSize(Int_t size);
    void        CloseBuffer();
 
+   TOracleStatement(const TOracleStatement &) = delete;
+   TOracleStatement& operator=(const TOracleStatement &) = delete;
+
 public:
    TOracleStatement(oracle::occi::Environment* env,
                     oracle::occi::Connection* conn,
                     oracle::occi::Statement* stmt,
                     Int_t niter, Bool_t errout = kTRUE);
    virtual ~TOracleStatement();
-
-   TOracleStatement(const TOracleStatement &) = delete;
-   TOracleStatement& operator=(const TOracleStatement &) = delete;
 
    void        Close(Option_t * = "") final;
 

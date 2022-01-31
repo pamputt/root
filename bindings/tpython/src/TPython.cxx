@@ -13,7 +13,6 @@
 // CPyCppyy.h must be go first, since it includes Python.h, which must be
 // included before any standard header
 #include "CPyCppyy.h"
-#include "PyStrings.h"
 #include "TPython.h"
 #include "CPPInstance.h"
 #include "CPPOverload.h"
@@ -30,79 +29,88 @@
 #include <Riostream.h>
 #include <string>
 
-//______________________________________________________________________________
-//                          Python interpreter access
-//                          =========================
-//
-// The TPython class allows for access to python objects from Cling. The current
-// functionality is only basic: ROOT objects and builtin types can freely cross
-// the boundary between the two interpreters, python objects can be instantiated
-// and their methods can be called. All other cross-coding is based on strings
-// that are run on the python interpreter.
-//
-// Examples:
-//
-//  $ cat MyPyClass.py
-//  print 'creating class MyPyClass ... '
-//
-//  class MyPyClass:
-//     def __init__( self ):
-//        print 'in MyPyClass.__init__'
-//
-//     def gime( self, what ):
-//        return what
-//
-//  $ root -l
-//  // Execute a string of python code.
-//  root [0] TPython::Exec( "print \'Hello World!\'" );
-//  Hello World!
-//
-//  // Create a TBrowser on the python side, and transfer it back and forth.
-//  // Note the required explicit (void*) cast!
-//  root [1] TBrowser* b = (void*)TPython::Eval( "ROOT.TBrowser()" );
-//  root [2] TPython::Bind( b, "b" );
-//  root [3] b == (void*) TPython::Eval( "b" )
-//  (int)1
-//
-//  // Builtin variables can cross-over by using implicit casts.
-//  root [4] int i = TPython::Eval( "1 + 1" );
-//  root [5] i
-//  (int)2
-//
-//  // Load a python module with a class definition, and use it. Casts are
-//  // necessary as the type information can not be otherwise derived.
-//  root [6] TPython::LoadMacro( "MyPyClass.py" );
-//  creating class MyPyClass ...
-//  root [7] MyPyClass m;
-//  in MyPyClass.__init__
-//  root [8] std::string s = (char*)m.gime( "aap" );
-//  root [9] s
-//  (class TString)"aap"
-//
-// It is possible to switch between interpreters by calling "TPython::Prompt()"
-// on the Cling side, while returning with ^D (EOF). State is preserved between
-// successive switches.
-//
-// The API part provides (direct) C++ access to the bindings functionality of
-// PyROOT. It allows verifying that you deal with a PyROOT python object in the
-// first place (CPPInstance_Check for CPPInstance and any derived types, as well
-// as CPPInstance_CheckExact for CPPInstance's only); and it allows conversions
-// of void* to an CPPInstance and vice versa.
+/// \class TPython
+/// Accessing the Python interpreter from C++.
+///
+/// The TPython class allows for access to python objects from Cling. The current
+/// functionality is only basic: ROOT objects and builtin types can freely cross
+/// the boundary between the two interpreters, python objects can be instantiated
+/// and their methods can be called. All other cross-coding is based on strings
+/// that are run on the python interpreter.
+///
+/// Examples:
+///
+/// ~~~{.cpp}
+///  $ root -l
+///  // Execute a string of python code.
+///  root [0] TPython::Exec( "print(\'Hello World!\')" );
+///  Hello World!
+///
+///  // Create a TBrowser on the python side, and transfer it back and forth.
+///  // Note the required explicit (void*) cast!
+///  root [1] TBrowser* b = (void*)TPython::Eval( "ROOT.TBrowser()" );
+///  root [2] TPython::Bind( b, "b" );
+///  root [3] b == (void*) TPython::Eval( "b" )
+///  (int)1
+///
+///  // Builtin variables can cross-over by using implicit casts.
+///  root [4] int i = TPython::Eval( "1 + 1" );
+///  root [5] i
+///  (int)2
+/// ~~~
+///
+/// And with a python file `MyPyClass.py` like this:
+/// ~~~{.py}
+///  print 'creating class MyPyClass ... '
+///
+///  class MyPyClass:
+///     def __init__( self ):
+///        print 'in MyPyClass.__init__'
+///
+///     def gime( self, what ):
+///        return what
+/// ~~~
+/// one can load a python module, and use the class. Casts are
+/// necessary as the type information can not be otherwise derived.
+/// ~~~{.cpp}
+///  root [6] TPython::LoadMacro( "MyPyClass.py" );
+///  creating class MyPyClass ...
+///  root [7] MyPyClass m;
+///  in MyPyClass.__init__
+///  root [8] std::string s = (char*)m.gime( "aap" );
+///  root [9] s
+///  (class TString)"aap"
+/// ~~~
+/// It is possible to switch between interpreters by calling `TPython::Prompt()`
+/// on the Cling side, while returning with `^D` (EOF). State is preserved between
+/// successive switches.
+///
+/// The API part provides (direct) C++ access to the bindings functionality of
+/// PyROOT. It allows verifying that you deal with a PyROOT python object in the
+/// first place (CPPInstance_Check for CPPInstance and any derived types, as well
+/// as CPPInstance_CheckExact for CPPInstance's only); and it allows conversions
+/// of `void*` to an CPPInstance and vice versa.
 
 //- data ---------------------------------------------------------------------
 ClassImp(TPython);
 static PyObject *gMainDict = 0;
 
+// needed to properly resolve (dllimport) symbols on Windows
 namespace CPyCppyy {
-    extern PyObject *gThisModule;
+   R__EXTERN PyObject *gThisModule;
+   namespace PyStrings {
+      R__EXTERN PyObject *gBases;
+      R__EXTERN PyObject *gCppName;
+      R__EXTERN PyObject *gModule;
+      R__EXTERN PyObject *gName;
+   }
 }
 
 //- static public members ----------------------------------------------------
+/// Initialization method: setup the python interpreter and load the
+/// ROOT module.
 Bool_t TPython::Initialize()
 {
-   // Private initialization method: setup the python interpreter and load the
-   // ROOT module.
-
    static Bool_t isInitialized = kFALSE;
    if (isInitialized)
       return kTRUE;
@@ -114,7 +122,9 @@ Bool_t TPython::Initialize()
 #endif
       Py_Initialize();
 #if PY_VERSION_HEX >= 0x03020000
+#if PY_VERSION_HEX < 0x03090000
       PyEval_InitThreads();
+#endif
 #endif
 
       // try again to see if the interpreter is initialized
@@ -133,7 +143,12 @@ Bool_t TPython::Initialize()
       PySys_SetArgv(sizeof(argv) / sizeof(argv[0]), argv);
 
       // force loading of the ROOT module
-      PyRun_SimpleString(const_cast<char *>("import ROOT"));
+      const int ret = PyRun_SimpleString(const_cast<char *>("import ROOT"));
+      if( ret != 0 )
+      {
+          std::cerr << "Error: import ROOT failed, check your PYTHONPATH environmental variable." << std::endl;
+          return kFALSE;
+      }
    }
 
    if (!gMainDict) {
@@ -399,7 +414,7 @@ const TPyReturn TPython::Eval(const char *expr)
       return TPyReturn();
    }
 
-   // results that require no convserion
+   // results that require no conversion
    if (result == Py_None || CPyCppyy::CPPInstance_Check(result) || PyBytes_Check(result) || PyFloat_Check(result) ||
        PyLong_Check(result) || PyInt_Check(result))
       return TPyReturn(result);

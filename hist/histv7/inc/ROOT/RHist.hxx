@@ -1,5 +1,5 @@
-/// \file ROOT/RHist.h
-/// \ingroup Hist ROOT7
+/// \file ROOT/RHist.hxx
+/// \ingroup HistV7
 /// \author Axel Naumann <axel@cern.ch>
 /// \date 2015-03-23
 /// \warning This is part of the ROOT 7 prototype! It will change without notice. It might trigger earthquakes. Feedback
@@ -21,6 +21,7 @@
 #include "ROOT/RHistBinIter.hxx"
 #include "ROOT/RHistImpl.hxx"
 #include "ROOT/RHistData.hxx"
+#include "ROOT/RLogger.hxx"
 #include <initializer_list>
 #include <stdexcept>
 
@@ -90,7 +91,7 @@ public:
    ///     RHist<2,int> h2i({{ {10, 0., 1.}, {{-1., 0., 1., 10., 100.}} }});
    explicit RHist(std::array<RAxisConfig, DIMENSIONS> axes);
 
-   /// Constructor overload taking the histogram title
+   /// Constructor overload taking the histogram title.
    RHist(std::string_view histTitle, std::array<RAxisConfig, DIMENSIONS> axes);
 
    /// Constructor overload that's only available for a 1-dimensional histogram.
@@ -158,9 +159,9 @@ public:
    /// Get the uncertainty on the content of the bin at `x`.
    double GetBinUncertainty(const CoordArray_t &x) const { return fImpl->GetBinUncertainty(x); }
 
-   const_iterator begin() const { return const_iterator(*fImpl); }
+   const_iterator begin() const { return const_iterator(*fImpl, 1); }
 
-   const_iterator end() const { return const_iterator(*fImpl, fImpl->GetNBins()); }
+   const_iterator end() const { return const_iterator(*fImpl, fImpl->GetNBinsNoOver() + 1); }
 
    /// Swap *this and other.
    ///
@@ -172,8 +173,11 @@ public:
    }
 
 private:
-   std::unique_ptr<ImplBase_t> fImpl; ///<  The actual histogram implementation
-   FillFunc_t fFillFunc = nullptr;    ///<! Pinter to RHistImpl::Fill() member function
+   /// The actual histogram implementation.
+   std::unique_ptr<ImplBase_t> fImpl;
+
+   /// Pointer to RHistImpl::Fill() member function.
+   FillFunc_t fFillFunc = nullptr;    //!
 
    friend RHist HistFromImpl<>(std::unique_ptr<ImplBase_t>);
 };
@@ -191,7 +195,7 @@ template <int DIMENSIONS, class PRECISION, template <int D_, class P_> class... 
 void swap(RHist<DIMENSIONS, PRECISION, STAT...> &a, RHist<DIMENSIONS, PRECISION, STAT...> &b) noexcept
 {
    a.swap(b);
-};
+}
 
 namespace Internal {
 /**
@@ -216,9 +220,9 @@ struct RHistImplGen {
    ///
    /// Delegate to the appropriate MakeNextAxis instantiation, depending on the
    /// axis type selected in the RAxisConfig.
+   /// \param title - title of the derived object.
    /// \param axes - `RAxisConfig` objects describing the axis of the resulting
    ///   RHistImpl.
-   /// \param statConfig - the statConfig parameter to be passed to the RHistImpl
    /// \param processedAxisArgs - the RAxisBase-derived axis objects describing the
    ///   axes of the resulting RHistImpl. There are `IDIM` of those; in the end
    /// (`IDIM` == `GetNDim()`), all `axes` have been converted to
@@ -232,7 +236,7 @@ struct RHistImplGen {
       case RAxisConfig::kEquidistant: return MakeNextAxis<RAxisConfig::kEquidistant>(title, axes, processedAxisArgs...);
       case RAxisConfig::kGrow: return MakeNextAxis<RAxisConfig::kGrow>(title, axes, processedAxisArgs...);
       case RAxisConfig::kIrregular: return MakeNextAxis<RAxisConfig::kIrregular>(title, axes, processedAxisArgs...);
-      default: R__ERROR_HERE("HIST") << "Unhandled axis kind";
+      default: R__LOG_ERROR(HistLog()) << "Unhandled axis kind";
       }
       return nullptr;
    }
@@ -276,7 +280,7 @@ HistFromImpl(std::unique_ptr<typename RHist<DIMENSIONS, PRECISION, STAT...>::Imp
    ret.fFillFunc = pHistImpl->GetFillFunc();
    std::swap(ret.fImpl, pHistImpl);
    return ret;
-};
+}
 
 /// \name RHist Typedefs
 ///\{ Convenience typedefs (ROOT6-compatible type names)

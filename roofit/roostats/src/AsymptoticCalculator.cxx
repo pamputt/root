@@ -241,7 +241,7 @@ bool AsymptoticCalculator::Initialize() const {
       // assume use current value of nuisance as nominal ones
       if (verbose >= 0)
          oocoutI((TObject*)0,InputArguments) << "AsymptoticCalculator: Asimovdata set will be generated using nominal (current) nuisance parameter values" << endl;
-      nominalParams = poiAlt; // set poi to alt value but keep nuisance at the nominal one
+      nominalParams.assign(poiAlt); // set poi to alt value but keep nuisance at the nominal one
       fAsimovData = MakeAsimovData( *GetNullModel(), nominalParams, fAsimovGlobObs);
    }
 
@@ -258,7 +258,7 @@ bool AsymptoticCalculator::Initialize() const {
       assert(globObs.getSize() == fAsimovGlobObs.getSize() );
       // store previous snapshot value
       globObs.snapshot(globObsSnapshot);
-      globObs = fAsimovGlobObs;
+      globObs.assign(fAsimovGlobObs);
    }
 
 
@@ -277,7 +277,7 @@ bool AsymptoticCalculator::Initialize() const {
    //poi->Print("v");
 
    // restore previous value
-   globObs = globObsSnapshot;
+   globObs.assign(globObsSnapshot);
 
    // restore number of bins
    if (prevBins > 0 && xobs) xobs->setBins(prevBins);
@@ -509,7 +509,7 @@ HypoTestResult* AsymptoticCalculator::GetHypoTest() const {
    }
 
    RooArgSet * allParams = nullPdf->getParameters(*GetData() );
-   *allParams = fBestFitParams;
+   allParams->assign(fBestFitParams);
    delete allParams;
 
    // set the one-side condition
@@ -606,7 +606,7 @@ HypoTestResult* AsymptoticCalculator::GetHypoTest() const {
       globObs.add(*GetNullModel()->GetGlobalObservables());
       // store previous snapshot value
       globObs.snapshot(globObsSnapshot);
-      globObs = fAsimovGlobObs;
+      globObs.assign(fAsimovGlobObs);
    }
 
 
@@ -664,7 +664,7 @@ HypoTestResult* AsymptoticCalculator::GetHypoTest() const {
 
 
    // restore previous value of global observables
-   globObs = globObsSnapshot;
+   globObs.assign(globObsSnapshot);
 
    // now we compute p-values using the asymptotic formulae
    // described in the paper
@@ -887,10 +887,16 @@ void AsymptoticCalculator::FillBins(const RooAbsPdf & pdf, const RooArgList &obs
          //if (debug) std::cout << "pdf value in the bin " << fval << " bin volume = " << totBinVolume << "   " << fval*expectedEvents << std::endl;
          if (fval*expectedEvents <= 0)
          {
-            if (fval*expectedEvents < 0)
-               cout << "WARNING::Detected a bin with negative expected events! Please check your inputs." << endl;
-            else
-               cout << "WARNING::Detected a bin with zero expected events- skip it" << endl;
+            if (fval*expectedEvents < 0) {
+               oocoutW(static_cast<TObject*>(nullptr),InputArguments)
+                   << "AsymptoticCalculator::" << __func__
+                   << "(): Detected a bin with negative expected events! Please check your inputs." << endl;
+            }
+            else {
+               oocoutW(static_cast<TObject*>(nullptr),InputArguments)
+                   << "AsymptoticCalculator::" << __func__
+                   << "(): Detected a bin with zero expected events- skip it" << endl;
+            }
          }
          // have a cut off for overflows ??
          else
@@ -1037,10 +1043,11 @@ RooAbsData * AsymptoticCalculator::GenerateCountingAsimovData(RooAbsPdf & pdf, c
     if (!r) return 0;
     int icat = 0;
     if (channelCat) {
-       icat = channelCat->getIndex();
+       icat = channelCat->getCurrentIndex();
     }
 
-    RooDataSet *ret = new RooDataSet(TString::Format("CountingAsimovData%d",icat),TString::Format("CountingAsimovData%d",icat), obs);
+    RooDataSet *ret = new RooDataSet(std::string("CountingAsimovData") + std::to_string(icat),
+                                     std::string("CountingAsimovData") + std::to_string(icat), obs);
     ret->add(obs);
     return ret;
 }
@@ -1067,8 +1074,9 @@ RooAbsData * AsymptoticCalculator::GenerateAsimovDataSinglePdf(const RooAbsPdf &
 
    RooDataSet* asimovData = 0;
    if (channelCat) {
-      int icat = channelCat->getIndex();
-      asimovData = new RooDataSet(TString::Format("AsimovData%d",icat),TString::Format("combAsimovData%d",icat),
+      int icat = channelCat->getCurrentIndex();
+      asimovData = new RooDataSet(std::string("AsimovData") + std::to_string(icat),
+                                  std::string("combAsimovData") + std::to_string(icat),
                                   RooArgSet(obsAndWeight,*channelCat),RooFit::WeightVar(weightVar));
    }
    else
@@ -1146,7 +1154,7 @@ RooAbsData * AsymptoticCalculator::GenerateAsimovData(const RooAbsPdf & pdf, con
    std::map<std::string, RooDataSet*> asimovDataMap;
 
   //look at category of simpdf
-  RooCategory& channelCat = (RooCategory&)simPdf->indexCat();
+  RooCategory& channelCat = const_cast<RooCategory&>(dynamic_cast<const RooCategory&>(simPdf->indexCat()));
   int nrIndices = channelCat.numTypes();
   if( nrIndices == 0 ) {
     oocoutW((TObject*)0,Generation) << "Simultaneous pdf does not contain any categories." << endl;
@@ -1155,12 +1163,12 @@ RooAbsData * AsymptoticCalculator::GenerateAsimovData(const RooAbsPdf & pdf, con
     channelCat.setIndex(i);
     //iFrame++;
     // Get pdf associated with state from simpdf
-    RooAbsPdf* pdftmp = simPdf->getPdf(channelCat.getLabel()) ;
+    RooAbsPdf* pdftmp = simPdf->getPdf(channelCat.getCurrentLabel()) ;
     assert(pdftmp != 0);
 
     if (printLevel > 1)
     {
-      cout << "on type " << channelCat.getLabel() << " " << channelCat.getIndex() << endl;
+      cout << "on type " << channelCat.getCurrentLabel() << " " << channelCat.getCurrentIndex() << endl;
     }
 
     RooAbsData * dataSinglePdf = GenerateAsimovDataSinglePdf( *pdftmp, observables, *weightVar, &channelCat);
@@ -1171,17 +1179,17 @@ RooAbsData * AsymptoticCalculator::GenerateAsimovData(const RooAbsPdf & pdf, con
        return 0;
     }
 
-    if (asimovDataMap.count(string(channelCat.getLabel())) != 0) {
-      oocoutE((TObject*)0,Generation) << "AsymptoticCalculator::GenerateAsimovData(): The PDF for " << channelCat.getLabel()
+    if (asimovDataMap.count(string(channelCat.getCurrentLabel())) != 0) {
+      oocoutE((TObject*)0,Generation) << "AsymptoticCalculator::GenerateAsimovData(): The PDF for " << channelCat.getCurrentLabel()
           << " was already defined. It will be overridden. The faulty category definitions follow:" << endl;
       channelCat.Print("V");
     }
 
-    asimovDataMap[string(channelCat.getLabel())] = (RooDataSet*) dataSinglePdf;
+    asimovDataMap[string(channelCat.getCurrentLabel())] = (RooDataSet*) dataSinglePdf;
 
     if (printLevel > 1)
     {
-      cout << "channel: " << channelCat.getLabel() << ", data: ";
+      cout << "channel: " << channelCat.getCurrentLabel() << ", data: ";
       dataSinglePdf->Print();
       cout << endl;
     }
@@ -1194,7 +1202,7 @@ RooAbsData * AsymptoticCalculator::GenerateAsimovData(const RooAbsPdf & pdf, con
   RooDataSet* asimovData = new RooDataSet("asimovDataFullModel","asimovDataFullModel",RooArgSet(obsAndWeight,channelCat),
                                           RooFit::Index(channelCat),RooFit::Import(asimovDataMap),RooFit::WeightVar(*weightVar));
 
-  for (auto element : asimovDataMap) {
+  for (auto &element : asimovDataMap) {
     delete element.second;
   }
 
@@ -1219,7 +1227,7 @@ RooAbsData * AsymptoticCalculator::MakeAsimovData(RooAbsData & realData, const M
 
 
    RooArgSet  poi(*model.GetParametersOfInterest());
-   poi = paramValues;
+   poi.assign(paramValues);
    //RooRealVar *r = dynamic_cast<RooRealVar *>(poi.first());
    // set poi constant for conditional MLE
    // need to fit nuisance parameters at their conditional MLE value
@@ -1313,7 +1321,9 @@ RooAbsData * AsymptoticCalculator::MakeAsimovData(RooAbsData & realData, const M
    RooStats::RemoveConstantParameters( allParams );
 
    // if a RooArgSet of poi is passed , different poi will be used for generating the Asimov data set
-   if (genPoiValues) *allParams = *genPoiValues;
+   if (genPoiValues) {
+    allParams->assign(*genPoiValues);
+   }
 
    // now do the actual generation of the AsimovData Set
    // no need to pass parameters values since we have set them before
@@ -1345,7 +1355,7 @@ RooAbsData * AsymptoticCalculator::MakeAsimovData(const ModelConfig & model, con
    // the nuisance parameter values could be set at their fitted value (the MLE)
    if (allParamValues.getSize() > 0) {
       RooArgSet *  allVars = model.GetPdf()->getVariables();
-      *allVars = allParamValues;
+      allVars->assign(allParamValues);
       delete allVars;
    }
 
@@ -1399,7 +1409,7 @@ RooAbsData * AsymptoticCalculator::MakeAsimovData(const ModelConfig & model, con
       if (nuis.getSize() == 0) {
             oocoutW((TObject*)0,Generation) << "AsymptoticCalculator::MakeAsimovData: model does not have nuisance parameters but has global observables"
                                             << " set global observables to model values " << endl;
-            asimovGlobObs = gobs;
+            asimovGlobObs.assign(gobs);
             return asimov;
       }
 
@@ -1551,7 +1561,7 @@ RooAbsData * AsymptoticCalculator::MakeAsimovData(const ModelConfig & model, con
       gobs.snapshot(asimovGlobObs);
 
       // revert global observables to the data value
-      gobs = snapGlobalObsData;
+      gobs.assign(snapGlobalObsData);
 
       if (verbose>0) {
          std::cout << "Generated Asimov data for global observables ";

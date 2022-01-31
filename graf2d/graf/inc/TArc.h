@@ -21,9 +21,7 @@
 //                                                                      //
 //////////////////////////////////////////////////////////////////////////
 
-#include "Rtypes.h"
 #include "TEllipse.h"
-
 
 class TArc : public TEllipse {
 
@@ -34,7 +32,7 @@ public:
    TArc(const TArc &arc);
    virtual ~TArc();
    void Copy(TObject &arc) const;
-   virtual void DrawArc(Double_t x1, Double_t y1, Double_t radius
+   virtual TArc *DrawArc(Double_t x1, Double_t y1, Double_t radius
                        ,Double_t  phimin=0, Double_t  phimax=360, Option_t *option="");
    virtual void SavePrimitive(std::ostream &out, Option_t *option = "");
 

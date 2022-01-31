@@ -30,7 +30,6 @@ for each component PDF sequentially.
 #include "RooMsgService.h"
 
 #include "RooProdGenContext.h"
-#include "RooProdGenContext.h"
 #include "RooProdPdf.h"
 #include "RooDataSet.h"
 #include "RooRealVar.h"
@@ -370,7 +369,7 @@ void RooProdGenContext::generateEvent(RooArgSet &theEvent, Int_t remaining)
 	arglv->randomize() ;
       }
     }
-    theEvent = _uniObs ;
+    theEvent.assign(_uniObs) ;
   }  
 
 }

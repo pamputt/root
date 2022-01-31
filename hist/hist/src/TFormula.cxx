@@ -10,6 +10,7 @@
  *************************************************************************/
 
 #include "TROOT.h"
+#include "TBuffer.h"
 #include "TMethod.h"
 #include "TMath.h"
 #include "TF1.h"
@@ -20,11 +21,16 @@
 #include "TInterpreterValue.h"
 #include "TFormula.h"
 #include "TRegexp.h"
+
+#include "ROOT/StringUtils.hxx"
+
 #include <array>
 #include <cassert>
 #include <iostream>
 #include <unordered_map>
 #include <functional>
+#include <set>
+#include <sstream>
 
 using namespace std;
 
@@ -70,6 +76,9 @@ ClassImp(TFormula);
     (`PolN` stands for Polynomial of degree N)
     - `gaus(x, [0..2])` is a more explicit way of writing `gaus(0)`
     - `expo(y, [3..4])` is a substitute for `exp([3]+[4]*y)`
+
+    See below the [full list of predefined functions](\ref FormulaFuncs) which can be used as shortcuts in 
+    TFormula.
 
     `TMath` functions can be part of the expression, eg:
 
@@ -127,6 +136,51 @@ ClassImp(TFormula);
 
     This class is not anymore the base class for the function classes `TF1`, but it has now
     a data member of TF1 which can be accessed via `TF1::GetFormula`.
+
+    TFormula supports gradient and hessian calculations through clad.
+    To calculate the gradient one needs to first declare a `CladStorage` of the
+    same size as the number of parameters and then pass the variables and the
+    created `CladStorage`:
+
+    ```
+    TFormula f("f", "x*[0] - y*[1]");
+    Double_t p[] = {40, 30};
+    Double_t x[] = {1, 2};
+    f.SetParameters(p);
+    TFormula::CladStorage grad(2);
+    f.GradientPar(x, grad);
+    ```
+
+    The process is similar for hessians, except that the size of the created
+    CladStorage should be the square of the number of parameters because
+    `HessianPar` returns a flattened matrix:
+
+    ```
+    TFormula::CladStorage hess(4);
+    f.HessianPar(x, hess);
+    ```
+
+    \anchor FormulaFuncs
+    ### List of predefined functions
+
+    The list of available predefined functions which can be used as shortcuts is the following: 
+    1. One Dimensional functions: 
+      - `gaus`  is a substitute for `[Constant]*exp(-0.5*((x-[Mean])/[Sigma])*((x-[Mean])/[Sigma]))`
+      - `landau` is a substitute for `[Constant]*TMath::Landau (x,[MPV],[Sigma],false)`
+      - `expo`  is a substitute for `exp([Constant]+[Slope]*x)`
+      - `crystalball` is substitute for `[Constant]*ROOT::Math::crystalball_function (x,[Alpha],[N],[Sigma],[Mean])`
+      - `breitwigner` is a substitute for `[p0]*ROOT::Math::breitwigner_pdf (x,[p2],[p1])`
+      - `pol0,1,2,...N` is a substitute for a polynomial of degree `N` : 
+         `([p0]+[p1]*x+[p2]*pow(x,2)+....[pN]*pow(x,N)`
+      - `cheb0,1,2,...N` is a substitute for a Chebyshev polynomial of degree `N`:
+         `ROOT::Math::Chebyshev10(x,[p0],[p1],[p2],...[pN])`. Note the maximum N allowed here is 10.
+    2. Two Dimensional functions: 
+      - `xygaus` is a substitute for `[Constant]*exp(-0.5*pow(((x-[MeanX])/[SigmaX]),2 )- 0.5*pow(((y-[MeanY])/[SigmaY]),2))`, a 2d Gaussian without correlation.
+      - `bigaus` is a substitute for `[Constant]*ROOT::Math::bigaussian_pdf (x,y,[SigmaX],[SigmaY],[Rho],[MeanX],[MeanY])`, a 2d gaussian including a correlation parameter.
+    3. Three Dimensional functions: 
+      - `xyzgaus` is for a 3d Gaussians without correlations: 
+      `[Constant]*exp(-0.5*pow(((x-[MeanX])/[SigmaX]),2 )- 0.5*pow(((y-[MeanY])/[SigmaY]),2 )- 0.5*pow(((z-[MeanZ])/[SigmaZ]),2))`
+      
 
     ### An expanded note on variables and parameters
 
@@ -187,7 +241,7 @@ ClassImp(TFormula);
        ```root -l -q -e TFormula("", "x%10").Eval(0)```.
 
     The operator `^` is defined to mean exponentiation instead of the C/C++
-    interpretaion xor. `**` is added, also meaning exponentiation.
+    interpretation xor. `**` is added, also meaning exponentiation.
 
     The operators `++` and `@` are added, and are shorthand for the a linear
     function. That means the expression `x@2` will be expanded to
@@ -390,7 +444,6 @@ TFormula::TFormula()
    fReadyToExecute = false;
    fClingInitialized = false;
    fAllParametersSetted = false;
-   fMethod = 0;
    fNdim = 0;
    fNpar = 0;
    fNumber = 0;
@@ -419,9 +472,6 @@ TFormula::~TFormula()
       gROOT->GetListOfFunctions()->Remove(this);
    }
 
-   if (fMethod) {
-      fMethod->Delete();
-   }
    int nLinParts = fLinearParts.size();
    if (nLinParts > 0) {
       for (int i = 0; i < nLinParts; ++i) delete fLinearParts[i];
@@ -435,11 +485,9 @@ TFormula::TFormula(const char *name, const char *formula, bool addToGlobList, bo
 {
    fReadyToExecute = false;
    fClingInitialized = false;
-   fMethod = 0;
    fNdim = 0;
    fNpar = 0;
    fNumber = 0;
-   fMethod = 0;
    fLambdaPtr = nullptr;
    fVectorized = vectorize;
 #ifndef R__HAS_VECCORE
@@ -449,28 +497,29 @@ TFormula::TFormula(const char *name, const char *formula, bool addToGlobList, bo
    FillDefaults();
 
 
-   if (addToGlobList && gROOT) {
-      TFormula *old = 0;
-      R__LOCKGUARD(gROOTMutex);
-      old = dynamic_cast<TFormula*> ( gROOT->GetListOfFunctions()->FindObject(name) );
-      if (old)
-         gROOT->GetListOfFunctions()->Remove(old);
-      if (IsReservedName(name))
-         Error("TFormula","The name %s is reserved as a TFormula variable name.\n",name);
-      else
-         gROOT->GetListOfFunctions()->Add(this);
-   }
-   SetBit(kNotGlobal,!addToGlobList);
-
    //fName = gNamePrefix + name;  // is this needed
 
    // do not process null formulas.
    if (!fFormula.IsNull() ) {
       PreProcessFormula(fFormula);
 
-      PrepareFormula(fFormula);
+      bool ok = PrepareFormula(fFormula);
+      // if the formula has been correctly initialized add to the list of global functions
+      if (ok) {
+         if (addToGlobList && gROOT) {
+            TFormula *old = 0;
+            R__LOCKGUARD(gROOTMutex);
+            old = dynamic_cast<TFormula *>(gROOT->GetListOfFunctions()->FindObject(name));
+            if (old)
+               gROOT->GetListOfFunctions()->Remove(old);
+            if (IsReservedName(name))
+               Error("TFormula", "The name %s is reserved as a TFormula variable name.\n", name);
+            else
+               gROOT->GetListOfFunctions()->Add(this);
+         }
+         SetBit(kNotGlobal,!addToGlobList);
+      }
    }
-
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -483,11 +532,11 @@ TFormula::TFormula(const char *name, const char *formula, int ndim, int npar, bo
    fReadyToExecute = false;
    fClingInitialized = false;
    fNpar = 0;
-   fMethod = nullptr;
    fNumber = 0;
    fLambdaPtr = nullptr;
    fFuncPtr = nullptr;
    fGradFuncPtr = nullptr;
+   fHessFuncPtr = nullptr;
 
 
    fNdim = ndim;
@@ -524,7 +573,7 @@ TFormula::TFormula(const char *name, const char *formula, int ndim, int npar, bo
 
 ////////////////////////////////////////////////////////////////////////////////
 TFormula::TFormula(const TFormula &formula) :
-   TNamed(formula.GetName(),formula.GetTitle()), fMethod(nullptr)
+   TNamed(formula.GetName(),formula.GetTitle())
 {
    formula.Copy(*this);
 
@@ -573,7 +622,7 @@ Bool_t TFormula::InitLambdaExpression(const char * formula) {
 
    // to be sure the interpreter is initialized
    ROOT::GetROOT();
-   R__ASSERT(gInterpreter); 
+   R__ASSERT(gInterpreter);
 
    // set the cling name using hash of the static formulae map
    auto hasher = gClingFunctions.hash_function();
@@ -680,7 +729,7 @@ void TFormula::Copy(TObject &obj) const
 
    fnew.fClingInput = fClingInput;
    fnew.fReadyToExecute = fReadyToExecute;
-   fnew.fClingInitialized = fClingInitialized;
+   fnew.fClingInitialized = fClingInitialized.load();
    fnew.fAllParametersSetted = fAllParametersSetted;
    fnew.fClingName = fClingName;
    fnew.fSavedInputFormula = fSavedInputFormula;
@@ -699,22 +748,17 @@ void TFormula::Copy(TObject &obj) const
          fnew.fReadyToExecute = false;
       }
    }
-   else if (fMethod) {
-      if (fnew.fMethod) delete fnew.fMethod;
-      // use copy-constructor of TMethodCall
-      TMethodCall *m = new TMethodCall(*fMethod);
-      fnew.fMethod  = m;
-   }
 
-   if (fGradMethod) {
-      // use copy-constructor of TMethodCall
-      TMethodCall *m = new TMethodCall(*fGradMethod);
-      fnew.fGradMethod.reset(m);
-   }
+   // use copy-constructor of TMethodCall
+   // if c++-14 could use std::make_unique
+   TMethodCall *m = (fMethod) ? new TMethodCall(*fMethod) : nullptr;
+   fnew.fMethod.reset(m);
 
    fnew.fFuncPtr = fFuncPtr;
    fnew.fGradGenerationInput = fGradGenerationInput;
+   fnew.fHessGenerationInput = fHessGenerationInput;
    fnew.fGradFuncPtr = fGradFuncPtr;
+   fnew.fHessFuncPtr = fHessFuncPtr;
 
 }
 
@@ -730,9 +774,7 @@ void TFormula::Clear(Option_t * )
    fFormula = "";
    fClingName = "";
 
-
-   if(fMethod) fMethod->Delete();
-   fMethod = nullptr;
+   fMethod.reset();
 
    fClingVariables.clear();
    fClingParameters.clear();
@@ -757,8 +799,9 @@ void TFormula::Clear(Option_t * )
 // Returns nullptr on failure.
 static std::unique_ptr<TMethodCall>
 prepareMethod(bool HasParameters, bool HasVariables, const char* FuncName,
-              bool IsVectorized, bool IsGradient = false) {
-   std::unique_ptr<TMethodCall> Method = std::unique_ptr<TMethodCall>(new TMethodCall());
+              bool IsVectorized, bool AddCladArrayRef = false) {
+   std::unique_ptr<TMethodCall>
+       Method = std::unique_ptr<TMethodCall>(new TMethodCall());
 
    TString prototypeArguments = "";
    if (HasVariables || HasParameters) {
@@ -767,16 +810,18 @@ prepareMethod(bool HasParameters, bool HasVariables, const char* FuncName,
       else
          prototypeArguments.Append("Double_t*");
    }
-   auto AddDoublePtrParam = [&prototypeArguments] () {
-      prototypeArguments.Append(",");
-      prototypeArguments.Append("Double_t*");
+   auto AddDoublePtrParam = [&prototypeArguments]() {
+     prototypeArguments.Append(",");
+     prototypeArguments.Append("Double_t*");
    };
    if (HasParameters)
       AddDoublePtrParam();
 
    // We need an extra Double_t* for the gradient return result.
-   if (IsGradient)
-      AddDoublePtrParam();
+   if (AddCladArrayRef) {
+      prototypeArguments.Append(",");
+      prototypeArguments.Append("clad::array_ref<Double_t>");
+   }
 
    // Initialize the method call using real function name (cling name) defined
    // by ProcessFormula
@@ -791,10 +836,9 @@ prepareMethod(bool HasParameters, bool HasVariables, const char* FuncName,
    return Method;
 }
 
-static TInterpreter::CallFuncIFacePtr_t::Generic_t
-prepareFuncPtr(TMethodCall *Method) {
-   if (!Method) return nullptr;
-   CallFunc_t *callfunc = Method->GetCallFunc();
+static TInterpreter::CallFuncIFacePtr_t::Generic_t  prepareFuncPtr(TMethodCall *method) {
+   if (!method) return nullptr;
+   CallFunc_t *callfunc = method->GetCallFunc();
 
    if (!gCling->CallFunc_IsValid(callfunc)) {
       Error("prepareFuncPtr", "Callfunc retuned from Cling is not valid");
@@ -821,10 +865,9 @@ bool TFormula::PrepareEvalMethod()
    if (!fMethod) {
       Bool_t hasParameters = (fNpar > 0);
       Bool_t hasVariables = (fNdim > 0);
-      fMethod = prepareMethod(hasParameters, hasVariables, fClingName,
-                              fVectorized).release();
-      if (!fMethod) return false; 
-      fFuncPtr = prepareFuncPtr(fMethod);
+      fMethod = prepareMethod(hasParameters, hasVariables, fClingName,fVectorized);
+      if (!fMethod) return false;
+      fFuncPtr = prepareFuncPtr(fMethod.get());
    }
    return fFuncPtr;
 }
@@ -838,7 +881,7 @@ void TFormula::InputFormulaIntoCling()
    if (!fClingInitialized && fReadyToExecute && fClingInput.Length() > 0) {
       // make sure the interpreter is initialized
       ROOT::GetROOT();
-      R__ASSERT(gCling); 
+      R__ASSERT(gCling);
 
       // Trigger autoloading / autoparsing (ROOT-9840):
       TString triggerAutoparsing = "namespace ROOT_TFormula_triggerAutoParse {\n"; triggerAutoparsing += fClingInput + "\n}";
@@ -1099,13 +1142,14 @@ void TFormula::HandleParametrizedFunctions(TString &formula)
          // should also check that function is not something else (e.g. exponential - parse the expo)
          Int_t lastFunPos = funPos + funName.Length();
 
-         // check that first and last character is not alphanumeric
+         // check that first and last character is not a special character
          Int_t iposBefore = funPos - 1;
          // std::cout << "looping on  funpos is " << funPos << " formula is " << formula << " function " << funName <<
          // std::endl;
          if (iposBefore >= 0) {
             assert(iposBefore < formula.Length());
-            if (isalpha(formula[iposBefore])) {
+            //if (isalpha(formula[iposBefore])) {
+            if (IsFunctionNameChar(formula[iposBefore])) {
                // std::cout << "previous character for function " << funName << " is " << formula[iposBefore] << "- skip
                // " << std::endl;
                funPos = formula.Index(funName, lastFunPos);
@@ -1399,11 +1443,11 @@ void TFormula::HandleFunctionArguments(TString &formula)
          } else {
             // otherwise, try to match default parametrized functions
 
-            for (auto keyval : parFunctions) {
+            for (const auto &keyval : parFunctions) {
                // (name, ndim)
-               pair<TString, Int_t> name_ndim = keyval.first;
+               const pair<TString, Int_t> &name_ndim = keyval.first;
                // (formula without normalization, formula with normalization)
-               pair<TString, TString> formulaPair = keyval.second;
+               const pair<TString, TString> &formulaPair = keyval.second;
 
                // match names like gaus, gausn, breitwigner
                if (name == name_ndim.first)
@@ -1681,55 +1725,37 @@ void TFormula::HandleExponentiation(TString &formula)
    }
 }
 
+
 ////////////////////////////////////////////////////////////////////////////////
 /// Handle linear functions defined with the operator ++.
 
 void TFormula::HandleLinear(TString &formula)
 {
+   if(formula.Length() == 0) return;
+   auto terms = ROOT::Split(formula.Data(), "@");
+   if(terms.size() <= 1) return; // function is not linear
    // Handle Linear functions identified with "@" operator
-   Int_t linPos = formula.Index("@");
-   if (linPos == kNPOS ) return;  // function is not linear
-   Int_t nofLinParts = formula.CountChar((int)'@');
-   assert(nofLinParts > 0);
-   fLinearParts.reserve(nofLinParts + 1);
-   Int_t Nlinear = 0;
-   bool first = true;
-   while (linPos != kNPOS && !IsAParameterName(formula, linPos)) {
+   fLinearParts.reserve(terms.size());
+   TString expandedFormula = "";
+   int delimeterPos = 0;
+   for(std::size_t iTerm = 0; iTerm < terms.size(); ++iTerm) {
+      // determine the position of the "@" operator in the formula
+      delimeterPos += terms[iTerm].size() + (iTerm == 0);
+      if(IsAParameterName(formula, delimeterPos)) {
+         // append the current term and the remaining formula unchanged to the expanded formula
+         expandedFormula += terms[iTerm];
+         expandedFormula += formula(delimeterPos, formula.Length() - (delimeterPos + 1));
+         break;
+      }
       SetBit(kLinear, 1);
-      // analyze left part only the first time
-      Int_t temp = 0;
-      TString left;
-      if (first) {
-         temp = linPos - 1;
-         while (temp >= 0 && formula[temp] != '@') {
-            temp--;
-         }
-         left = formula(temp + 1, linPos - (temp + 1));
-      }
-      temp = linPos + 1;
-      while (temp < formula.Length() && formula[temp] != '@') {
-         temp++;
-      }
-      TString right = formula(linPos + 1, temp - (linPos + 1));
-
-      TString pattern =
-         (first) ? TString::Format("%s@%s", left.Data(), right.Data()) : TString::Format("@%s", right.Data());
-      TString replacement =
-         (first) ? TString::Format("([%d]*(%s))+([%d]*(%s))", Nlinear, left.Data(), Nlinear + 1, right.Data())
-                 : TString::Format("+([%d]*(%s))", Nlinear, right.Data());
-      Nlinear += (first) ? 2 : 1;
-
-      formula.ReplaceAll(pattern, replacement);
-      if (first) {
-         TFormula *lin1 = new TFormula("__linear1", left, false);
-         fLinearParts.push_back(lin1);
-      }
-      TFormula *lin2 = new TFormula("__linear2", right, false);
-      fLinearParts.push_back(lin2);
-
-      linPos = formula.Index("@");
-      first = false;
+      auto termName = std::string("__linear") + std::to_string(iTerm+1);
+      fLinearParts.push_back(new TFormula(termName.c_str(), terms[iTerm].c_str(), false));
+      std::stringstream ss;
+      ss << "([" << iTerm << "]*(" << terms[iTerm] << "))";
+      expandedFormula += ss.str();
+      if(iTerm < terms.size() - 1) expandedFormula += "+";
    }
+   formula = expandedFormula;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1793,11 +1819,11 @@ Bool_t TFormula::PrepareFormula(TString &formula)
 ////////////////////////////////////////////////////////////////////////////////
 ///    Extracts functors from formula, and put them in fFuncs.
 ///    Simple grammar:
-///  -  <function>  := name(arg1,arg2...)
-///  -  <variable>  := name
-///  -  <parameter> := [number]
-///  -  <name>      := String containing lower and upper letters, numbers, underscores
-///  -  <number>    := Integer number
+///  -  `<function>`  := name(arg1,arg2...)
+///  -  `<variable>`  := name
+///  -  `<parameter>` := [number]
+///  -  `<name>`      := String containing lower and upper letters, numbers, underscores
+///  -  `<number>`    := Integer number
 ///    Operators are omitted.
 
 void TFormula::ExtractFunctors(TString &formula)
@@ -1863,7 +1889,7 @@ void TFormula::ExtractFunctors(TString &formula)
             i++;
          } while (formula[i] != '\"');
       }
-      // case of e or E for numbers in exponential notaton (e.g. 2.2e-3)
+      // case of e or E for numbers in exponential notation (e.g. 2.2e-3)
       if (IsScientificNotation(formula, i))
          continue;
       // case of x for hexadecimal numbers
@@ -2353,7 +2379,7 @@ void TFormula::ProcessFormula(TString &formula)
    if (!fClingInitialized && !fLazyInitialization) {
       //Bool_t allFunctorsMatched = false;
       for (list<TFormulaFunction>::iterator it = fFuncs.begin(); it != fFuncs.end(); ++it) {
-         // functions are now by default always not checked 
+         // functions are now by default always not checked
          if (!it->fFound && !it->IsFuncCall()) {
             //allFunctorsMatched = false;
             if (it->GetNargs() == 0)
@@ -3083,9 +3109,7 @@ void TFormula::SetVectorized(Bool_t vectorized)
       fClingName = "";
       fClingInput = fFormula;
 
-      if (fMethod)
-         fMethod->Delete();
-      fMethod = nullptr;
+      fMethod.reset();
 
       FillVecFunctionsShurtCuts();   // to replace with the right vectorized signature (e.g. sin  -> vecCore::math::Sin)
       PreProcessFormula(fFormula);
@@ -3147,50 +3171,110 @@ static bool functionExists(const string &Name) {
    return gInterpreter->GetFunction(/*cl*/0, Name.c_str());
 }
 
-/// returns true on success.
-bool TFormula::GenerateGradientPar()
-{
-   // We already have generated the gradient.
-   if (fGradMethod)
-      return true;
-
-   if (!HasGradientGenerationFailed()) {
-      // FIXME: Move this elsewhere
-      if (!TFormula::fIsCladRuntimeIncluded) {
-         TFormula::fIsCladRuntimeIncluded = true;
-         gInterpreter->Declare("#include <Math/CladDerivator.h>\n#pragma clad OFF");
-      }
-
-      // Check if the gradient request was made as part of another TFormula.
-      // This can happen when we create multiple TFormula objects with the same
-      // formula. In that case, the hasher will give identical id and we can
-      // reuse the already generated gradient function.
-      if (!functionExists(GetGradientFuncName())) {
-         std::string GradReqFuncName = GetGradientFuncName() + "_req";
-         // We want to call clad::differentiate(TFormula_id);
-         fGradGenerationInput = std::string("#pragma cling optimize(2)\n") +
-            "#pragma clad ON\n" +
-            "void " + GradReqFuncName + "() {\n" +
-            "clad::gradient(" + std::string(fClingName.Data()) + ");\n }\n" +
-            "#pragma clad OFF";
-
-         if (!gInterpreter->Declare(fGradGenerationInput.c_str()))
-            return false;
-      }
-
-      Bool_t hasParameters = (fNpar > 0);
-      Bool_t hasVariables = (fNdim > 0);
-      std::string GradFuncName = GetGradientFuncName();
-      fGradMethod = prepareMethod(hasParameters, hasVariables,
-                                  GradFuncName.c_str(),
-                                  fVectorized, /*IsGradient*/ true);
-      fGradFuncPtr = prepareFuncPtr(fGradMethod.get());
-      return true;
+static void IncludeCladRuntime(Bool_t &IsCladRuntimeIncluded) {
+   if (!IsCladRuntimeIncluded) {
+      IsCladRuntimeIncluded = true;
+      gInterpreter->Declare("#include <Math/CladDerivator.h>\n#pragma clad OFF");
    }
-   return false;
 }
 
-void TFormula::GradientPar(const Double_t *x, TFormula::GradientStorage& result)
+static bool
+DeclareGenerationInput(std::string FuncName, std::string CladStatement,
+                       std::string &GenerationInput) {
+   std::string ReqFuncName = FuncName + "_req";
+   // We want to call clad::differentiate(TFormula_id);
+   GenerationInput = std::string("#pragma cling optimize(2)\n") +
+       "#pragma clad ON\n" +
+       "void " + ReqFuncName + "() {\n" +
+       CladStatement + "\n " +
+       "}\n" +
+       "#pragma clad OFF";
+
+   return gInterpreter->Declare(GenerationInput.c_str());
+}
+
+static TInterpreter::CallFuncIFacePtr_t::Generic_t
+GetFuncPtr(std::string FuncName, Int_t Npar, Int_t Ndim, Bool_t Vectorized) {
+   Bool_t hasParameters = (Npar > 0);
+   Bool_t hasVariables = (Ndim > 0);
+   std::unique_ptr<TMethodCall>
+       method = prepareMethod(hasParameters, hasVariables, FuncName.c_str(),
+                              Vectorized, /*AddCladArrayRef*/ true);
+   return prepareFuncPtr(method.get());
+}
+
+static void CallCladFunction(TInterpreter::CallFuncIFacePtr_t::Generic_t FuncPtr,
+                             const Double_t *vars, const Double_t *pars,
+                             Double_t *result, const Int_t result_size) {
+   void *args[3];
+   args[0] = &vars;
+   if (!pars) {
+      // __attribute__((used)) extern "C" void __cf_0(void* obj, int nargs, void** args, void* ret)
+      // {
+      //    if (ret) {
+      //       new (ret) (double) (((double (&)(double*))TFormula____id)(*(double**)args[0]));
+      //       return;
+      //    } else {
+      //       ((double (&)(double*))TFormula____id)(*(double**)args[0]);
+      //       return;
+      //    }
+      // }
+      args[1] = &result;
+      (*FuncPtr)(0, 2, args, /*ret*/ nullptr); // We do not use ret in a return-void func.
+   } else {
+      // __attribute__((used)) extern "C" void __cf_0(void* obj, int nargs, void** args, void* ret)
+      // {
+      //    ((void (&)(double*, double*,
+      //               clad::array_ref<double>))TFormula____id_grad_1)(*(double**)args[0],
+      //                                                             *(double**)args[1],
+      //                                                             *(clad::array_ref<double> *)args[2]);
+      //    return;
+      // }
+      args[1] = &pars;
+
+      // Using the interpreter to obtain the pointer to clad::array_ref is too
+      // slow and we do not want to expose clad::array_ref to the interpreter
+      // so this struct acts as a lightweight implementation of it
+      struct array_ref_interface {
+        Double_t *arr;
+        std::size_t size;
+      };
+
+      array_ref_interface ari{result, static_cast<size_t>(result_size)};
+      args[2] = &ari;
+      (*FuncPtr)(0, 3, args, /*ret*/nullptr); // We do not use ret in a return-void func.
+   }
+}
+
+/// returns true on success.
+bool TFormula::GenerateGradientPar() {
+   // We already have generated the gradient.
+   if (fGradFuncPtr)
+      return true;
+
+   if (HasGradientGenerationFailed())
+      return false;
+
+   IncludeCladRuntime(fIsCladRuntimeIncluded);
+
+   // Check if the gradient request was made as part of another TFormula.
+   // This can happen when we create multiple TFormula objects with the same
+   // formula. In that case, the hasher will give identical id and we can
+   // reuse the already generated gradient function.
+   if (!functionExists(GetGradientFuncName())) {
+      std::string GradientCall
+          ("clad::gradient(" + std::string(fClingName.Data()) + ", \"p\");");
+      if (!DeclareGenerationInput(GetGradientFuncName(),
+                                  GradientCall,
+                                  fGradGenerationInput))
+         return false;
+   }
+
+   fGradFuncPtr = GetFuncPtr(GetGradientFuncName(), fNpar, fNdim, fVectorized);
+   return true;
+}
+
+void TFormula::GradientPar(const Double_t *x, TFormula::CladStorage& result)
 {
    if (DoEval(x) == TMath::QuietNaN())
       return;
@@ -3215,37 +3299,72 @@ void TFormula::GradientPar(const Double_t *x, TFormula::GradientStorage& result)
    GradientPar(x, result.data());
 }
 
-void TFormula::GradientPar(const Double_t *x, Double_t *result)
+void TFormula::GradientPar(const Double_t *x, Double_t *result) {
+   const Double_t *vars = (x) ? x : fClingVariables.data();
+   const Double_t *pars = (fNpar <= 0) ? nullptr : fClingParameters.data();
+   CallCladFunction(fGradFuncPtr, vars, pars, result, fNpar);
+}
+
+/// returns true on success.
+bool TFormula::GenerateHessianPar()
 {
-   void* args[3];
-   const double * vars = (x) ? x : fClingVariables.data();
-   args[0] = &vars;
-   if (fNpar <= 0) {
-      // __attribute__((used)) extern "C" void __cf_0(void* obj, int nargs, void** args, void* ret)
-      // {
-      //    if (ret) {
-      //       new (ret) (double) (((double (&)(double*))TFormula____id)(*(double**)args[0]));
-      //       return;
-      //    } else {
-      //       ((double (&)(double*))TFormula____id)(*(double**)args[0]);
-      //       return;
-      //    }
-      // }
-      args[1] = &result;
-      (*fGradFuncPtr)(0, 2, args, /*ret*/nullptr); // We do not use ret in a return-void func.
-   } else {
-      // __attribute__((used)) extern "C" void __cf_0(void* obj, int nargs, void** args, void* ret)
-      // {
-      //    ((void (&)(double*, double*,
-      //               double*))TFormula____id_grad)(*(double**)args[0], *(double**)args[1],
-      //                                                                 *(double**)args[2]);
-      //    return;
-      // }
-      const double *pars = fClingParameters.data();
-      args[1] = &pars;
-      args[2] = &result;
-      (*fGradFuncPtr)(0, 3, args, /*ret*/nullptr); // We do not use ret in a return-void func.
+   // We already have generated the hessian.
+   if (fHessFuncPtr)
+      return true;
+
+   if (HasHessianGenerationFailed())
+      return false;
+
+   IncludeCladRuntime(fIsCladRuntimeIncluded);
+
+   // Check if the hessian request was made as part of another TFormula.
+   // This can happen when we create multiple TFormula objects with the same
+   // formula. In that case, the hasher will give identical id and we can
+   // reuse the already generated hessian function.
+   if (!functionExists(GetHessianFuncName())) {
+      std::string indexes = (fNpar - 1 == 0) ? "0" : std::string("0:")
+          + std::to_string(fNpar - 1);
+      std::string HessianCall
+          ("clad::hessian(" + std::string(fClingName.Data()) + ", \"p["
+               + indexes + "]\" );");
+      if (!DeclareGenerationInput(GetHessianFuncName(), HessianCall,
+                                  fHessGenerationInput))
+         return false;
    }
+
+   fHessFuncPtr = GetFuncPtr(GetHessianFuncName(), fNpar, fNdim, fVectorized);
+   return true;
+}
+
+void TFormula::HessianPar(const Double_t *x, TFormula::CladStorage& result)
+{
+   if (DoEval(x) == TMath::QuietNaN())
+      return;
+
+   if (!fClingInitialized) {
+      Error("HessianPar", "Could not initialize the formula!");
+      return;
+   }
+
+   if (!GenerateHessianPar()) {
+      Error("HessianPar", "Could not generate a hessian for the formula %s!",
+            fClingName.Data());
+      return;
+   }
+
+   if ((int)result.size() < fNpar) {
+      Warning("HessianPar",
+              "The size of hessian result is %zu but %d is required. Resizing.",
+              result.size(), fNpar * fNpar);
+      result.resize(fNpar * fNpar);
+   }
+   HessianPar(x, result.data());
+}
+
+void TFormula::HessianPar(const Double_t *x, Double_t *result) {
+   const Double_t *vars = (x) ? x : fClingVariables.data();
+   const Double_t *pars = (fNpar <= 0) ? nullptr : fClingParameters.data();
+   CallCladFunction(fHessFuncPtr, vars, pars, result, fNpar * fNpar);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -3344,12 +3463,15 @@ Double_t TFormula::DoEval(const double * x, const double * params) const
    if (!fClingInitialized && fLazyInitialization) {
       // try recompiling the formula. We need to lock because this is not anymore thread safe
       R__LOCKGUARD(gROOTMutex);
-      auto thisFormula = const_cast<TFormula*>(this);
-      thisFormula->ReInitializeEvalMethod();
-   }
-   if (!fClingInitialized) {
-      Error("DoEval", "Formula has error and  it is not properly initialized ");
-      return TMath::QuietNaN();
+      // check again in case another thread has initialized the formula (see ROOT-10994)
+      if (!fClingInitialized) {
+         auto thisFormula = const_cast<TFormula*>(this);
+         thisFormula->ReInitializeEvalMethod();
+      }
+      if (!fClingInitialized) {
+         Error("DoEval", "Formula has error and  it is not properly initialized ");
+         return TMath::QuietNaN();
+      }
    }
 
    if (fLambdaPtr && TestBit(TFormula::kLambda)) {// case of lambda functions
@@ -3396,8 +3518,16 @@ ROOT::Double_v TFormula::DoEvalVec(const ROOT::Double_v *x, const double *params
    if (!fClingInitialized && fLazyInitialization) {
       // try recompiling the formula. We need to lock because this is not anymore thread safe
       R__LOCKGUARD(gROOTMutex);
-      auto thisFormula = const_cast<TFormula*>(this);
-      thisFormula->ReInitializeEvalMethod();
+      // check again in case another thread has initialized the formula (see ROOT-10994)
+      if (!fClingInitialized) {
+         auto thisFormula = const_cast<TFormula*>(this);
+         thisFormula->ReInitializeEvalMethod();
+      }
+      if (!fClingInitialized) {
+         Error("DoEval", "Formula has error and  it is not properly initialized ");
+         ROOT::Double_v res = TMath::QuietNaN();
+         return res;
+      }
    }
 
    ROOT::Double_v result = 0;
@@ -3432,10 +3562,8 @@ void TFormula::ReInitializeEvalMethod() {
       fLazyInitialization = false;
       return;
    }
-   if (fMethod) {
-      fMethod->Delete();
-      fMethod = nullptr;
-   }
+   fMethod.reset();
+
    if (!fLazyInitialization)   Warning("ReInitializeEvalMethod", "Formula is NOT properly initialized - try calling again TFormula::PrepareEvalMethod");
    //else  Info("ReInitializeEvalMethod", "Compile now the formula expression using Cling");
 
@@ -3454,7 +3582,7 @@ void TFormula::ReInitializeEvalMethod() {
          fFuncPtr = (TFormula::CallFuncSignature)funcit->second;
          fClingInitialized = true;
          fLazyInitialization = false;
-         return; 
+         return;
       }
    }
    // compile now formula using cling
@@ -3554,7 +3682,15 @@ TString TFormula::GetExpFormula(Option_t *option) const
 
 TString TFormula::GetGradientFormula() const {
    std::unique_ptr<TInterpreterValue> v = gInterpreter->MakeInterpreterValue();
-   gInterpreter->Evaluate(GetGradientFuncName().c_str(), *v);
+   std::string s("(void (&)(Double_t *, Double_t *, clad::array_ref<Double_t>)) ");
+   s += GetGradientFuncName();
+   gInterpreter->Evaluate(s.c_str(), *v);
+   return v->ToString();
+}
+
+TString TFormula::GetHessianFormula() const {
+   std::unique_ptr<TInterpreterValue> v = gInterpreter->MakeInterpreterValue();
+   gInterpreter->Evaluate(GetHessianFuncName().c_str(), *v);
    return v->ToString();
 }
 
@@ -3595,6 +3731,11 @@ void TFormula::Print(Option_t *option) const
          printf("Generated Gradient:\n");
          printf("%s\n", fGradGenerationInput.c_str());
          printf("%s\n", GetGradientFormula().Data());
+      }
+      if(fHessFuncPtr) {
+         printf("Generated Hessian:\n");
+         printf("%s\n", fHessGenerationInput.c_str());
+         printf("%s\n", GetHessianFormula().Data());
       }
    }
    if(!fReadyToExecute)
@@ -3706,7 +3847,7 @@ void TFormula::Streamer(TBuffer &b)
             }
          }
          else {
-            // we also delay the initializtion of lamda expressions
+            // we also delay the initialization of lamda expressions
             if (!fLazyInitialization) {
                bool ret = InitLambdaExpression(fFormula);
                if (ret) {

@@ -16,6 +16,7 @@
 #ifndef ROOT7_RMiniFile
 #define ROOT7_RMiniFile
 
+#include <ROOT/RError.hxx>
 #include <ROOT/RNTupleOptions.hxx>
 #include <ROOT/RStringView.hxx>
 
@@ -24,7 +25,9 @@
 #include <memory>
 #include <string>
 
+class TCollection;
 class TFile;
+class TFileMergeInfo;
 
 namespace ROOT {
 
@@ -81,6 +84,10 @@ struct RNTuple {
          fLenFooter == other.fLenFooter &&
          fReserved == other.fReserved;
    }
+
+   // RNTuple implements the hadd MergeFile interface
+   /// Merge this NTuple with the input list entries
+   Long64_t Merge(TCollection *input, TFileMergeInfo *mergeInfo);
 };
 
 namespace Internal {
@@ -105,16 +112,16 @@ private:
    /// Indicates whether the file is a TFile container or an RNTuple bare file
    bool fIsBare = false;
    /// Used when the file container turns out to be a bare file
-   RNTuple GetNTupleBare(std::string_view ntupleName);
+   RResult<RNTuple> GetNTupleBare(std::string_view ntupleName);
    /// Used when the file turns out to be a TFile container
-   RNTuple GetNTupleProper(std::string_view ntupleName);
+   RResult<RNTuple> GetNTupleProper(std::string_view ntupleName);
 
 public:
    RMiniFileReader() = default;
    /// Uses the given raw file to read byte ranges
    explicit RMiniFileReader(ROOT::Internal::RRawFile *rawFile);
    /// Extracts header and footer location for the RNTuple identified by ntupleName
-   RNTuple GetNTuple(std::string_view ntupleName);
+   RResult<RNTuple> GetNTuple(std::string_view ntupleName);
    /// Reads a given byte range from the file into the provided memory buffer
    void ReadBuffer(void *buffer, size_t nbytes, std::uint64_t offset);
 };

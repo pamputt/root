@@ -33,9 +33,9 @@ using namespace std;
 
 ClassImp(RooMomentMorphND)
 
-   //_____________________________________________________________________________
-   RooMomentMorphND::RooMomentMorphND()
-   : _curNormSet(0), _M(0), _MSqr(0), _setting(RooMomentMorphND::Linear), _useHorizMorph(true)
+//_____________________________________________________________________________
+RooMomentMorphND::RooMomentMorphND()
+   : _cacheMgr(this, 10, true, true), _curNormSet(0), _M(0), _MSqr(0), _setting(RooMomentMorphND::Linear), _useHorizMorph(true)
 {
    _parItr = _parList.createIterator();
    _obsItr = _obsList.createIterator();
@@ -428,7 +428,7 @@ RooMomentMorphND::CacheElem *RooMomentMorphND::getCache(const RooArgSet * /*nset
    int nObs = _obsList.getSize();
    int nPdf = _referenceGrid._pdfList.getSize();
 
-   TIterator *pdfItr = _pdfList.createIterator();
+   TIter pdfItr = _pdfList.createIterator();
 
    RooAbsReal *null = 0;
    vector<RooAbsReal *> meanrv(nPdf * nObs, null);
@@ -450,8 +450,7 @@ RooMomentMorphND::CacheElem *RooMomentMorphND::getCache(const RooArgSet * /*nset
 
    for (int i = 0; i < 3 * nPdf; ++i) {
       string fracName = Form("frac_%d", i);
-      double initval = 0.0;
-      RooRealVar *frac = new RooRealVar(fracName.c_str(), fracName.c_str(), initval); // to be set later
+      RooRealVar *frac = new RooRealVar(fracName.c_str(), fracName.c_str(), /*value=*/1.); // to be set later
 
       fracl.add(*frac);
       if (i < nPdf)
@@ -500,7 +499,7 @@ RooMomentMorphND::CacheElem *RooMomentMorphND::getCache(const RooArgSet * /*nset
       }
 
       // construction of unit pdfs
-      pdfItr->Reset();
+      pdfItr.Reset();
       RooAbsPdf *pdf;
       RooArgList transPdfList;
 
@@ -508,7 +507,7 @@ RooMomentMorphND::CacheElem *RooMomentMorphND::getCache(const RooArgSet * /*nset
          _obsItr->Reset();
          RooRealVar *var;
 
-         pdf = (RooAbsPdf *)pdfItr->Next();
+         pdf = (RooAbsPdf *)pdfItr.Next();
          string pdfName = Form("pdf_%d", i);
          RooCustomizer cust(*pdf, pdfName.c_str());
 

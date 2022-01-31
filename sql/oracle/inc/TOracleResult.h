@@ -16,22 +16,14 @@
 
 #include <vector>
 
-#if !defined(__CINT__)
-#ifndef R__WIN32
-#include <sys/time.h>
-#endif
-#include <occi.h>
-#ifdef CONST
-#undef CONST
-#endif
-#else
-namespace oracle { namespace occi {
-class Connection;
-class Statement;
-class ResultSet;
-class MetaData;
-   }}
-#endif
+namespace oracle {
+namespace occi {
+   class Connection;
+   class Statement;
+   class ResultSet;
+   struct MetaData;
+}
+}
 
 class TList;
 
@@ -50,8 +42,8 @@ private:
 
    Bool_t  IsValid(Int_t field);
 
-   TOracleResult(const TOracleResult&);            // Not implemented;
-   TOracleResult &operator=(const TOracleResult&); // Not implemented;
+   TOracleResult(const TOracleResult&) = delete;
+   TOracleResult &operator=(const TOracleResult&) = delete;
 
 protected:
    void    initResultSet(oracle::occi::Statement *stmt);

@@ -229,14 +229,17 @@ To change the color model use `gStyle->SetColorModelPS(c)`.
 #pragma optimize("",off)
 #endif
 
-#include <stdlib.h>
-#include <string.h>
-#include <ctype.h>
-#include <wchar.h>
+#include <cstdlib>
+#include <cstring>
+#include <cctype>
+#include <cwchar>
+#include <fstream>
 
-#include "Riostream.h"
+#include "strlcpy.h"
+#include "snprintf.h"
 #include "Byteswap.h"
 #include "TROOT.h"
+#include "TDatime.h"
 #include "TColor.h"
 #include "TVirtualPad.h"
 #include "TPoints.h"

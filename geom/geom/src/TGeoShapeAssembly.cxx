@@ -9,9 +9,6 @@
  * For the list of contributors see $ROOTSYS/README/CREDITS.             *
  *************************************************************************/
 
-
-#include "Riostream.h"
-
 #include "TGeoManager.h"
 #include "TGeoVoxelFinder.h"
 #include "TGeoMatrix.h"
@@ -23,7 +20,7 @@
 #include "TMath.h"
 
 /** \class TGeoShapeAssembly
-\ingroup Geometry_classes
+\ingroup Shapes_classes
 
 The shape encapsulating an assembly (union) of volumes.
 Automatically created by TGeoVolumeAssembly class

@@ -4,13 +4,17 @@
 #ifndef ROOT_TSchemaRuleSet
 #define ROOT_TSchemaRuleSet
 
-class TClass;
-
 #include "TObject.h"
-#include "TObjArray.h"
-#include "Rtypes.h"
 #include "TString.h"
 #include "TClassRef.h"
+#include <vector>
+
+#ifdef R__LESS_INCLUDES
+class TObjArray;
+#else
+#include "TObjArray.h"
+#endif
+
 
 namespace ROOT {
 
@@ -64,7 +68,7 @@ namespace Detail {
 
    private:
       TObjArray* fPersistentRules; //  Array of the rules that will be embeded in the file
-      TObjArray* fRemainingRules;  //! Array of non-persisten rules - just for cleanup purposes - owns the elements
+      TObjArray* fRemainingRules;  //! Array of non-persistent rules - just for cleanup purposes - owns the elements
       TObjArray* fAllRules;        //! Array of all rules
       TClassRef  fClass;           //! Target class pointer (for consistency checking)
       TString    fClassName;       //  Target class name

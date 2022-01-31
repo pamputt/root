@@ -14,6 +14,7 @@
 #include "RooAbsPdf.h"
 #include "RooRealProxy.h"
 #include "RooListProxy.h"
+#include <vector>
 
 class RooRealVar;
 class RooArgList ;
@@ -41,8 +42,8 @@ namespace HistFactory{
     double _nominal;
     std::vector<double> _low;
     std::vector<double> _high;
-    
-    TIterator* _paramIter ;  //! do not persist
+
+    TIterator* _paramIter ;  ///<! do not persist
 
     Double_t evaluate() const;
 

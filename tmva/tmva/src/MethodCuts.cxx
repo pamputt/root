@@ -103,7 +103,6 @@
 #include "TMVA/TSpline1.h"
 #include "TMVA/VariableTransformBase.h"
 
-#include "Riostream.h"
 #include "TH1F.h"
 #include "TObjString.h"
 #include "TDirectory.h"
@@ -114,6 +113,7 @@
 
 #include <cstdlib>
 #include <iostream>
+#include <iomanip>
 
 using std::atof;
 
@@ -301,20 +301,20 @@ TMVA::MethodCuts::~MethodCuts( void )
 /// define the options (their key words) that can be set in the option string.
 ///
 /// know options:
-///  - Method <string> Minimisation method. Available values are:
-///    - MC Monte Carlo <default>
+///  - Method `<string>` Minimisation method. Available values are:
+///    - MC Monte Carlo `<default>`
 ///    - GA Genetic Algorithm
 ///    - SA Simulated annealing
 ///
-///  - EffMethod <string> Efficiency selection method. Available values are:
-///    - EffSel <default>
+///  - EffMethod `<string>` Efficiency selection method. Available values are:
+///    - EffSel `<default>`
 ///    - EffPDF
 ///
-///  - VarProp <string> Property of variable 1 for the MC method (taking precedence over the
+///  - VarProp `<string>` Property of variable 1 for the MC method (taking precedence over the
 ///    globale setting. The same values as for the global option are available. Variables 1..10 can be
 ///    set this way
 ///
-///  - CutRangeMin/Max <float>  user-defined ranges in which cuts are varied
+///  - CutRangeMin/Max `<float>`  user-defined ranges in which cuts are varied
 
 void TMVA::MethodCuts::DeclareOptions()
 {

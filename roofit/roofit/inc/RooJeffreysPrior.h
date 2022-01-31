@@ -17,7 +17,7 @@ class RooArgList ;
 class RooJeffreysPrior : public RooAbsPdf {
 public:
 
-  RooJeffreysPrior() { };
+  RooJeffreysPrior() : _cacheMgr(this, 1, true, false) {}
   RooJeffreysPrior(const char *name, const char *title, RooAbsPdf& nominal, const RooArgList& paramSet, const RooArgList& obsSet) ;
   virtual ~RooJeffreysPrior() ;
 
@@ -29,7 +29,7 @@ public:
 
 protected:
 
-  RooProxy<RooAbsPdf> _nominal;    // Proxy to the PDF for this prior.
+  RooTemplateProxy<RooAbsPdf> _nominal;    // Proxy to the PDF for this prior.
   RooListProxy _obsSet ;   // Observables of the PDF.
   RooListProxy _paramSet ; // Parameters of the PDF.
 

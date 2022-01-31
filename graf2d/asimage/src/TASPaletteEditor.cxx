@@ -28,11 +28,11 @@ It is called by a pull down menu item of TASImage.
 #include "TGFileDialog.h"
 #include "TLine.h"
 #include "TROOT.h"
-#include "TClass.h"
 #include "TMath.h"
 #include "RConfigure.h"
 #include "TVirtualX.h"
-
+#include "strlcpy.h"
+#include "snprintf.h"
 
 #ifdef R__HAS_COCOA
 #   define X_DISPLAY_MISSING 1
@@ -291,7 +291,7 @@ void TASPaletteEditor::CloseWindow()
 ////////////////////////////////////////////////////////////////////////////////
 /// Process all editor mouse events
 
-Bool_t TASPaletteEditor::ProcessMessage(Long_t msg, Long_t param1, Long_t param2)
+Bool_t TASPaletteEditor::ProcessMessage(Longptr_t msg, Longptr_t param1, Longptr_t param2)
 {
    switch (GET_MSG(msg)) {
 
@@ -451,7 +451,7 @@ void TASPaletteEditor::Save()
       else
          strlcpy(fn, fi.fFilename,512);
 
-      gROOT->ProcessLine(Form("gROOT->SaveObjectAs((TASPaletteEditor*)0x%lx,\"%s\",\"%s\");",(ULong_t)this,fn,"q"));
+      gROOT->ProcessLine(Form("gROOT->SaveObjectAs((TASPaletteEditor*)0x%zx,\"%s\",\"%s\");",(size_t)this,fn,"q"));
    }
 }
 

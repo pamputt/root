@@ -11,18 +11,15 @@
  *************************************************************************/
 
 /** \class TGeoPgon
-\ingroup Geometry_classes
+\ingroup Shapes_classes
 
-A polygone. It has at least 10 parameters :
-  - the lower phi limit;
-  - the range in phi;
-  - the number of equal edges on each z plane;
-  - the number of z planes (at least two) where the inner/outer
-    radii are changing;
-  - z coordinate, inner and outer radius of the inscribed cercle
-    (distance from center to edges) for each z plane
+Polygons are defined in the same way as polycones, the difference being
+just that the segments between consecutive Z planes are regular
+polygons. The phi segmentation is preserved and the shape is defined in
+a similar manner, just that `rmin` and `rmax` represent the radii of the
+circles inscribed in the inner/outer polygon.
 
-Begin_Macro(source)
+Begin_Macro
 {
    TCanvas *c = new TCanvas("c", "c",0,0,600,600);
    new TGeoManager("pgon", "poza11");
@@ -45,17 +42,27 @@ Begin_Macro(source)
    view->ShowAxis();
 }
 End_Macro
+
+The constructor of a polygon has the form:
+
+~~~{.cpp}
+TGeoPgon(Double_t phi1,Double_t dphi,Int_t nedges,Int_t nz);
+~~~
+
+The extra parameter `nedges` represent the number of equal edges of the
+polygons, between `phi1` and `phi1+dphi.`
+
 */
 
-#include "Riostream.h"
 
 #include "TGeoPgon.h"
+
+#include <iostream>
 
 #include "TGeoManager.h"
 #include "TGeoVolume.h"
 #include "TVirtualGeoPainter.h"
 #include "TGeoTube.h"
-#include "TVirtualPad.h"
 #include "TBuffer3D.h"
 #include "TBuffer3DTypes.h"
 #include "TMath.h"
@@ -163,7 +170,7 @@ TGeoPgon::TGeoPgon(const char *name, Double_t phi, Double_t dphi, Int_t nedges, 
 ///  - param[6] = Rmax1
 /// ...
 
-TGeoPgon::TGeoPgon(Double_t *param) : TGeoPcon()
+TGeoPgon::TGeoPgon(Double_t *param) : TGeoPcon("")
 {
    SetShapeBit(TGeoShape::kGeoPgon);
    SetDimensions(param);
@@ -1011,7 +1018,7 @@ Bool_t TGeoPgon::IsCrossingSlice(const Double_t *point, const Double_t *dir, Int
    Int_t icrtseg = ipl;
    Int_t isegstart = ipl;
    Int_t iseglast = (incseg > 0) ? (fNz - 1) : -1;
-   Double_t din, dout, rdot, rnew, rpg, apg, bpg, db, znew;
+   Double_t din, dout, rdot, rnew, apg, bpg, db, znew;
 
    for (ipl = isegstart; ipl != iseglast; ipl += incseg) {
       step = (fZ[ipl + 1 - ((1 + incseg) >> 1)] - pt[2]) * invdir;
@@ -1035,10 +1042,10 @@ Bool_t TGeoPgon::IsCrossingSlice(const Double_t *point, const Double_t *dir, Int
          //         printf("   inner visible\n");
          if (TGeoShape::IsSameWithinTolerance(dz, 0)) {
             rnew = apr + bpr * fZ[ipl];
-            rpg = (rnew - fRmin[ipl]) * (rnew - fRmin[ipl + 1]);
+            Double_t rpg = (rnew - fRmin[ipl]) * (rnew - fRmin[ipl + 1]);
             if (rpg <= 0) din = (fZ[ipl] - pt[2]) * invdir;
          } else {
-            rpg = Rpg(pt[2], ipl, kTRUE, apg, bpg);
+            Rpg(pt[2], ipl, kTRUE, apg, bpg);
             db = bpg - bpr;
             if (!TGeoShape::IsSameWithinTolerance(db, 0)) {
                znew = (apr - apg) / db;
@@ -1060,10 +1067,10 @@ Bool_t TGeoPgon::IsCrossingSlice(const Double_t *point, const Double_t *dir, Int
          // outer surface visible ->check crossing
          if (TGeoShape::IsSameWithinTolerance(dz, 0)) {
             rnew = apr + bpr * fZ[ipl];
-            rpg = (rnew - fRmax[ipl]) * (rnew - fRmax[ipl + 1]);
+            Double_t rpg = (rnew - fRmax[ipl]) * (rnew - fRmax[ipl + 1]);
             if (rpg <= 0) dout = (fZ[ipl] - pt[2]) * invdir;
          } else {
-            rpg = Rpg(pt[2], ipl, kFALSE, apg, bpg);
+            Rpg(pt[2], ipl, kFALSE, apg, bpg);
             db = bpg - bpr;
             if (!TGeoShape::IsSameWithinTolerance(db, 0)) {
                znew = (apr - apg) / db;
@@ -1455,8 +1462,7 @@ void TGeoPgon::SetSegsAndPols(TBuffer3D &buff) const
 
    Int_t c = GetBasicColor();
 
-   Int_t indx, indx2, k;
-   indx = indx2 = 0;
+   Int_t indx = 0, indx2, k;
 
    // inside & outside circles, number of segments: 2*nz*(n-1)
    //             special case number of segments: 2*nz*n
@@ -1695,7 +1701,7 @@ void TGeoPgon::SetSegsAndPolsNoInside(TBuffer3D &buff) const
 
    // outside, number of polygons: (nz-1)*(n-1)
    for (Int_t k = 0; k < (nz - 1); k++) {
-      indx1 = k*n;
+      indx1 = k*(n-1);
       indx2 = nz*(n-1) + n*2 + k*n;
       for (j = 0; j < n-1; j++) {
          buff.fPols[indx++] = c;
@@ -1890,7 +1896,6 @@ Double_t TGeoPgon::Safety(const Double_t *point, Bool_t in) const
    // Check safety for current segment
    safmin = SafetyToSegment(point, ipl, iphi, kFALSE, safphi);
    if (safmin < 1E-6) return TMath::Abs(safmin); // point on radius-changing plane
-   saftmp = 0.;
    // check increasing iplanes
    iplane = ipl + 1;
    saftmp = 0.;

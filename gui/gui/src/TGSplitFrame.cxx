@@ -22,8 +22,21 @@
 #include "TString.h"
 #include "TClass.h"
 #include "TList.h"
-#include "Riostream.h"
 #include "TVirtualX.h"
+#include "snprintf.h"
+
+#include <iostream>
+
+/** \class TGSplitFrame
+    \ingroup guiwidgets
+A split frame.
+*/
+
+
+/** \class TGSplitTool
+    \ingroup guiwidgets
+A split frame tool tip.
+*/
 
 
 ClassImp(TGSplitTool);
@@ -341,7 +354,7 @@ void TGSplitFrame::CloseAndCollapse()
 
 void TGSplitFrame::Docked(TGFrame* frame)
 {
-   Emit("Docked(TGFrame*)", (Long_t)frame);
+   Emit("Docked(TGFrame*)", (Longptr_t)frame);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -697,7 +710,7 @@ void TGSplitFrame::SwitchToMain()
 
 void TGSplitFrame::Undocked(TGFrame* frame)
 {
-   Emit("Undocked(TGFrame*)", (Long_t)frame);
+   Emit("Undocked(TGFrame*)", (Longptr_t)frame);
 }
 
 ////////////////////////////////////////////////////////////////////////////////

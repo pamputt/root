@@ -11,6 +11,8 @@
 
 #include "TClingCallbacks.h"
 
+#include <ROOT/FoundationUtils.hxx>
+
 #include "cling/Interpreter/DynamicLibraryManager.h"
 #include "cling/Interpreter/Interpreter.h"
 #include "cling/Interpreter/InterpreterCallbacks.h"
@@ -32,8 +34,13 @@
 #include "clang/Serialization/ASTReader.h"
 #include "clang/Serialization/GlobalModuleIndex.h"
 
+#include "llvm/Object/ELFObjectFile.h"
+#include "llvm/Object/ObjectFile.h"
+
+#include "llvm/Support/Error.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
+#include "llvm/Support/Process.h"
 
 #include "TClingUtils.h"
 #include "ClingRAII.h"
@@ -42,6 +49,7 @@ using namespace clang;
 using namespace cling;
 using namespace ROOT::Internal;
 
+R__EXTERN int gDebug;
 class TObject;
 
 // Functions used to forward calls from code compiled with no-rtti to code
@@ -71,9 +79,6 @@ extern "C" {
    void TCling__RestoreInterpreterMutex(void *state);
    void *TCling__LockCompilationDuringUserCodeExecution();
    void TCling__UnlockCompilationDuringUserCodeExecution(void *state);
-   void TCling__FindLoadedLibraries(std::vector<std::pair<uint32_t, std::string>> &sLibraries,
-                                    std::vector<std::string> &sPaths,
-                                    cling::Interpreter &interpreter, bool searchSystem);
 }
 
 TClingCallbacks::TClingCallbacks(cling::Interpreter *interp, bool hasCodeGen) : InterpreterCallbacks(interp)
@@ -96,7 +101,8 @@ void TClingCallbacks::InclusionDirective(clang::SourceLocation sLoc/*HashLoc*/,
                                          const clang::FileEntry *FE,
                                          llvm::StringRef /*SearchPath*/,
                                          llvm::StringRef /*RelativePath*/,
-                                         const clang::Module * Imported) {
+                                         const clang::Module * Imported,
+                                         clang::SrcMgr::CharacteristicKind FileType) {
    // We found a module. Do not try to do anything else.
    Sema &SemaR = m_Interpreter->getSema();
    if (Imported) {
@@ -167,13 +173,12 @@ bool TClingCallbacks::FileNotFound(llvm::StringRef FileName,
          // Save state of the preprocessor
          Preprocessor::CleanupAndRestoreCacheRAII cleanupRAII(PP);
          Parser& P = const_cast<Parser&>(m_Interpreter->getParser());
+         // We parsed 'include' token. Store it.
+         clang::Parser::ParserCurTokRestoreRAII fSavedCurToken(P);
+         // We provide our own way of handling the entire #include "file.c+"
          // After we have saved the token reset the current one to
          // something which is safe (semi colon usually means empty decl)
          Token& Tok = const_cast<Token&>(P.getCurToken());
-         // We parsed 'include' token. We don't need to restore it, because
-         // we provide our own way of handling the entire #include "file.c+"
-         // Thus if we reverted the token back to the parser, we are in
-         // a trouble.
          Tok.setKind(tok::semi);
          // We can't PushDeclContext, because we go up and the routine that pops
          // the DeclContext assumes that we drill down always.
@@ -286,6 +291,11 @@ bool TClingCallbacks::LookupObject(LookupResult &R, Scope *S) {
 
 bool TClingCallbacks::findInGlobalModuleIndex(DeclarationName Name, bool loadFirstMatchOnly /*=true*/)
 {
+   llvm::Optional<std::string> envUseGMI = llvm::sys::Process::GetEnv("ROOT_USE_GMI");
+   if (envUseGMI.hasValue())
+      if (!envUseGMI->empty() && !ROOT::FoundationUtils::ConvertEnvValueToBool(*envUseGMI))
+         return false;
+
    const CompilerInstance *CI = m_Interpreter->getCI();
    const LangOptions &LangOpts = CI->getPreprocessor().getLangOpts();
 
@@ -310,11 +320,25 @@ bool TClingCallbacks::findInGlobalModuleIndex(DeclarationName Name, bool loadFir
    // Find the modules that reference the identifier.
    // Note that this only finds top-level modules.
    if (Index->lookupIdentifier(Name.getAsString(), FoundModules)) {
-      for (auto FileName : FoundModules) {
-         StringRef ModuleName = llvm::sys::path::stem(*FileName);
+      for (llvm::StringRef FileName : FoundModules) {
+         StringRef ModuleName = llvm::sys::path::stem(FileName);
+
+         // Skip to the first not-yet-loaded module.
+         if (m_LoadedModuleFiles.count(FileName)) {
+            if (gDebug > 2)
+               llvm::errs() << "Module '" << ModuleName << "' already loaded"
+                            << " for '" << Name.getAsString() << "'\n";
+            continue;
+         }
+
          fIsLoadingModule = true;
+         if (gDebug > 2)
+            llvm::errs() << "Loading '" << ModuleName << "' on demand"
+                         << " for '" << Name.getAsString() << "'\n";
+
          m_Interpreter->loadModule(ModuleName);
          fIsLoadingModule = false;
+         m_LoadedModuleFiles[FileName] = Name;
          if (loadFirstMatchOnly)
             break;
       }
@@ -332,10 +356,8 @@ bool TClingCallbacks::LookupObject(const DeclContext* DC, DeclarationName Name) 
    if (fIsLoadingModule)
       return false;
 
-   if (!IsAutoLoadingEnabled() || fIsAutoLoadingRecursively) return false;
-
-   if (findInGlobalModuleIndex(Name, /*loadFirstMatchOnly*/ false))
-      return true;
+   if (fIsAutoParsingSuspended || fIsAutoLoadingRecursively)
+      return false;
 
    if (Name.getNameKind() != DeclarationName::Identifier)
       return false;
@@ -344,11 +366,13 @@ bool TClingCallbacks::LookupObject(const DeclContext* DC, DeclarationName Name) 
    // We need to cast away the constness because we will lookup items of this
    // namespace/DeclContext
    NamespaceDecl* NSD = dyn_cast<NamespaceDecl>(const_cast<DeclContext*>(DC));
-   if (!NSD)
-      return false;
 
-   if ( !TCling__IsAutoLoadNamespaceCandidate(NSD) )
-      return false;
+   // When GMI is mixed with rootmaps, we might have a name for two different
+   // entities provided by the two systems. In that case check if the rootmaps
+   // registered the enclosing namespace as a rootmap name resolution namespace
+   // and only if that was not the case use the information in the GMI.
+   if (!NSD || !TCling__IsAutoLoadNamespaceCandidate(NSD))
+      return findInGlobalModuleIndex(Name, /*loadFirstMatchOnly*/ false);
 
    const DeclContext* primaryDC = NSD->getPrimaryContext();
    if (primaryDC != DC)
@@ -703,7 +727,7 @@ bool TClingCallbacks::tryResolveAtRuntimeInternal(LookupResult &R, Scope *S) {
 
 bool TClingCallbacks::shouldResolveAtRuntime(LookupResult& R, Scope* S) {
    if (m_IsRuntime)
-     return false;
+      return false;
 
    if (R.getLookupKind() != Sema::LookupOrdinaryName)
       return false;
@@ -719,6 +743,16 @@ bool TClingCallbacks::shouldResolveAtRuntime(LookupResult& R, Scope* S) {
       return false;
    const cling::CompilationOptions& COpts = T->getCompilationOpts();
    if (!COpts.DynamicScoping)
+      return false;
+
+   auto &PP = R.getSema().PP;
+   // In `foo bar`, `foo` is certainly a type name and must not be resolved. We
+   // cannot rely on `PP.LookAhead(0)` as the parser might have already consumed
+   // some tokens.
+   SourceLocation LocAfterIdent = PP.getLocForEndOfToken(R.getNameLoc());
+   Token LookAhead0;
+   PP.getRawToken(LocAfterIdent, LookAhead0, /*IgnoreWhiteSpace=*/true);
+   if (LookAhead0.is(tok::raw_identifier))
       return false;
 
    // FIXME: Figure out better way to handle:
@@ -917,70 +951,4 @@ void *TClingCallbacks::LockCompilationDuringUserCodeExecution()
 void TClingCallbacks::UnlockCompilationDuringUserCodeExecution(void *StateInfo)
 {
    TCling__UnlockCompilationDuringUserCodeExecution(StateInfo);
-}
-
-static bool shouldIgnore(llvm::StringRef FileName) {
-   llvm::StringRef fileStem = llvm::sys::path::stem(FileName);
-   return fileStem.startswith("libNew");
-}
-
-static void SearchAndAddPath(const std::string& Path,
-      std::vector<std::pair<uint32_t, std::string>> &sLibraries, std::vector<std::string> &sPaths,
-      std::unordered_set<std::string>& alreadyLookedPath, cling::DynamicLibraryManager* dyLibManager)
-{
-   // Already searched?
-   auto it = alreadyLookedPath.insert(Path);
-   if (!it.second)
-      return;
-   StringRef DirPath(Path);
-   if (!llvm::sys::fs::is_directory(DirPath))
-      return;
-
-   bool flag = false;
-   std::error_code EC;
-   for (llvm::sys::fs::directory_iterator DirIt(DirPath, EC), DirEnd;
-         DirIt != DirEnd && !EC; DirIt.increment(EC)) {
-
-      std::string FileName(DirIt->path());
-      if (llvm::sys::fs::is_directory(FileName))
-         continue;
-      if (!cling::DynamicLibraryManager::isSharedLibrary(FileName))
-         continue;
-      // No need to check linked libraries, as this function is only invoked
-      // for symbols that cannot be found (neither by dlsym nor in the JIT).
-      if (dyLibManager->isLibraryLoaded(FileName.c_str()))
-         continue;
-
-      if (shouldIgnore(FileName))
-         continue;
-
-      sLibraries.push_back(std::make_pair(sPaths.size(), llvm::sys::path::filename(FileName)));
-      flag = true;
-   }
-
-   if (flag)
-      sPaths.push_back(Path);
-}
-
-// Extracted here to circumvent ODR clash between
-// std::Sp_counted_ptr_inplace<llvm::sys::fs::detail::DirIterState, std::allocator<llvm::sys::fs::detail::DirIterState>, (_gnu_cxx::_Lock_policy)2>::_M_get_deleter(std::type_info const&)
-// coming from a no-rtti and a rtti build in libstdc++ from GCC >= 8.1.
-// In its function body, rtti uses `arg0 == typeid(...)` protected by #ifdef __cpp_rtti. Depending
-// on which symbol (with or without rtti) the linker picks up, the argument `arg0` is a valid
-// type_info - or not, in which case this comparison crashes.
-// Circumvent this by removing the rtti-use of this function:
-void TCling__FindLoadedLibraries(std::vector<std::pair<uint32_t, std::string>> &sLibraries,
-                                 std::vector<std::string> &sPaths,
-                                 cling::Interpreter &interpreter, bool searchSystem)
-{
-   // Store the information of path so that we don't have to iterate over the same path again and again.
-   static std::unordered_set<std::string> alreadyLookedPath;
-   cling::DynamicLibraryManager* dyLibManager = interpreter.getDynamicLibraryManager();
-
-   const auto &searchPaths = dyLibManager->getSearchPath();
-   for (const cling::DynamicLibraryManager::SearchPathInfo &Info : searchPaths) {
-      if (!Info.IsUser && !searchSystem)
-         continue;
-      SearchAndAddPath(Info.Path, sLibraries, sPaths, alreadyLookedPath, dyLibManager);
-   }
 }

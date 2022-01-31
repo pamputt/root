@@ -30,18 +30,27 @@ public:
   Int_t getGenerator(const RooArgSet& directVars, RooArgSet &generateVars, Bool_t staticInitOK=kTRUE) const override;
   void generateEvent(Int_t code) override;
   
+  /// Switch off/on rounding of `x` to the nearest integer.
   void setNoRounding(bool flag = kTRUE) {_noRounding = flag;}
+  /// Switch on or off protection against negative means.
   void protectNegativeMean(bool flag = kTRUE) {_protectNegative = flag;}
+
+  /// Get the x variable.
+  RooAbsReal const& getX() const { return x.arg(); }
+
+  /// Get the mean parameter.
+  RooAbsReal const& getMean() const { return mean.arg(); }
 
 protected:
 
   RooRealProxy x ;
   RooRealProxy mean ;
   Bool_t  _noRounding ;
-  Bool_t  _protectNegative ;
+  Bool_t  _protectNegative{true};
   
   Double_t evaluate() const override;
-  RooSpan<double> evaluateBatch(std::size_t begin, std::size_t batchSize) const override;
+  void computeBatch(cudaStream_t*, double* output, size_t nEvents, RooBatchCompute::DataMap&) const override;
+  inline bool canComputeBatchWithCuda() const override { return true; }
 
   ClassDefOverride(RooPoisson,3) // A Poisson PDF
 };

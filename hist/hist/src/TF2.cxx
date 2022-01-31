@@ -13,20 +13,28 @@
 #include "TF2.h"
 #include "TMath.h"
 #include "TRandom.h"
+#include "TBuffer.h"
 #include "TH2.h"
 #include "TVirtualPad.h"
-#include "TStyle.h"
-#include "Riostream.h"
+#include <iostream>
 #include "TColor.h"
 #include "TVirtualFitter.h"
 #include "Math/IntegratorOptions.h"
+#include "snprintf.h"
 
 ClassImp(TF2);
 
 /** \class TF2
-    \ingroup Hist
-A 2-Dim function with parameters.
+    \ingroup Functions
+    \brief A 2-Dim function with parameters.
 
+The following types of functions can be created:
+
+1.  [Expression using variables x and y](\ref TF2a)
+2.  [Expression using a user defined function](\ref TF2b)
+3.  [Lambda Expression with x and y variables and parameters](\ref TF2c)
+
+\anchor TF2a
 ### Expression using variables x and y
 
 Begin_Macro (source)
@@ -36,6 +44,7 @@ Begin_Macro (source)
 }
 End_Macro
 
+\anchor TF2b
 ### Expression using a user defined function
 
 ~~~~{.cpp}
@@ -52,6 +61,17 @@ void fplot()
    TF2 *f = new TF2("f",func,-1,1,-1,1);
    f->Draw("surf1");
 }
+~~~~
+
+\anchor TF2c
+### Lambda Expression with x and y variables and parameters
+
+~~~~{.cpp}
+root [0] TF2 f2("f2", [](double* x, double*p) { return x[0] + x[1] * p[0]; }, 0., 1., 0., 1., 1)
+(TF2 &) Name: f2 Title: f2
+root [1] f2.SetParameter(0, 1.)
+root [2] f2.Eval(1., 2.)
+(double) 3.0000000
 ~~~~
 
 See TF1 class for the list of functions formats
@@ -370,7 +390,7 @@ Double_t TF2::FindMinMax(Double_t *x, Bool_t findmax) const
    else {
       xxmin = x[0];
       yymin = x[1];
-      zzmin = function(xx);
+      zzmin = function(x);
    }
    xx[0] = xxmin;
    xx[1] = yymin;
@@ -490,7 +510,7 @@ char *TF2::GetObjectInfo(Int_t px, Int_t py) const
 ////////////////////////////////////////////////////////////////////////////////
 /// Return a random number following this function shape
 
-Double_t TF2::GetRandom()
+Double_t TF2::GetRandom(TRandom *, Option_t *)
 {
    Error("GetRandom","cannot be called for TF2/3, use GetRandom2/3 instead");
    return 0;  // not yet implemented
@@ -500,7 +520,7 @@ Double_t TF2::GetRandom()
 /// Return a random number following this function shape
 
 
-Double_t TF2::GetRandom(Double_t, Double_t)
+Double_t TF2::GetRandom(Double_t, Double_t, TRandom *, Option_t *)
 {
    Error("GetRandom","cannot be called for TF2/3, use GetRandom2/3 instead");
    return 0;  // not yet implemented
@@ -525,9 +545,9 @@ Double_t TF2::GetRandom(Double_t, Double_t)
 ///  points (SetNpx, SetNpy) such that the peak is correctly tabulated
 ///  at several points.
 
-void TF2::GetRandom2(Double_t &xrandom, Double_t &yrandom)
+void TF2::GetRandom2(Double_t &xrandom, Double_t &yrandom, TRandom * rng)
 {
-   //  Check if integral array must be build
+   //  Check if integral array must be built
    Int_t i,j,cell;
    Double_t dx   = (fXmax-fXmin)/fNpx;
    Double_t dy   = (fYmax-fYmin)/fNpy;
@@ -560,12 +580,13 @@ void TF2::GetRandom2(Double_t &xrandom, Double_t &yrandom)
 
 // return random numbers
    Double_t r,ddx,ddy,dxint;
-   r     = gRandom->Rndm();
+   if (!rng) rng = gRandom;
+   r     = rng->Rndm();
    cell  = TMath::BinarySearch(ncells,fIntegral.data(),r);
    dxint = fIntegral[cell+1] - fIntegral[cell];
    if (dxint > 0) ddx = dx*(r - fIntegral[cell])/dxint;
    else           ddx = 0;
-   ddy = dy*gRandom->Rndm();
+   ddy = dy*rng->Rndm();
    j   = cell/fNpx;
    i   = cell%fNpx;
    xrandom = fXmin +dx*i +ddx;
@@ -653,7 +674,10 @@ Double_t TF2::Integral(Double_t ax, Double_t bx, Double_t ay, Double_t by, Doubl
    Int_t nfnevl,ifail;
    Double_t result = IntegralMultiple(n,a,b,maxpts,epsrel,epsrel,relerr,nfnevl,ifail);
    if (ifail > 0) {
-      Warning("Integral","failed code=%d, maxpts=%d, epsrel=%g, nfnevl=%d, relerr=%g ",ifail,maxpts,epsrel,nfnevl,relerr);
+      Warning("Integral","failed for %s code=%d, maxpts=%d, epsrel=%g, nfnevl=%d, relerr=%g ",GetName(),ifail,maxpts,epsrel,nfnevl,relerr);
+   }
+   if (gDebug) {
+      Info("Integral", "Integral of %s using %d and tol=%f is %f , relerr=%f nfcn=%d", GetName(), maxpts,epsrel,result,relerr,nfnevl);
    }
    return result;
 }
@@ -1013,7 +1037,15 @@ Double_t TF2::Moment2(Double_t nx, Double_t ax, Double_t bx, Double_t ny, Double
       return 0;
    }
 
-   TF2 fnc("TF2_ExpValHelper",Form("%s*pow(x,%f)*pow(y,%f)",GetName(),nx,ny));
+   // define  integrand function as a lambda : g(x,y)=  x^(nx) * y^(ny) * f(x,y)
+   auto integrand = [&](double *x, double *) {
+      return std::pow(x[0], nx) * std::pow(x[1], ny) * this->EvalPar(x, nullptr);
+   };
+   // compute integral of g(x,y)
+   TF2 fnc("TF2_ExpValHelper",integrand,ax,bx,ay,by,0);
+   // set same points as current function to get correct max points when computing the integral
+   fnc.fNpx = fNpx;
+   fnc.fNpy = fNpy;
    return fnc.Integral(ax,bx,ay,by,epsilon)/norm;
 }
 
@@ -1032,14 +1064,30 @@ Double_t TF2::CentralMoment2(Double_t nx, Double_t ax, Double_t bx, Double_t ny,
    Double_t xbar = 0;
    Double_t ybar = 0;
    if (nx!=0) {
-      TF2 fncx("TF2_ExpValHelperx",Form("%s*x",GetName()));
+      // compute first momentum in x
+      auto integrandX = [&](double *x, double *) { return x[0] * this->EvalPar(x, nullptr); };
+      TF2 fncx("TF2_ExpValHelperx",integrandX, ax, bx, ay, by, 0);
+      fncx.fNpx = fNpx;
+      fncx.fNpy = fNpy;
       xbar = fncx.Integral(ax,bx,ay,by,epsilon)/norm;
    }
    if (ny!=0) {
-      TF2 fncx("TF2_ExpValHelpery",Form("%s*y",GetName()));
-      ybar = fncx.Integral(ax,bx,ay,by,epsilon)/norm;
+      // compute first momentum in y
+      auto integrandY = [&](double *x, double *) { return x[1] * this->EvalPar(x, nullptr); };
+      TF2 fncy("TF2_ExpValHelperx", integrandY, ax, bx, ay, by, 0);
+      fncy.fNpx = fNpx;
+      fncy.fNpy = fNpy;
+      ybar = fncy.Integral(ax,bx,ay,by,epsilon)/norm;
    }
-   TF2 fnc("TF2_ExpValHelper",Form("%s*pow(x-%f,%f)*pow(y-%f,%f)",GetName(),xbar,nx,ybar,ny));
-   return fnc.Integral(ax,bx,ay,by,epsilon)/norm;
+   // define  integrand function as a lambda : g(x,y)=  (x-xbar)^(nx) * (y-ybar)^(ny) * f(x,y)
+   auto integrand = [&](double *x, double *) {
+      double xxx = (nx != 0) ? std::pow(x[0] - xbar, nx) : 1.;
+      double yyy = (ny != 0) ? std::pow(x[1] - ybar, ny) : 1.;
+      return xxx * yyy * this->EvalPar(x, nullptr);
+   };
+   // compute integral of g(x,y)
+   TF2 fnc("TF2_ExpValHelper", integrand, ax, bx, ay, by, 0);
+   fnc.fNpx = fNpx;
+   fnc.fNpy = fNpy;
+   return fnc.Integral(ax, bx, ay, by, epsilon) / norm;
 }
-

@@ -17,17 +17,18 @@
 
 #include "RConfigure.h"
 #include "Rtypes.h"
-
+#include "strlcpy.h"
+#include "snprintf.h"
 #include "rootCommandLineOptionsHelp.h"
 
-#include <stdio.h>
-#include <stdlib.h>
+#include <cstdio>
+#include <cstdlib>
 #include <unistd.h>
-#include <string.h>
+#include <cstring>
 #include <signal.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
-#include <errno.h>
+#include <cerrno>
 #include <netdb.h>
 #include <sys/socket.h>
 #include <string>
@@ -49,8 +50,6 @@
 #else
 #define ROOTBINARY "root.exe"
 #endif
-
-#define ROOTNBBINARY "rootnb.exe"
 
 extern void PopupLogo(bool);
 extern void WaitLogo();
@@ -141,7 +140,7 @@ static void SetRootSys()
             int l2 = strlen(ep) + 10;
             char *env = new char[l2];
             snprintf(env, l2, "ROOTSYS=%s", ep);
-            putenv(env);
+            putenv(env); // NOLINT: allocated memory now used by environment variable
          }
       }
       delete [] ep;
@@ -307,7 +306,6 @@ int main(int argc, char **argv)
    // In batch mode don't show splash screen, idem for no logo mode,
    // in about mode show always splash screen
    bool batch = false, about = false;
-   int notebook = 0; // index of --notebook args, all other args will be re-directed to nbmain
    int i;
    for (i = 1; i < argc; i++) {
       if (!strcmp(argv[i], "-?") || !strncmp(argv[i], "-h", 2) ||
@@ -321,36 +319,6 @@ int main(int argc, char **argv)
       if (!strcmp(argv[i], "-a"))         about    = true;
       if (!strcmp(argv[i], "-config"))    gNoLogo  = true;
       if (!strcmp(argv[i], "--version"))  gNoLogo  = true;
-      if (!strcmp(argv[i], "--notebook")) { notebook = i; break; }
-   }
-
-   if (notebook > 0) {
-      // Build command
-#ifdef ROOTBINDIR
-      if (getenv("ROOTIGNOREPREFIX"))
-#endif
-         snprintf(arg0, sizeof(arg0), "%s/bin/%s", getenv("ROOTSYS"), ROOTNBBINARY);
-#ifdef ROOTBINDIR
-      else
-         snprintf(arg0, sizeof(arg0), "%s/%s", ROOTBINDIR, ROOTNBBINARY);
-#endif
-
-      int numnbargs = 1 + (argc - notebook);
-
-      argvv = new char* [numnbargs+1];
-      argvv[0] = arg0;
-      for (i = 1; i < numnbargs; i++)
-         argvv[i] = argv[notebook + i];
-      argvv[numnbargs] = nullptr;
-
-      // Execute ROOT notebook binary
-      execv(arg0, argvv);
-
-      // Exec failed
-      fprintf(stderr, "%s: can't start ROOT notebook -- this option is only available when building with CMake, please check that %s exists\n",
-              argv[0], arg0);
-
-      return 1;
    }
 
 #ifndef R__HAS_COCOA
@@ -466,6 +434,8 @@ int main(int argc, char **argv)
    // Exec failed
    fprintf(stderr, "%s: can't start ROOT -- check that %s exists!\n",
            argv[0], arg0);
+
+   delete [] argvv;
 
    return 1;
 }

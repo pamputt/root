@@ -55,21 +55,18 @@ Base class for all TMVA methods using artificial neural networks.
 #include "TMVA/Version.h"
 
 #include "TString.h"
-#include "TTree.h"
 #include "TDirectory.h"
-#include "Riostream.h"
 #include "TRandom3.h"
 #include "TH2F.h"
 #include "TH1.h"
 #include "TMath.h"
 #include "TMatrixT.h"
 
+#include <iostream>
 #include <vector>
 #include <cstdlib>
 #include <stdexcept>
-#if __cplusplus > 199711L
 #include <atomic>
-#endif
 
 
 using std::vector;
@@ -1009,11 +1006,7 @@ void TMVA::MethodANNBase::WriteMonitoringHistosToFile() const
    CreateWeightMonitoringHists( "weights_hist" );
 
    // now save all the epoch-wise monitoring information
-#if __cplusplus > 199711L
    static std::atomic<int> epochMonitoringDirectoryNumber{0};
-#else
-   static int epochMonitoringDirectoryNumber = 0;
-#endif
    int epochVal = epochMonitoringDirectoryNumber++;
    TDirectory* epochdir = NULL;
    if( epochVal == 0 )

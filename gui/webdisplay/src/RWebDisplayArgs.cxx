@@ -1,9 +1,6 @@
-/// \file RWebDisplayArgs.cxx
-/// \ingroup WebGui ROOT7
-/// \author Sergey Linev <s.linev@gsi.de>
-/// \date 2018-10-24
-/// \warning This is part of the ROOT 7 prototype! It will change without notice. It might trigger earthquakes. Feedback
-/// is welcome!
+// Author: Sergey Linev <s.linev@gsi.de>
+// Date: 2018-10-24
+// Warning: This is part of the ROOT 7 prototype! It will change without notice. It might trigger earthquakes. Feedback is welcome!
 
 /*************************************************************************
  * Copyright (C) 1995-2019, Rene Brun and Fons Rademakers.               *
@@ -14,21 +11,34 @@
  *************************************************************************/
 
 #include <ROOT/RWebDisplayArgs.hxx>
-#include <ROOT/RWebWindow.hxx>
+
 #include <ROOT/RConfig.hxx>
+#include <ROOT/RLogger.hxx>
+#include <ROOT/RWebWindow.hxx>
 
 #include "TROOT.h"
+#include <string>
+
+using namespace ROOT::Experimental;
+
+RLogChannel &ROOT::Experimental::WebGUILog()
+{
+   static RLogChannel sLog("ROOT.WebGUI");
+   return sLog;
+}
+
 
 /** \class ROOT::Experimental::RWebDisplayArgs
- * \ingroup webdisplay
- *
- * Holds different arguments for starting browser with RWebDisplayHandle::Display() method
- */
+\ingroup webdisplay
+
+Holds different arguments for starting browser with RWebDisplayHandle::Display() method
+
+*/
 
 ///////////////////////////////////////////////////////////////////////////////////////////
 /// Default constructor - browser kind configured from gROOT->GetWebDisplay()
 
-ROOT::Experimental::RWebDisplayArgs::RWebDisplayArgs()
+RWebDisplayArgs::RWebDisplayArgs()
 {
    SetBrowserKind("");
 }
@@ -37,16 +47,16 @@ ROOT::Experimental::RWebDisplayArgs::RWebDisplayArgs()
 /// Constructor - browser kind specified as std::string
 /// See SetBrowserKind() method for description of allowed parameters
 
-ROOT::Experimental::RWebDisplayArgs::RWebDisplayArgs(const std::string &browser)
+RWebDisplayArgs::RWebDisplayArgs(const std::string &browser)
 {
    SetBrowserKind(browser);
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////
 /// Constructor - browser kind specified as const char *
-/// See SetBrowserKind() method for description of allowed parameters
+/// See \ref SetBrowserKind method for description of allowed parameters
 
-ROOT::Experimental::RWebDisplayArgs::RWebDisplayArgs(const char *browser)
+RWebDisplayArgs::RWebDisplayArgs(const char *browser)
 {
    SetBrowserKind(browser);
 }
@@ -54,7 +64,7 @@ ROOT::Experimental::RWebDisplayArgs::RWebDisplayArgs(const char *browser)
 ///////////////////////////////////////////////////////////////////////////////////////////
 /// Constructor - specify window width and height
 
-ROOT::Experimental::RWebDisplayArgs::RWebDisplayArgs(int width, int height, int x, int y, const std::string &browser)
+RWebDisplayArgs::RWebDisplayArgs(int width, int height, int x, int y, const std::string &browser)
 {
    SetSize(width, height);
    SetPos(x, y);
@@ -64,24 +74,21 @@ ROOT::Experimental::RWebDisplayArgs::RWebDisplayArgs(int width, int height, int 
 ///////////////////////////////////////////////////////////////////////////////////////////
 /// Constructor - specify master window and channel (if reserved already)
 
-ROOT::Experimental::RWebDisplayArgs::RWebDisplayArgs(std::shared_ptr<RWebWindow> master, int channel)
+RWebDisplayArgs::RWebDisplayArgs(std::shared_ptr<RWebWindow> master, int channel)
 {
    SetMasterWindow(master, channel);
 }
 
-
 ///////////////////////////////////////////////////////////////////////////////////////////
 /// Destructor
+/// must be defined in source code to correctly call RWebWindow destructor
 
-ROOT::Experimental::RWebDisplayArgs::~RWebDisplayArgs()
-{
-  // must be defined here to correctly call RWebWindow destructor
-}
+RWebDisplayArgs::~RWebDisplayArgs() = default;
 
 ///////////////////////////////////////////////////////////////////////////////////////////
 /// Set size of web browser window as string like "800x600"
 
-bool ROOT::Experimental::RWebDisplayArgs::SetSizeAsStr(const std::string &str)
+bool RWebDisplayArgs::SetSizeAsStr(const std::string &str)
 {
    auto separ = str.find("x");
    if ((separ == std::string::npos) || (separ == 0) || (separ == str.length()-1)) return false;
@@ -105,7 +112,7 @@ bool ROOT::Experimental::RWebDisplayArgs::SetSizeAsStr(const std::string &str)
 ///////////////////////////////////////////////////////////////////////////////////////////
 /// Set position of web browser window as string like "100,100"
 
-bool ROOT::Experimental::RWebDisplayArgs::SetPosAsStr(const std::string &str)
+bool RWebDisplayArgs::SetPosAsStr(const std::string &str)
 {
    auto separ = str.find(",");
    if ((separ == std::string::npos) || (separ == 0) || (separ == str.length()-1)) return false;
@@ -129,17 +136,18 @@ bool ROOT::Experimental::RWebDisplayArgs::SetPosAsStr(const std::string &str)
 ///////////////////////////////////////////////////////////////////////////////////////////
 /// Set browser kind as string argument
 /// Recognized values:
-///  chrome  - use Google Chrome web browser, supports headless mode from v60, default
+///   chrome - use Google Chrome web browser, supports headless mode from v60, default
 ///  firefox - use Mozilla Firefox browser, supports headless mode from v57
 ///   native - (or empty string) either chrome or firefox, only these browsers support batch (headless) mode
 ///  browser - default system web-browser, no batch mode
 ///   safari - Safari browser on Mac
 ///      cef - Chromium Embeded Framework, local display, local communication
-///      qt5 - Qt5 WebEngine, local display, local communication
-///    local - either cef or qt5
-///   <prog> - any program name which will be started instead of default browser, like /usr/bin/opera
+///      qt5 - Qt5 QWebEngine, local display, local communication
+///      qt6 - Qt6 QWebEngineCore, local display, local communication
+///    local - either cef or qt5 or qt6
+/// `<prog>` - any program name which will be started instead of default browser, like /usr/bin/opera
 
-ROOT::Experimental::RWebDisplayArgs &ROOT::Experimental::RWebDisplayArgs::SetBrowserKind(const std::string &_kind)
+RWebDisplayArgs &RWebDisplayArgs::SetBrowserKind(const std::string &_kind)
 {
    std::string kind = _kind;
 
@@ -147,6 +155,9 @@ ROOT::Experimental::RWebDisplayArgs &ROOT::Experimental::RWebDisplayArgs::SetBro
    if (pos == 0) {
       SetUrlOpt(kind.substr(1));
       kind.clear();
+   } else if (pos != std::string::npos) {
+      SetUrlOpt(kind.substr(pos+1));
+      kind.resize(pos);
    }
 
    pos = kind.find("size:");
@@ -163,6 +174,19 @@ ROOT::Experimental::RWebDisplayArgs &ROOT::Experimental::RWebDisplayArgs::SetBro
       if (epos == std::string::npos) epos = kind.length();
       SetPosAsStr(kind.substr(pos+4, epos-pos-4));
       kind.erase(pos, epos-pos);
+   }
+
+   pos = kind.rfind("headless");
+   if ((pos != std::string::npos) && (pos == kind.length() - 8)) {
+      SetHeadless(true);
+      kind.resize(pos);
+      if ((pos > 0) && (kind[pos-1] == ';')) kind.resize(pos-1);
+   }
+
+   // very special handling of qt5/qt6 which can specify pointer as a string
+   if ((kind.find("qt5:") == 0) || (kind.find("qt6:") == 0)) {
+      SetDriverData((void *) std::stoull(kind.substr(4)));
+      kind.resize(3);
    }
 
    // remove all trailing spaces
@@ -187,8 +211,12 @@ ROOT::Experimental::RWebDisplayArgs &ROOT::Experimental::RWebDisplayArgs::SetBro
       SetBrowserKind(kCEF);
    else if ((kind == "qt") || (kind == "qt5"))
       SetBrowserKind(kQt5);
+   else if (kind == "qt6")
+      SetBrowserKind(kQt6);
    else if ((kind == "embed") || (kind == "embedded"))
       SetBrowserKind(kEmbedded);
+   else if (kind == "off")
+      SetBrowserKind(kOff);
    else if (!SetSizeAsStr(kind))
       SetCustomExec(kind);
 
@@ -198,7 +226,7 @@ ROOT::Experimental::RWebDisplayArgs &ROOT::Experimental::RWebDisplayArgs::SetBro
 /////////////////////////////////////////////////////////////////////
 /// Returns configured browser name
 
-std::string ROOT::Experimental::RWebDisplayArgs::GetBrowserName() const
+std::string RWebDisplayArgs::GetBrowserName() const
 {
    switch (GetBrowserKind()) {
       case kChrome: return "chrome";
@@ -206,9 +234,11 @@ std::string ROOT::Experimental::RWebDisplayArgs::GetBrowserName() const
       case kNative: return "native";
       case kCEF: return "cef";
       case kQt5: return "qt5";
+      case kQt6: return "qt6";
       case kLocal: return "local";
       case kStandard: return "default";
       case kEmbedded: return "embed";
+      case kOff: return "off";
       case kCustom:
           auto pos = fExec.find(" ");
           return (pos == std::string::npos) ? fExec : fExec.substr(0,pos);
@@ -220,7 +250,7 @@ std::string ROOT::Experimental::RWebDisplayArgs::GetBrowserName() const
 ///////////////////////////////////////////////////////////////////////////////////////////
 /// Assign window and channel id where other window will be embed
 
-void ROOT::Experimental::RWebDisplayArgs::SetMasterWindow(std::shared_ptr<RWebWindow> master, int channel)
+void RWebDisplayArgs::SetMasterWindow(std::shared_ptr<RWebWindow> master, int channel)
 {
    SetBrowserKind(kEmbedded);
    fMaster = master;
@@ -231,7 +261,7 @@ void ROOT::Experimental::RWebDisplayArgs::SetMasterWindow(std::shared_ptr<RWebWi
 /// Append string to url options
 /// Add "&" as separator if any options already exists
 
-void ROOT::Experimental::RWebDisplayArgs::AppendUrlOpt(const std::string &opt)
+void RWebDisplayArgs::AppendUrlOpt(const std::string &opt)
 {
    if (opt.empty()) return;
 
@@ -245,7 +275,7 @@ void ROOT::Experimental::RWebDisplayArgs::AppendUrlOpt(const std::string &opt)
 /// Returns full url, which is combined from URL and extra URL options
 /// Takes into account "#" symbol in url - options are inserted before that symbol
 
-std::string ROOT::Experimental::RWebDisplayArgs::GetFullUrl() const
+std::string RWebDisplayArgs::GetFullUrl() const
 {
    std::string url = GetUrl(), urlopt = GetUrlOpt();
    if (url.empty() || urlopt.empty()) return url;
@@ -267,7 +297,7 @@ std::string ROOT::Experimental::RWebDisplayArgs::GetFullUrl() const
 /// Either just name of browser which can be used like "opera"
 /// or full execution string which must includes $url like "/usr/bin/opera $url"
 
-void ROOT::Experimental::RWebDisplayArgs::SetCustomExec(const std::string &exec)
+void RWebDisplayArgs::SetCustomExec(const std::string &exec)
 {
    SetBrowserKind(kCustom);
    fExec = exec;
@@ -276,7 +306,7 @@ void ROOT::Experimental::RWebDisplayArgs::SetCustomExec(const std::string &exec)
 ///////////////////////////////////////////////////////////////////////////////////////////
 /// returns custom executable to start web browser
 
-std::string ROOT::Experimental::RWebDisplayArgs::GetCustomExec() const
+std::string RWebDisplayArgs::GetCustomExec() const
 {
    if (GetBrowserKind() != kCustom)
       return "";
@@ -288,3 +318,24 @@ std::string ROOT::Experimental::RWebDisplayArgs::GetCustomExec() const
 
    return fExec;
 }
+
+///////////////////////////////////////////////////////////////////////////////////////////
+/// returns string which can be used as argument in RWebWindow::Show() method
+/// to display web window in provided QWidget
+/// After RWebWindow is displayed created QWebEngineView can be found with the command:
+///     auto view = qparent->findChild<QWebEngineView*>("RootWebView");
+
+std::string RWebDisplayArgs::GetQt5EmbedQualifier(const void *qparent, const std::string &urlopt)
+{
+   std::string where = "qt5";
+   if (qparent) {
+      where.append(":");
+      where.append(std::to_string((uintptr_t) qparent));
+   }
+   if (!urlopt.empty()) {
+      where.append("?");
+      where.append(urlopt);
+   }
+   return where;
+}
+
