@@ -816,7 +816,7 @@ argname_i    = any valid unique C tag, but must be consistent in the definition
 
 Notes:
 
-1. cfortran.h may be expanded to handle a more argument type. To suppport new
+1. cfortran.h may be expanded to handle a more argument type. To support new
 arguments requiring complicated massaging when passed  between Fortran and C,
 the user will have to understand cfortran.h and follow its code and mechanisms.
 
