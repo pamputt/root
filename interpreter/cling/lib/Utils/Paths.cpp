@@ -187,7 +187,7 @@ bool LookForFile(const std::vector<const char*>& Args, std::string& Path,
   for (std::vector<const char*>::const_iterator It = Args.begin(),
        End = Args.end(); It < End; ++It) {
     const char* Arg = *It;
-    // TODO: Suppport '-iquote' and MSVC equivalent
+    // TODO: Support '-iquote' and MSVC equivalent
     if (!::strncmp("-I", Arg, 2) || !::strncmp("/I", Arg, 2)) {
       if (!Arg[2]) {
         if (++It >= End)
